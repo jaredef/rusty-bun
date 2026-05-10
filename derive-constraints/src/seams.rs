@@ -30,8 +30,9 @@ pub enum ThrowReturn {
     Neither,
 }
 
-/// The six architectural-hedging signals from Doc 705 §4 reduced to a
-/// hashable per-property vector. Equality of vectors is the agreement
+/// The architectural-hedging signals from Doc 705 §4 (six) plus four
+/// extended signals queued at SEAMS-NOTES.md v0.2 (S7–S10), reduced to
+/// a hashable per-property vector. Equality of vectors is the agreement
 /// criterion for the simple-cluster MVP at Doc 705 §5 step 2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SignalVector {
@@ -41,6 +42,28 @@ pub struct SignalVector {
     pub throw_return: ThrowReturn,       // S4
     pub native: bool,                    // S5: native / FFI / sys
     pub construct_handle: bool,          // S6: prototype-method or constructor-then-method
+    // ── v0.2 extensions ────────────────────────────────────────────────
+    pub weak_ref: bool,                  // S7: ownership/reference-cycle
+    pub error_shape: ErrorShape,         // S8: refines S4 — distinguish Result-shape from {ok,errors}
+    pub allocator_aware: bool,           // S9: arena/bumpalo/slab references
+    pub threaded: bool,                  // S10: Worker/MessageChannel/Atomics/SharedArrayBuffer
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorShape {
+    /// `Result<T, E>` / `result.ok` / `if (result.ok)` — Rust-style discriminated union.
+    Result,
+    /// `{ ok: bool, errors: [...] }` — Bun's compound shape.
+    OkErrorsArray,
+    /// `{ success, errors }` shape with array-of-errors.
+    SuccessErrors,
+    /// Plain Error object thrown.
+    PlainThrow,
+    /// Mixed signals.
+    Mixed,
+    /// No error-shape signal observed.
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,35 +236,56 @@ impl Default for SignalVector {
             throw_return: ThrowReturn::Neither,
             native: false,
             construct_handle: false,
+            weak_ref: false,
+            error_shape: ErrorShape::None,
+            allocator_aware: false,
+            threaded: false,
         }
     }
 }
 
 fn name_for_signal(v: &SignalVector) -> String {
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     if v.cfg {
-        parts.push("platform-cfg");
+        parts.push("platform-cfg".into());
     }
     match v.sync_async {
-        SyncAsync::Sync => parts.push("sync"),
-        SyncAsync::Async => parts.push("async"),
-        SyncAsync::Mixed => parts.push("sync+async"),
+        SyncAsync::Sync => parts.push("sync".into()),
+        SyncAsync::Async => parts.push("async".into()),
+        SyncAsync::Mixed => parts.push("sync+async".into()),
         SyncAsync::Neither => {}
     }
     match v.throw_return {
-        ThrowReturn::Throw => parts.push("throws"),
-        ThrowReturn::ReturnError => parts.push("returns-error"),
-        ThrowReturn::Mixed => parts.push("throws+returns-error"),
+        ThrowReturn::Throw => parts.push("throws".into()),
+        ThrowReturn::ReturnError => parts.push("returns-error".into()),
+        ThrowReturn::Mixed => parts.push("throws+returns-error".into()),
         ThrowReturn::Neither => {}
     }
     if v.native {
-        parts.push("native-ffi");
+        parts.push("native-ffi".into());
     }
     if v.construct_handle {
-        parts.push("constructor+handle");
+        parts.push("constructor+handle".into());
+    }
+    if v.weak_ref {
+        parts.push("weak-ref".into());
+    }
+    match v.error_shape {
+        ErrorShape::Result => parts.push("result-shape".into()),
+        ErrorShape::OkErrorsArray => parts.push("ok-errors-array".into()),
+        ErrorShape::SuccessErrors => parts.push("success-errors".into()),
+        ErrorShape::PlainThrow => parts.push("plain-throw".into()),
+        ErrorShape::Mixed => parts.push("mixed-error-shape".into()),
+        ErrorShape::None => {}
+    }
+    if v.allocator_aware {
+        parts.push("allocator-aware".into());
+    }
+    if v.threaded {
+        parts.push("threaded".into());
     }
     if let Some(ref p) = v.path_top {
-        parts.push(p);
+        parts.push(format!("@{}", p));
     }
     if parts.is_empty() {
         "slack".into()
@@ -263,8 +307,147 @@ fn signal_vector_of(prop: &Property) -> SignalVector {
     v.throw_return = signal_throw_return(prop, antichain);
     v.native = signal_native(antichain, &path_components);
     v.construct_handle = signal_construct_handle(prop);
+    v.weak_ref = signal_weak_ref(prop, antichain);
+    v.error_shape = signal_error_shape(prop, antichain);
+    v.allocator_aware = signal_allocator_aware(antichain);
+    v.threaded = signal_threaded(prop, antichain);
 
     v
+}
+
+/// S7 — ownership / reference-cycle. Detects WeakRef, WeakMap, WeakSet,
+/// FinalizationRegistry, and structuredClone (deep-copy semantics that
+/// arise specifically when reference structure must be preserved or
+/// broken). These signal a property whose contract crosses the
+/// ownership / lifetime / cycle boundary.
+fn signal_weak_ref(prop: &Property, antichain: &[RepresentativeConstraint]) -> bool {
+    const WEAK_REF_PATTERNS: &[&str] = &[
+        "WeakRef",
+        "WeakMap",
+        "WeakSet",
+        "FinalizationRegistry",
+        "structuredClone",
+        ".deref()",
+        ".register(",
+    ];
+    if WEAK_REF_PATTERNS.iter().any(|p| prop.subject.contains(p)) {
+        return true;
+    }
+    for r in antichain {
+        for pat in WEAK_REF_PATTERNS {
+            if r.raw.contains(pat) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// S8 — error-shape distinction. Refines S4's binary throw/return-error
+/// into specific shapes the runtime exposes:
+/// - Result: `{ ok: true | false }` Rust-style discriminated union pattern
+/// - OkErrorsArray: Bun's specific `{ ok, errors: [...] }` compound
+/// - SuccessErrors: `{ success: bool, errors: [...] }`
+/// - PlainThrow: bare throw with no compound shape
+fn signal_error_shape(prop: &Property, antichain: &[RepresentativeConstraint]) -> ErrorShape {
+    let mut has_ok_errors = false;
+    let mut has_success = false;
+    let mut has_result_ok = false;
+    let mut has_plain_throw = matches!(prop.verb_class, VerbClass::Error);
+
+    for r in antichain {
+        if r.raw.contains(".errors).") || r.raw.contains(".errors[") || r.raw.contains("errors: [") {
+            if r.raw.contains(".ok)") || r.raw.contains("ok: ") {
+                has_ok_errors = true;
+            } else if r.raw.contains(".success)") || r.raw.contains("success: ") {
+                has_success = true;
+            } else {
+                has_ok_errors = true; // ambiguous — bias to ok-errors-array shape
+            }
+        } else if r.raw.contains(".success).toBe(true)") || r.raw.contains(".success).toBe(false)") {
+            has_success = true;
+        } else if r.raw.contains(".ok).toBe(true)") || r.raw.contains(".ok).toBe(false)") {
+            has_result_ok = true;
+        }
+        if r.raw.contains(".toThrow") || r.raw.contains("rejects.toThrow") {
+            has_plain_throw = true;
+        }
+    }
+
+    let count = (has_ok_errors as u8)
+        + (has_success as u8)
+        + (has_result_ok as u8)
+        + (has_plain_throw as u8);
+    if count == 0 {
+        return ErrorShape::None;
+    }
+    if count > 1 {
+        return ErrorShape::Mixed;
+    }
+    if has_ok_errors {
+        ErrorShape::OkErrorsArray
+    } else if has_success {
+        ErrorShape::SuccessErrors
+    } else if has_result_ok {
+        ErrorShape::Result
+    } else {
+        ErrorShape::PlainThrow
+    }
+}
+
+/// S9 — allocator-discipline awareness. Properties whose contract surfaces
+/// allocator behavior — arena lifetime, slab allocation, bump-pool. The
+/// seam is between heap-allocated values whose lifetime is tied to a
+/// caller-controlled scope vs values whose lifetime is the global heap.
+fn signal_allocator_aware(antichain: &[RepresentativeConstraint]) -> bool {
+    const ALLOCATOR_PATTERNS: &[&str] = &[
+        "arena",
+        "Arena",
+        "bumpalo",
+        "Bump",
+        "slab",
+        "MimallocArena",
+        "ArrayList(",
+        "BabyList",
+        "MultiArrayList",
+    ];
+    for r in antichain {
+        for pat in ALLOCATOR_PATTERNS {
+            if r.raw.contains(pat) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// S10 — threading-model awareness. Properties whose contract crosses a
+/// thread boundary (Worker, MessageChannel, BroadcastChannel, Atomics,
+/// SharedArrayBuffer). Distinct from S3 sync/async which is the
+/// execution-discipline boundary; threading is the address-space-sharing
+/// boundary.
+fn signal_threaded(prop: &Property, antichain: &[RepresentativeConstraint]) -> bool {
+    const THREAD_HEADS: &[&str] = &[
+        "Worker",
+        "MessageChannel",
+        "MessagePort",
+        "BroadcastChannel",
+        "Atomics",
+        "SharedArrayBuffer",
+        "AsyncLocalStorage",
+    ];
+    let head = prop.subject.split('.').next().unwrap_or("");
+    if THREAD_HEADS.iter().any(|h| *h == head) {
+        return true;
+    }
+    for r in antichain {
+        for pat in THREAD_HEADS {
+            if r.raw.contains(pat) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn collect_path_components(antichain: &[RepresentativeConstraint]) -> Vec<Vec<String>> {

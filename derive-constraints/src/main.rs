@@ -214,6 +214,23 @@ fn name_for_signal_terse(v: &seams::SignalVector) -> String {
     if v.construct_handle {
         parts.push("ctor".into());
     }
+    if v.weak_ref {
+        parts.push("weak".into());
+    }
+    match v.error_shape {
+        seams::ErrorShape::Result => parts.push("res".into()),
+        seams::ErrorShape::OkErrorsArray => parts.push("ok-err".into()),
+        seams::ErrorShape::SuccessErrors => parts.push("succ-err".into()),
+        seams::ErrorShape::PlainThrow => parts.push("p-throw".into()),
+        seams::ErrorShape::Mixed => parts.push("mix-err".into()),
+        seams::ErrorShape::None => {}
+    }
+    if v.allocator_aware {
+        parts.push("alloc".into());
+    }
+    if v.threaded {
+        parts.push("thr".into());
+    }
     if let Some(ref p) = v.path_top {
         parts.push(format!("@{}", p));
     }

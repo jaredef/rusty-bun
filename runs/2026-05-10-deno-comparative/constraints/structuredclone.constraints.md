@@ -10,7 +10,7 @@
 
 @pins: []
 
-Surface drawn from 1 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 1. Total witnessing constraint clauses: 11.
+Surface drawn from 1 candidate properties across the Bun test corpus. Construction-style: 1; behavioral (high-cardinality): 0. Total witnessing constraint clauses: 11.
 
 ## STRU1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**structuredClone** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 11)
+**structuredClone** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 11 constraint clauses across 1 test files. Antichain representatives:
 

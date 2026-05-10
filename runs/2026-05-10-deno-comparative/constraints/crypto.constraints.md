@@ -4,13 +4,13 @@
 
 @provides: crypto-surface-property
   threshold: CRYP1
-  interface: [crypto.subtle.exportKey, crypto.subtle.generateKey, crypto.subtle.exportKey, crypto.subtle.generateKey, crypto.subtle.deriveBits, crypto.subtle.importKey, crypto.subtle.importKey]
+  interface: [crypto.subtle.exportKey, crypto.subtle.generateKey, crypto.subtle.importKey, crypto.subtle.deriveKey, crypto.timingSafeEqual]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 7 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 7. Total witnessing constraint clauses: 56.
+Surface drawn from 9 candidate properties across the Bun test corpus. Construction-style: 5; behavioral (high-cardinality): 4. Total witnessing constraint clauses: 60.
 
 ## CRYP1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**crypto.subtle.exportKey** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 13)
+**crypto.subtle.exportKey** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 13 constraint clauses across 1 test files. Antichain representatives:
 
@@ -34,6 +34,64 @@ scope: module
 status: active
 depends-on: []
 
+**crypto.subtle.generateKey** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 8 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/webcrypto_test.ts:372` —  → `assertEquals(key.type, "secret")`
+- `tests/unit/webcrypto_test.ts:373` —  → `assertEquals(key.extractable, true)`
+- `tests/unit/webcrypto_test.ts:374` —  → `assertEquals(key.usages, ["sign"])`
+
+## CRYP3
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**crypto.subtle.importKey** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 5 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/webcrypto_test.ts:415` —  → `assertEquals(key.type, "private")`
+- `tests/unit/webcrypto_test.ts:416` —  → `assertEquals(key.extractable, true)`
+- `tests/unit/webcrypto_test.ts:417` —  → `assertEquals(key.usages, ["sign"])`
+
+## CRYP4
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**crypto.subtle.deriveKey** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 3 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/webcrypto_test.ts:674` —  → `assertEquals(derivedKey.type, "secret")`
+- `tests/unit/webcrypto_test.ts:675` —  → `assertEquals(derivedKey.extractable, true)`
+- `tests/unit/webcrypto_test.ts:676` —  → `assertEquals(derivedKey.usages, ["sign"])`
+
+## CRYP5
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**crypto.timingSafeEqual** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit_node/crypto/crypto_timing_safe_equal_test.ts:14` — timingSafeEqual ArrayBuffer and TypedArray → `assertEquals(eq, true)`
+
+## CRYP6
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
 **crypto.subtle.generateKey** — satisfies the documented invariant. (behavioral; cardinality 10)
 
 Witnessed by 10 constraint clauses across 2 test files. Antichain representatives:
@@ -42,7 +100,7 @@ Witnessed by 10 constraint clauses across 2 test files. Antichain representative
 - `tests/unit/structured_clone_test.ts:71` — structuredClone CryptoKey → `assert(aesKey !== aesClone)`
 - `tests/unit/webcrypto_test.ts:499` —  → `assert(keyPair.privateKey)`
 
-## CRYP3
+## CRYP7
 type: predicate
 authority: derived
 scope: module
@@ -57,22 +115,7 @@ Witnessed by 9 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/webcrypto_test.ts:508` —  → `assert(exportedPrivateKey)`
 - `tests/unit/webcrypto_test.ts:509` —  → `assert(exportedPrivateKey instanceof ArrayBuffer)`
 
-## CRYP4
-type: predicate
-authority: derived
-scope: module
-status: active
-depends-on: []
-
-**crypto.subtle.generateKey** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 8)
-
-Witnessed by 8 constraint clauses across 1 test files. Antichain representatives:
-
-- `tests/unit/webcrypto_test.ts:372` —  → `assertEquals(key.type, "secret")`
-- `tests/unit/webcrypto_test.ts:373` —  → `assertEquals(key.extractable, true)`
-- `tests/unit/webcrypto_test.ts:374` —  → `assertEquals(key.usages, ["sign"])`
-
-## CRYP5
+## CRYP8
 type: predicate
 authority: derived
 scope: module
@@ -87,22 +130,7 @@ Witnessed by 6 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/webcrypto_test.ts:600` —  → `assertEquals(result.byteLength * 8, 256)`
 - `tests/unit/webcrypto_test.ts:645` —  → `assertEquals(result.byteLength * 8, 384)`
 
-## CRYP6
-type: predicate
-authority: derived
-scope: module
-status: active
-depends-on: []
-
-**crypto.subtle.importKey** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 5)
-
-Witnessed by 5 constraint clauses across 1 test files. Antichain representatives:
-
-- `tests/unit/webcrypto_test.ts:415` —  → `assertEquals(key.type, "private")`
-- `tests/unit/webcrypto_test.ts:416` —  → `assertEquals(key.extractable, true)`
-- `tests/unit/webcrypto_test.ts:417` —  → `assertEquals(key.usages, ["sign"])`
-
-## CRYP7
+## CRYP9
 type: predicate
 authority: derived
 scope: module

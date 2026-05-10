@@ -18,7 +18,7 @@ The pipeline driver was extended in this run to support Deno's test conventions:
 | Tests extracted              | 17,775             | (~3,800 with Deno.test) | −78% |
 | Constraint clauses           | 43,094             | 11,399 | −74% |
 | Properties (cluster)         | 4,838              | 1,852 | −62% |
-| **Construction-style**       | **303**            | **0** | **see §"The construction-style finding" below** |
+| **Construction-style**       | **303**            | **0 → 50 after v0.11 fix** | **see §"The construction-style finding" below** |
 | Distinct signal vectors      | 93                 | 28    | −70% |
 | Cross-namespace seams        | 50                 | 15    | −70% |
 | Welch impl files scanned     | 1,429              | 940   | −34% |
@@ -82,16 +82,41 @@ Inspection reveals: Deno's tests directly reference Web-Platform-Tests assertion
 
 **Operational consequence:** the same architectural seam (FFI / typed-array heritage) is detected by different probes depending on the test-corpus's authoring style. Deno's WPT-direct testing surfaces it via the test-corpus probe layer (S5); Bun's wrapper-mediated testing hides it from S5 and requires the welch coupling layer to surface it. The triple decomposition apparatus from `couple v0.2` (bidirectional-visible / implementation-internal / contract-only) handles both correctly.
 
-### The construction-style finding (zero on Deno)
+### The construction-style finding (zero on Deno → 50 after v0.11 fix)
 
-Deno's classifier produces 0 construction-style properties vs Bun's 303. **This is a structural classifier limitation, not a finding about Deno's architecture.**
+Deno's classifier initially produced 0 construction-style properties vs Bun's 303. **This was a structural classifier limitation, not a finding about Deno's architecture.** The v0.11 fix landed in this run; both pre-fix and post-fix numbers are recorded so the limitation and the resolution are both visible.
 
-The cluster phase's construction-style classifier matches subjects against a public-API-surface allowlist. The current allowlist was built for Bun (`Bun.*`, `fs.*`, `URL`, `fetch`, `Buffer`, etc.). It includes Bun's runtime namespace but not Deno's. So:
+**Two compounding causes were diagnosed:**
 
-- Bun's 124-properties-deep `Bun.*` surface → 124 candidate construction-style classifications
-- Deno's 124-properties-deep `Deno.*` surface → 0 (because `Deno` isn't in `PUBLIC_API_HEADS`)
+1. **Allowlist gap.** The cluster phase's construction-style classifier matched subjects against a public-API-surface allowlist. The original allowlist was built for Bun (`Bun.*`, `fs.*`, `URL`, `fetch`, `Buffer`, …) and did not include the `Deno` namespace head. Adding `"Deno"` to `PUBLIC_API_HEADS` surfaced **124 `Deno.*` properties** as candidates.
+2. **Test-style asymmetry in structural-equivalence detection.** The structural-equivalence-value path recognized only Bun's `expect(...).toBe("function")` matcher style. Deno tests use `assertEquals(typeof Deno.statSync, "function")` — the structural value is the *second* positional argument, not the matcher's argument. The fix adds `assertEquals` / `assertStrictEquals` / `assert.equal` / `assert.strictEqual` / `assert.deepEqual` etc. to `has_structural_equivalence_value`, reading the second positional arg as the structural side.
 
-The fix is one-line: add `"Deno"` to `PUBLIC_API_HEADS` in `cluster.rs`. With that addition, Deno's construction-style count would land in the same shape as Bun's. The fix is queued for v0.11; this run records the *uncorrected* output to make the structural-classifier-limitation visible. Any future per-corpus run needs to declare its target's public-API namespaces in the allowlist; this is an apparatus-tuning step the pipeline driver should expose as a flag.
+**Post-fix Deno construction-style count:** 50 properties (vs 0 pre-fix). Top surfaces:
+
+```
+35  Deno.Command                  equivalence
+31  Event                         equivalence
+13  Deno.bundle                   equivalence
+13  Response                      equivalence
+13  crypto.subtle.exportKey       equivalence
+11  Headers                       equivalence
+11  structuredClone               equivalence
+10  performance.mark              equivalence
+ 8  CustomEvent                   equivalence
+ 8  crypto.subtle.generateKey     equivalence
+ 8  http.createServer             equivalence
+ 7  EventTarget                   equivalence
+ 7  fs.fstatSync                  equivalence
+ 5  Deno.env.get                  equivalence
+```
+
+Heads distribution: `Deno` (10), `cluster` (7), `process` (7), `crypto` (5), `performance` (3), `fs` (2), `globalThis` (2), `inspector` (2), plus singleton heads (`Event`, `Response`, `Headers`, `EventTarget`, `URL`, `WebSocket`, `Worker`, `BroadcastChannel`, `MessageChannel`, `TextEncoder`, `TextDecoder`, …).
+
+50 vs Bun's 303 is consistent with Bun's higher absolute corpus size (×3.4 across most metrics): the ratio holds. The construction-style class reproduces on Deno's runtime once the apparatus's two corpus-style assumptions are corrected.
+
+**The constraints/ directory grew from 28 to 37 namespace-grouped documents** as a result, including new entries for `Event`, `EventTarget`, `Cluster`, `Subtle`, `Performance`, etc. — a wider architectural footprint than the original cluster output suggested.
+
+This finding now anchors the v0.11 refinement queue: the apparatus's per-corpus tuning isn't optional polish but a load-bearing prerequisite for cross-corpus comparability. The fix is committed in this run; future corpora (Cloudflare Workers, browser runtimes, node:test-style suites) will need their namespace heads + assert-call shapes registered before construction-style classification reads correctly.
 
 ## What this run shows about Doc 705's apparatus
 

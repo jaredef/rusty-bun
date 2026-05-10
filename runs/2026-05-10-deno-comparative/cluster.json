@@ -1,11 +1,11 @@
 {
-  "source_path": "/home/jaredef/rusty-bun/runs/2026-05-10-deno-comparative/scan.json",
+  "source_path": "runs/2026-05-10-deno-comparative/scan.json",
   "stats": {
     "constraints_in": 11399,
     "properties_out": 1852,
     "antichain_size": 3636,
-    "construction_style_count": 0,
-    "behavioral_count": 1852,
+    "construction_style_count": 50,
+    "behavioral_count": 1802,
     "reduction_ratio": 0.31897534871479954,
     "by_verb_class": {
       "equivalence": 1163,
@@ -22,6 +22,1182 @@
     }
   },
   "properties": [
+    {
+      "subject": "Deno.Command",
+      "verb_class": "equivalence",
+      "constraints_in": 35,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/command_test.ts",
+          "line": 502,
+          "raw": "assertEquals(output.success, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/command_test.ts",
+          "line": 503,
+          "raw": "assertEquals(output.code, 0)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/command_test.ts",
+          "line": 504,
+          "raw": "assertEquals(output.signal, null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/command_test.ts"
+      ]
+    },
+    {
+      "subject": "Event",
+      "verb_class": "equivalence",
+      "constraints_in": 31,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/event_test.ts",
+          "line": 8,
+          "raw": "assertEquals(event.isTrusted, false)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/event_target_test.ts",
+          "line": 313,
+          "raw": "assertEquals(event.target, null)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/event_test.ts",
+          "line": 9,
+          "raw": "assertEquals(event.target, null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/event_target_test.ts",
+        "tests/unit/event_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.bundle",
+      "verb_class": "equivalence",
+      "constraints_in": 13,
+      "antichain": [
+        {
+          "test_name": "bundle: basic in-memory bundle succeeds and returns content",
+          "file": "tests/unit/bundle_test.ts",
+          "line": 80,
+          "raw": "assertEquals(result.success, true)"
+        },
+        {
+          "test_name": "bundle: basic in-memory bundle succeeds and returns content",
+          "file": "tests/unit/bundle_test.ts",
+          "line": 81,
+          "raw": "assertEquals(result.errors.length, 0)"
+        },
+        {
+          "test_name": "bundle: write to outputDir omits outputFiles and writes files",
+          "file": "tests/unit/bundle_test.ts",
+          "line": 125,
+          "raw": "assertEquals(result.success, true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/bundle_test.ts"
+      ]
+    },
+    {
+      "subject": "Response",
+      "verb_class": "equivalence",
+      "constraints_in": 13,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/response_test.ts",
+          "line": 73,
+          "raw": "assertEquals(response.status, 200)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/fetch_test.ts",
+          "line": 994,
+          "raw": "assertEquals(await response.bytes(), new Uint8Array(0))"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/fetch_test.ts",
+          "line": 998,
+          "raw": "assertEquals(await response.text(), \"\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/fetch_test.ts",
+        "tests/unit/response_test.ts"
+      ]
+    },
+    {
+      "subject": "crypto.subtle.exportKey",
+      "verb_class": "equivalence",
+      "constraints_in": 13,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 358,
+          "raw": "assertEquals(exportedKey2, jwk)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 377,
+          "raw": "assertEquals(exportedKey.kty, \"oct\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 378,
+          "raw": "assertEquals(exportedKey.alg, \"HS512\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/webcrypto_test.ts"
+      ]
+    },
+    {
+      "subject": "Headers",
+      "verb_class": "equivalence",
+      "constraints_in": 11,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/headers_test.ts",
+          "line": 44,
+          "raw": "assertEquals(headers.get(name), String(value))"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/headers_test.ts",
+          "line": 46,
+          "raw": "assertEquals(headers.get(\"length\"), null)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/headers_test.ts",
+          "line": 52,
+          "raw": "assertEquals(headers.get(name), String(value))"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/headers_test.ts"
+      ]
+    },
+    {
+      "subject": "structuredClone",
+      "verb_class": "equivalence",
+      "constraints_in": 11,
+      "antichain": [
+        {
+          "test_name": "structuredClone CryptoKey",
+          "file": "tests/unit/structured_clone_test.ts",
+          "line": 72,
+          "raw": "assertEquals(aesClone.type, aesKey.type)"
+        },
+        {
+          "test_name": "structuredClone CryptoKey",
+          "file": "tests/unit/structured_clone_test.ts",
+          "line": 73,
+          "raw": "assertEquals(aesClone.extractable, aesKey.extractable)"
+        },
+        {
+          "test_name": "structuredClone CryptoKey",
+          "file": "tests/unit/structured_clone_test.ts",
+          "line": 74,
+          "raw": "assertEquals(aesClone.algorithm, aesKey.algorithm)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/structured_clone_test.ts"
+      ]
+    },
+    {
+      "subject": "performance.mark",
+      "verb_class": "equivalence",
+      "constraints_in": 10,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 101,
+          "raw": "assertEquals(mark.detail, null)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 102,
+          "raw": "assertEquals(mark.name, \"test\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 103,
+          "raw": "assertEquals(mark.entryType, \"mark\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/performance_test.ts"
+      ]
+    },
+    {
+      "subject": "CustomEvent",
+      "verb_class": "equivalence",
+      "constraints_in": 8,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/custom_event_test.ts",
+          "line": 14,
+          "raw": "assertEquals(event.bubbles, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/custom_event_test.ts",
+          "line": 15,
+          "raw": "assertEquals(event.cancelable, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/custom_event_test.ts",
+          "line": 16,
+          "raw": "assertEquals(event.currentTarget, null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/custom_event_test.ts"
+      ]
+    },
+    {
+      "subject": "crypto.subtle.generateKey",
+      "verb_class": "equivalence",
+      "constraints_in": 8,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 372,
+          "raw": "assertEquals(key.type, \"secret\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 373,
+          "raw": "assertEquals(key.extractable, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 374,
+          "raw": "assertEquals(key.usages, [\"sign\"])"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/webcrypto_test.ts"
+      ]
+    },
+    {
+      "subject": "http.createServer",
+      "verb_class": "equivalence",
+      "constraints_in": 8,
+      "antichain": [
+        {
+          "test_name": "[node/http listen]",
+          "file": "tests/unit_node/http_test.ts",
+          "line": 50,
+          "raw": "assertEquals(server.address()!.address, \"127.0.0.1\")"
+        },
+        {
+          "test_name": "[node/http] client closing a streaming response doesn't terminate server",
+          "file": "tests/unit_node/http_test.ts",
+          "line": 1519,
+          "raw": "assertEquals(server.listening, true)"
+        },
+        {
+          "test_name": "[node/http] client closing a streaming response doesn't terminate server",
+          "file": "tests/unit_node/http_test.ts",
+          "line": 1521,
+          "raw": "assertEquals(server.listening, false)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/http_test.ts"
+      ]
+    },
+    {
+      "subject": "EventTarget",
+      "verb_class": "equivalence",
+      "constraints_in": 7,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/event_target_test.ts",
+          "line": 8,
+          "raw": "assertEquals(document.addEventListener(\"x\", null, false), undefined)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/event_target_test.ts",
+          "line": 9,
+          "raw": "assertEquals(document.addEventListener(\"x\", null, true), undefined)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/event_target_test.ts",
+          "line": 10,
+          "raw": "assertEquals(document.addEventListener(\"x\", null), undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/event_target_test.ts"
+      ]
+    },
+    {
+      "subject": "fs.fstatSync",
+      "verb_class": "equivalence",
+      "constraints_in": 7,
+      "antichain": [
+        {
+          "test_name": "[node/fs] fstatSync returns correct info for fd",
+          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
+          "line": 185,
+          "raw": "assertEquals(stat.isFile(), true)"
+        },
+        {
+          "test_name": "[node/fs] fstatSync returns correct info for fd",
+          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
+          "line": 186,
+          "raw": "assertEquals(stat.isDirectory(), false)"
+        },
+        {
+          "test_name": "[node/fs] fstatSync returns correct info for fd",
+          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
+          "line": 187,
+          "raw": "assertEquals(stat.size, 11)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/_fs/_fs_raw_fd_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.env.get",
+      "verb_class": "equivalence",
+      "constraints_in": 5,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 19,
+          "raw": "assertEquals(r, undefined)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 24,
+          "raw": "assertEquals(Deno.env.get(\"TEST_VAR\"), \"A\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 26,
+          "raw": "assertEquals(Deno.env.get(\"TEST_VAR\"), undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "crypto.subtle.importKey",
+      "verb_class": "equivalence",
+      "constraints_in": 5,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 415,
+          "raw": "assertEquals(key.type, \"private\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 416,
+          "raw": "assertEquals(key.extractable, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 417,
+          "raw": "assertEquals(key.usages, [\"sign\"])"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/webcrypto_test.ts"
+      ]
+    },
+    {
+      "subject": "performance.measure",
+      "verb_class": "equivalence",
+      "constraints_in": 4,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 155,
+          "raw": "assertEquals(measure1.detail, null)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 156,
+          "raw": "assertEquals(measure1.name, measureName1)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/performance_test.ts",
+          "line": 157,
+          "raw": "assertEquals(measure1.entryType, \"measure\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/performance_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.disconnect",
+      "verb_class": "equivalence",
+      "constraints_in": 3,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 10,
+          "raw": "assertEquals(typeof cluster.disconnect, \"function\")"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 17,
+          "raw": "assertEquals(typeof cluster.disconnect, \"function\")"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 32,
+          "raw": "assertEquals(cluster.disconnect, clusterNamed.disconnect)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.setupPrimary",
+      "verb_class": "equivalence",
+      "constraints_in": 3,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 18,
+          "raw": "assertEquals(typeof cluster.setupPrimary, \"function\")"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 19,
+          "raw": "assertEquals(cluster.setupPrimary, cluster.setupMaster)"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 22,
+          "raw": "assertEquals(cluster.setupPrimary, clusterNamed.setupPrimary)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "crypto.subtle.deriveKey",
+      "verb_class": "equivalence",
+      "constraints_in": 3,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 674,
+          "raw": "assertEquals(derivedKey.type, \"secret\")"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 675,
+          "raw": "assertEquals(derivedKey.extractable, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 676,
+          "raw": "assertEquals(derivedKey.usages, [\"sign\"])"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/webcrypto_test.ts"
+      ]
+    },
+    {
+      "subject": "performance.eventLoopUtilization",
+      "verb_class": "equivalence",
+      "constraints_in": 3,
+      "antichain": [
+        {
+          "test_name": "[perf_hooks]: eventLoopUtilization",
+          "file": "tests/unit_node/perf_hooks_test.ts",
+          "line": 27,
+          "raw": "assertEquals(typeof obj.idle, \"number\")"
+        },
+        {
+          "test_name": "[perf_hooks]: eventLoopUtilization",
+          "file": "tests/unit_node/perf_hooks_test.ts",
+          "line": 28,
+          "raw": "assertEquals(typeof obj.active, \"number\")"
+        },
+        {
+          "test_name": "[perf_hooks]: eventLoopUtilization",
+          "file": "tests/unit_node/perf_hooks_test.ts",
+          "line": 29,
+          "raw": "assertEquals(typeof obj.utilization, \"number\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/perf_hooks_test.ts"
+      ]
+    },
+    {
+      "subject": "process.execPath",
+      "verb_class": "equivalence",
+      "constraints_in": 3,
+      "antichain": [
+        {
+          "test_name": "process.execPath",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 942,
+          "raw": "assertEquals(typeof process.execPath, \"string\")"
+        },
+        {
+          "test_name": "process.execPath",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 943,
+          "raw": "assertEquals(process.execPath, process.argv[0])"
+        },
+        {
+          "test_name": "process.execPath is writable",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 952,
+          "raw": "assertEquals(process.execPath, \"/path/to/node\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "AbortSignal.abort",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/abort_controller_test.ts",
+          "line": 62,
+          "raw": "assertEquals(signal.aborted, true)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/abort_controller_test.ts",
+          "line": 63,
+          "raw": "assertEquals(signal.reason, \"hey!\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/abort_controller_test.ts"
+      ]
+    },
+    {
+      "subject": "Buffer.isBuffer",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "fs.readFile returns Buffer when encoding is not provided",
+          "file": "tests/unit_node/_fs/_fs_readFile_test.ts",
+          "line": 167,
+          "raw": "assertEquals(Buffer.isBuffer(data), true)"
+        },
+        {
+          "test_name": "fs.readFileSync returns Buffer when encoding is not provided",
+          "file": "tests/unit_node/_fs/_fs_readFile_test.ts",
+          "line": 188,
+          "raw": "assertEquals(Buffer.isBuffer(data), true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/_fs/_fs_readFile_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.serveHttp",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/http_test.ts",
+          "line": 240,
+          "raw": "assertEquals(await httpConn.nextRequest(), null)"
+        },
+        {
+          "test_name": "",
+          "file": "tests/unit/http_test.ts",
+          "line": 352,
+          "raw": "assertEquals(await httpConn.nextRequest(), null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/http_test.ts"
+      ]
+    },
+    {
+      "subject": "assert.CallTracker",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/assert] CallTracker correctly exported",
+          "file": "tests/unit_node/assert_test.ts",
+          "line": 29,
+          "raw": "assert.strictEqual(typeof assert.CallTracker, \"function\")"
+        },
+        {
+          "test_name": "[node/assert] CallTracker correctly exported",
+          "file": "tests/unit_node/assert_test.ts",
+          "line": 31,
+          "raw": "assert.strictEqual(assert.CallTracker, assert.default.CallTracker)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/assert_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.fork",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 16,
+          "raw": "assertEquals(typeof cluster.fork, \"function\")"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 30,
+          "raw": "assertEquals(cluster.fork, clusterNamed.fork)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.isMaster",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 8,
+          "raw": "assertEquals(cluster.isMaster, true)"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 42,
+          "raw": "assertEquals(cluster.isMaster, clusterNamed.isMaster)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.isPrimary",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 7,
+          "raw": "assertEquals(cluster.isPrimary, true)"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 40,
+          "raw": "assertEquals(cluster.isPrimary, clusterNamed.isPrimary)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.isWorker",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 9,
+          "raw": "assertEquals(cluster.isWorker, false)"
+        },
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 38,
+          "raw": "assertEquals(cluster.isWorker, clusterNamed.isWorker)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "fs.openSync",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "[node/fs] openSync returns a real OS fd (not a small RID)",
+          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
+          "line": 56,
+          "raw": "assertEquals(typeof fd, \"number\")"
+        },
+        {
+          "test_name": "[node/fs] openSync returns a real OS fd (not a small RID)",
+          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
+          "line": 57,
+          "raw": "assertEquals(fd > 2, true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/_fs/_fs_raw_fd_test.ts"
+      ]
+    },
+    {
+      "subject": "process.exitCode",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "process.exitCode",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 883,
+          "raw": "assertEquals(process.exitCode, undefined)"
+        },
+        {
+          "test_name": "process.exitCode",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 885,
+          "raw": "assertEquals(process.exitCode, 127)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "process.getgid",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "process.getgid",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 960,
+          "raw": "assertEquals(process.getgid, undefined)"
+        },
+        {
+          "test_name": "process.getgid",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 962,
+          "raw": "assertEquals(process.getgid?.(), Deno.gid())"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "process.getuid",
+      "verb_class": "equivalence",
+      "constraints_in": 2,
+      "antichain": [
+        {
+          "test_name": "process.getuid",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 968,
+          "raw": "assertEquals(process.getuid, undefined)"
+        },
+        {
+          "test_name": "process.getuid",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 970,
+          "raw": "assertEquals(process.getuid?.(), Deno.uid())"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.env.delete",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 25,
+          "raw": "assertEquals(Deno.env.delete(\"TEST_VAR\"), undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.gid",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 302,
+          "raw": "assertEquals(Deno.gid(), null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.pid",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 163,
+          "raw": "assertEquals(typeof Deno.pid, \"number\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.ppid",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 168,
+          "raw": "assertEquals(typeof Deno.ppid, \"number\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.readDirSync",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/read_dir_test.ts",
+          "line": 32,
+          "raw": "assertEquals(typeof iterator.map, \"function\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/read_dir_test.ts"
+      ]
+    },
+    {
+      "subject": "Deno.uid",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/os_test.ts",
+          "line": 292,
+          "raw": "assertEquals(Deno.uid(), null)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/os_test.ts"
+      ]
+    },
+    {
+      "subject": "assert.default.CallTracker",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "[node/assert] CallTracker correctly exported",
+          "file": "tests/unit_node/assert_test.ts",
+          "line": 30,
+          "raw": "assert.strictEqual(typeof assert.default.CallTracker, \"function\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/assert_test.ts"
+      ]
+    },
+    {
+      "subject": "cluster.on",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "[node/cluster] has all node exports",
+          "file": "tests/unit_node/cluster_test.ts",
+          "line": 11,
+          "raw": "assertEquals(typeof cluster.on, \"function\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/cluster_test.ts"
+      ]
+    },
+    {
+      "subject": "crypto.timingSafeEqual",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "timingSafeEqual ArrayBuffer and TypedArray",
+          "file": "tests/unit_node/crypto/crypto_timing_safe_equal_test.ts",
+          "line": 14,
+          "raw": "assertEquals(eq, true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/crypto/crypto_timing_safe_equal_test.ts"
+      ]
+    },
+    {
+      "subject": "globalThis.crypto.subtle.generateKey",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/webcrypto_test.ts",
+          "line": 189,
+          "raw": "assertEquals(key.extractable, true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/webcrypto_test.ts"
+      ]
+    },
+    {
+      "subject": "globalThis.name",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/globals_test.ts",
+          "line": 114,
+          "raw": "assertEquals(typeof globalThis.name, \"string\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/globals_test.ts"
+      ]
+    },
+    {
+      "subject": "inspector.open",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "[node/inspector] - importing inspector works",
+          "file": "tests/unit_node/inspector_test.ts",
+          "line": 9,
+          "raw": "assertEquals(typeof inspector.open, \"function\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/inspector_test.ts"
+      ]
+    },
+    {
+      "subject": "inspector.url",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "[node/inspector] - url() returns undefined when no --inspect flag",
+          "file": "tests/unit_node/inspector_test.ts",
+          "line": 108,
+          "raw": "assertEquals(url, undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/inspector_test.ts"
+      ]
+    },
+    {
+      "subject": "process.getBuiltinModule",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "getBuiltinModule",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 1369,
+          "raw": "assertEquals(process.getBuiltinModule(\"something\"), undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "process.geteuid",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "process.geteuid",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 976,
+          "raw": "assertEquals(process.geteuid, undefined)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "process.kill",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit_node/process_test.ts",
+          "line": 279,
+          "raw": "assertEquals(process.kill(p.pid, 0), true)"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit_node/process_test.ts"
+      ]
+    },
+    {
+      "subject": "queueMicrotask",
+      "verb_class": "equivalence",
+      "constraints_in": 1,
+      "antichain": [
+        {
+          "test_name": "",
+          "file": "tests/unit/timers_test.ts",
+          "line": 531,
+          "raw": "assertEquals(typeof queueMicrotask, \"function\")"
+        }
+      ],
+      "construction_style": true,
+      "source_files": [
+        "tests/unit/timers_test.ts"
+      ]
+    },
     {
       "subject": "<anonymous>",
       "verb_class": "equivalence",
@@ -1378,35 +2554,6 @@
       ]
     },
     {
-      "subject": "Deno.Command",
-      "verb_class": "equivalence",
-      "constraints_in": 35,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/command_test.ts",
-          "line": 502,
-          "raw": "assertEquals(output.success, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/command_test.ts",
-          "line": 503,
-          "raw": "assertEquals(output.code, 0)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/command_test.ts",
-          "line": 504,
-          "raw": "assertEquals(output.signal, null)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/command_test.ts"
-      ]
-    },
-    {
       "subject": "cache",
       "verb_class": "generic_assertion",
       "constraints_in": 35,
@@ -1561,36 +2708,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/lint_selectors_test.ts"
-      ]
-    },
-    {
-      "subject": "Event",
-      "verb_class": "equivalence",
-      "constraints_in": 31,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/event_test.ts",
-          "line": 8,
-          "raw": "assertEquals(event.isTrusted, false)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/event_target_test.ts",
-          "line": 313,
-          "raw": "assertEquals(event.target, null)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/event_test.ts",
-          "line": 9,
-          "raw": "assertEquals(event.target, null)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/event_target_test.ts",
-        "tests/unit/event_test.ts"
       ]
     },
     {
@@ -4167,35 +5284,6 @@
       ]
     },
     {
-      "subject": "Deno.bundle",
-      "verb_class": "equivalence",
-      "constraints_in": 13,
-      "antichain": [
-        {
-          "test_name": "bundle: basic in-memory bundle succeeds and returns content",
-          "file": "tests/unit/bundle_test.ts",
-          "line": 80,
-          "raw": "assertEquals(result.success, true)"
-        },
-        {
-          "test_name": "bundle: basic in-memory bundle succeeds and returns content",
-          "file": "tests/unit/bundle_test.ts",
-          "line": 81,
-          "raw": "assertEquals(result.errors.length, 0)"
-        },
-        {
-          "test_name": "bundle: write to outputDir omits outputFiles and writes files",
-          "file": "tests/unit/bundle_test.ts",
-          "line": 125,
-          "raw": "assertEquals(result.success, true)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/bundle_test.ts"
-      ]
-    },
-    {
       "subject": "Deno.listenDatagram",
       "verb_class": "generic_assertion",
       "constraints_in": 13,
@@ -4255,36 +5343,6 @@
         "tests/unit/read_file_test.ts",
         "tests/unit/read_text_file_test.ts",
         "tests/unit_node/http_test.ts"
-      ]
-    },
-    {
-      "subject": "Response",
-      "verb_class": "equivalence",
-      "constraints_in": 13,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/response_test.ts",
-          "line": 73,
-          "raw": "assertEquals(response.status, 200)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/fetch_test.ts",
-          "line": 994,
-          "raw": "assertEquals(await response.bytes(), new Uint8Array(0))"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/fetch_test.ts",
-          "line": 998,
-          "raw": "assertEquals(await response.text(), \"\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/fetch_test.ts",
-        "tests/unit/response_test.ts"
       ]
     },
     {
@@ -4409,35 +5467,6 @@
       "construction_style": false,
       "source_files": [
         "libs/core/webidl.rs"
-      ]
-    },
-    {
-      "subject": "crypto.subtle.exportKey",
-      "verb_class": "equivalence",
-      "constraints_in": 13,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 358,
-          "raw": "assertEquals(exportedKey2, jwk)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 377,
-          "raw": "assertEquals(exportedKey.kty, \"oct\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 378,
-          "raw": "assertEquals(exportedKey.alg, \"HS512\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/webcrypto_test.ts"
       ]
     },
     {
@@ -5119,35 +6148,6 @@
       ]
     },
     {
-      "subject": "Headers",
-      "verb_class": "equivalence",
-      "constraints_in": 11,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/headers_test.ts",
-          "line": 44,
-          "raw": "assertEquals(headers.get(name), String(value))"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/headers_test.ts",
-          "line": 46,
-          "raw": "assertEquals(headers.get(\"length\"), null)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/headers_test.ts",
-          "line": 52,
-          "raw": "assertEquals(headers.get(name), String(value))"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/headers_test.ts"
-      ]
-    },
-    {
       "subject": "WebSocket",
       "verb_class": "equivalence",
       "constraints_in": 11,
@@ -5440,35 +6440,6 @@
       "source_files": [
         "ext/http/reader_stream.rs",
         "ext/node/ops/zlib/mod.rs"
-      ]
-    },
-    {
-      "subject": "structuredClone",
-      "verb_class": "equivalence",
-      "constraints_in": 11,
-      "antichain": [
-        {
-          "test_name": "structuredClone CryptoKey",
-          "file": "tests/unit/structured_clone_test.ts",
-          "line": 72,
-          "raw": "assertEquals(aesClone.type, aesKey.type)"
-        },
-        {
-          "test_name": "structuredClone CryptoKey",
-          "file": "tests/unit/structured_clone_test.ts",
-          "line": 73,
-          "raw": "assertEquals(aesClone.extractable, aesKey.extractable)"
-        },
-        {
-          "test_name": "structuredClone CryptoKey",
-          "file": "tests/unit/structured_clone_test.ts",
-          "line": 74,
-          "raw": "assertEquals(aesClone.algorithm, aesKey.algorithm)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/structured_clone_test.ts"
       ]
     },
     {
@@ -5828,35 +6799,6 @@
       "construction_style": false,
       "source_files": [
         "libs/npm/resolution/graph.rs"
-      ]
-    },
-    {
-      "subject": "performance.mark",
-      "verb_class": "equivalence",
-      "constraints_in": 10,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 101,
-          "raw": "assertEquals(mark.detail, null)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 102,
-          "raw": "assertEquals(mark.name, \"test\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 103,
-          "raw": "assertEquals(mark.entryType, \"mark\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/performance_test.ts"
       ]
     },
     {
@@ -6811,35 +7753,6 @@
       ]
     },
     {
-      "subject": "CustomEvent",
-      "verb_class": "equivalence",
-      "constraints_in": 8,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/custom_event_test.ts",
-          "line": 14,
-          "raw": "assertEquals(event.bubbles, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/custom_event_test.ts",
-          "line": 15,
-          "raw": "assertEquals(event.cancelable, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/custom_event_test.ts",
-          "line": 16,
-          "raw": "assertEquals(event.currentTarget, null)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/custom_event_test.ts"
-      ]
-    },
-    {
       "subject": "Deno.connect",
       "verb_class": "generic_assertion",
       "constraints_in": 8,
@@ -7108,35 +8021,6 @@
       ]
     },
     {
-      "subject": "crypto.subtle.generateKey",
-      "verb_class": "equivalence",
-      "constraints_in": 8,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 372,
-          "raw": "assertEquals(key.type, \"secret\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 373,
-          "raw": "assertEquals(key.extractable, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 374,
-          "raw": "assertEquals(key.usages, [\"sign\"])"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/webcrypto_test.ts"
-      ]
-    },
-    {
       "subject": "dir.replace",
       "verb_class": "generic_assertion",
       "constraints_in": 8,
@@ -7344,35 +8228,6 @@
       "construction_style": false,
       "source_files": [
         "cli/tools/publish/mod.rs"
-      ]
-    },
-    {
-      "subject": "http.createServer",
-      "verb_class": "equivalence",
-      "constraints_in": 8,
-      "antichain": [
-        {
-          "test_name": "[node/http listen]",
-          "file": "tests/unit_node/http_test.ts",
-          "line": 50,
-          "raw": "assertEquals(server.address()!.address, \"127.0.0.1\")"
-        },
-        {
-          "test_name": "[node/http] client closing a streaming response doesn't terminate server",
-          "file": "tests/unit_node/http_test.ts",
-          "line": 1519,
-          "raw": "assertEquals(server.listening, true)"
-        },
-        {
-          "test_name": "[node/http] client closing a streaming response doesn't terminate server",
-          "file": "tests/unit_node/http_test.ts",
-          "line": 1521,
-          "raw": "assertEquals(server.listening, false)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/http_test.ts"
       ]
     },
     {
@@ -8024,35 +8879,6 @@
       ]
     },
     {
-      "subject": "EventTarget",
-      "verb_class": "equivalence",
-      "constraints_in": 7,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/event_target_test.ts",
-          "line": 8,
-          "raw": "assertEquals(document.addEventListener(\"x\", null, false), undefined)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/event_target_test.ts",
-          "line": 9,
-          "raw": "assertEquals(document.addEventListener(\"x\", null, true), undefined)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/event_target_test.ts",
-          "line": 10,
-          "raw": "assertEquals(document.addEventListener(\"x\", null), undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/event_target_test.ts"
-      ]
-    },
-    {
       "subject": "alias",
       "verb_class": "generic_assertion",
       "constraints_in": 7,
@@ -8409,35 +9235,6 @@
       "construction_style": false,
       "source_files": [
         "libs/npm/resolution/graph.rs"
-      ]
-    },
-    {
-      "subject": "fs.fstatSync",
-      "verb_class": "equivalence",
-      "constraints_in": 7,
-      "antichain": [
-        {
-          "test_name": "[node/fs] fstatSync returns correct info for fd",
-          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
-          "line": 185,
-          "raw": "assertEquals(stat.isFile(), true)"
-        },
-        {
-          "test_name": "[node/fs] fstatSync returns correct info for fd",
-          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
-          "line": 186,
-          "raw": "assertEquals(stat.isDirectory(), false)"
-        },
-        {
-          "test_name": "[node/fs] fstatSync returns correct info for fd",
-          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
-          "line": 187,
-          "raw": "assertEquals(stat.size, 11)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/_fs/_fs_raw_fd_test.ts"
       ]
     },
     {
@@ -11107,35 +11904,6 @@
       ]
     },
     {
-      "subject": "Deno.env.get",
-      "verb_class": "equivalence",
-      "constraints_in": 5,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 19,
-          "raw": "assertEquals(r, undefined)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 24,
-          "raw": "assertEquals(Deno.env.get(\"TEST_VAR\"), \"A\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 26,
-          "raw": "assertEquals(Deno.env.get(\"TEST_VAR\"), undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
-      ]
-    },
-    {
       "subject": "Deno.memoryUsage",
       "verb_class": "generic_assertion",
       "constraints_in": 5,
@@ -11664,35 +12432,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/streams_test.ts"
-      ]
-    },
-    {
-      "subject": "crypto.subtle.importKey",
-      "verb_class": "equivalence",
-      "constraints_in": 5,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 415,
-          "raw": "assertEquals(key.type, \"private\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 416,
-          "raw": "assertEquals(key.extractable, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 417,
-          "raw": "assertEquals(key.usages, [\"sign\"])"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/webcrypto_test.ts"
       ]
     },
     {
@@ -15567,35 +16306,6 @@
     },
     {
       "subject": "performance.measure",
-      "verb_class": "equivalence",
-      "constraints_in": 4,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 155,
-          "raw": "assertEquals(measure1.detail, null)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 156,
-          "raw": "assertEquals(measure1.name, measureName1)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/performance_test.ts",
-          "line": 157,
-          "raw": "assertEquals(measure1.entryType, \"measure\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/performance_test.ts"
-      ]
-    },
-    {
-      "subject": "performance.measure",
       "verb_class": "generic_assertion",
       "constraints_in": 4,
       "antichain": [
@@ -17578,64 +18288,6 @@
       ]
     },
     {
-      "subject": "cluster.disconnect",
-      "verb_class": "equivalence",
-      "constraints_in": 3,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 10,
-          "raw": "assertEquals(typeof cluster.disconnect, \"function\")"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 17,
-          "raw": "assertEquals(typeof cluster.disconnect, \"function\")"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 32,
-          "raw": "assertEquals(cluster.disconnect, clusterNamed.disconnect)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
-      "subject": "cluster.setupPrimary",
-      "verb_class": "equivalence",
-      "constraints_in": 3,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 18,
-          "raw": "assertEquals(typeof cluster.setupPrimary, \"function\")"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 19,
-          "raw": "assertEquals(cluster.setupPrimary, cluster.setupMaster)"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 22,
-          "raw": "assertEquals(cluster.setupPrimary, clusterNamed.setupPrimary)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
       "subject": "code_cache_path",
       "verb_class": "generic_assertion",
       "constraints_in": 3,
@@ -18005,35 +18657,6 @@
           "file": "tests/unit/webcrypto_test.ts",
           "line": 1715,
           "raw": "assert(plainText instanceof ArrayBuffer)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/webcrypto_test.ts"
-      ]
-    },
-    {
-      "subject": "crypto.subtle.deriveKey",
-      "verb_class": "equivalence",
-      "constraints_in": 3,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 674,
-          "raw": "assertEquals(derivedKey.type, \"secret\")"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 675,
-          "raw": "assertEquals(derivedKey.extractable, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 676,
-          "raw": "assertEquals(derivedKey.usages, [\"sign\"])"
         }
       ],
       "construction_style": false,
@@ -19821,35 +20444,6 @@
       ]
     },
     {
-      "subject": "performance.eventLoopUtilization",
-      "verb_class": "equivalence",
-      "constraints_in": 3,
-      "antichain": [
-        {
-          "test_name": "[perf_hooks]: eventLoopUtilization",
-          "file": "tests/unit_node/perf_hooks_test.ts",
-          "line": 27,
-          "raw": "assertEquals(typeof obj.idle, \"number\")"
-        },
-        {
-          "test_name": "[perf_hooks]: eventLoopUtilization",
-          "file": "tests/unit_node/perf_hooks_test.ts",
-          "line": 28,
-          "raw": "assertEquals(typeof obj.active, \"number\")"
-        },
-        {
-          "test_name": "[perf_hooks]: eventLoopUtilization",
-          "file": "tests/unit_node/perf_hooks_test.ts",
-          "line": 29,
-          "raw": "assertEquals(typeof obj.utilization, \"number\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/perf_hooks_test.ts"
-      ]
-    },
-    {
       "subject": "pipe",
       "verb_class": "equivalence",
       "constraints_in": 3,
@@ -19906,35 +20500,6 @@
       "source_files": [
         "libs/core/uv_compat/tests.rs",
         "tests/unit/serve_test.ts"
-      ]
-    },
-    {
-      "subject": "process.execPath",
-      "verb_class": "equivalence",
-      "constraints_in": 3,
-      "antichain": [
-        {
-          "test_name": "process.execPath",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 942,
-          "raw": "assertEquals(typeof process.execPath, \"string\")"
-        },
-        {
-          "test_name": "process.execPath",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 943,
-          "raw": "assertEquals(process.execPath, process.argv[0])"
-        },
-        {
-          "test_name": "process.execPath is writable",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 952,
-          "raw": "assertEquals(process.execPath, \"/path/to/node\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
       ]
     },
     {
@@ -21342,29 +21907,6 @@
       ]
     },
     {
-      "subject": "AbortSignal.abort",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/abort_controller_test.ts",
-          "line": 62,
-          "raw": "assertEquals(signal.aborted, true)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/abort_controller_test.ts",
-          "line": 63,
-          "raw": "assertEquals(signal.reason, \"hey!\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/abort_controller_test.ts"
-      ]
-    },
-    {
       "subject": "AddRmPackageReq",
       "verb_class": "equivalence",
       "constraints_in": 2,
@@ -21477,29 +22019,6 @@
       "construction_style": false,
       "source_files": [
         "libs/core/cppgc.rs"
-      ]
-    },
-    {
-      "subject": "Buffer.isBuffer",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "fs.readFile returns Buffer when encoding is not provided",
-          "file": "tests/unit_node/_fs/_fs_readFile_test.ts",
-          "line": 167,
-          "raw": "assertEquals(Buffer.isBuffer(data), true)"
-        },
-        {
-          "test_name": "fs.readFileSync returns Buffer when encoding is not provided",
-          "file": "tests/unit_node/_fs/_fs_readFile_test.ts",
-          "line": 188,
-          "raw": "assertEquals(Buffer.isBuffer(data), true)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/_fs/_fs_readFile_test.ts"
       ]
     },
     {
@@ -22099,29 +22618,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/read_link_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.serveHttp",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/http_test.ts",
-          "line": 240,
-          "raw": "assertEquals(await httpConn.nextRequest(), null)"
-        },
-        {
-          "test_name": "",
-          "file": "tests/unit/http_test.ts",
-          "line": 352,
-          "raw": "assertEquals(await httpConn.nextRequest(), null)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/http_test.ts"
       ]
     },
     {
@@ -22911,29 +23407,6 @@
       ]
     },
     {
-      "subject": "assert.CallTracker",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/assert] CallTracker correctly exported",
-          "file": "tests/unit_node/assert_test.ts",
-          "line": 29,
-          "raw": "assert.strictEqual(typeof assert.CallTracker, \"function\")"
-        },
-        {
-          "test_name": "[node/assert] CallTracker correctly exported",
-          "file": "tests/unit_node/assert_test.ts",
-          "line": 31,
-          "raw": "assert.strictEqual(assert.CallTracker, assert.default.CallTracker)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/assert_test.ts"
-      ]
-    },
-    {
       "subject": "assert_ne",
       "verb_class": "equivalence",
       "constraints_in": 2,
@@ -23434,98 +23907,6 @@
           "file": "tests/unit_node/cluster_test.ts",
           "line": 36,
           "raw": "assertEquals(cluster.SCHED_RR, clusterNamed.SCHED_RR)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
-      "subject": "cluster.fork",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 16,
-          "raw": "assertEquals(typeof cluster.fork, \"function\")"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 30,
-          "raw": "assertEquals(cluster.fork, clusterNamed.fork)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
-      "subject": "cluster.isMaster",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 8,
-          "raw": "assertEquals(cluster.isMaster, true)"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 42,
-          "raw": "assertEquals(cluster.isMaster, clusterNamed.isMaster)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
-      "subject": "cluster.isPrimary",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 7,
-          "raw": "assertEquals(cluster.isPrimary, true)"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 40,
-          "raw": "assertEquals(cluster.isPrimary, clusterNamed.isPrimary)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
-      "subject": "cluster.isWorker",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 9,
-          "raw": "assertEquals(cluster.isWorker, false)"
-        },
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 38,
-          "raw": "assertEquals(cluster.isWorker, clusterNamed.isWorker)"
         }
       ],
       "construction_style": false,
@@ -25197,29 +25578,6 @@
       "construction_style": false,
       "source_files": [
         "ext/web/css_value.rs"
-      ]
-    },
-    {
-      "subject": "fs.openSync",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "[node/fs] openSync returns a real OS fd (not a small RID)",
-          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
-          "line": 56,
-          "raw": "assertEquals(typeof fd, \"number\")"
-        },
-        {
-          "test_name": "[node/fs] openSync returns a real OS fd (not a small RID)",
-          "file": "tests/unit_node/_fs/_fs_raw_fd_test.ts",
-          "line": 57,
-          "raw": "assertEquals(fd > 2, true)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/_fs/_fs_raw_fd_test.ts"
       ]
     },
     {
@@ -27116,29 +27474,6 @@
       ]
     },
     {
-      "subject": "process.exitCode",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "process.exitCode",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 883,
-          "raw": "assertEquals(process.exitCode, undefined)"
-        },
-        {
-          "test_name": "process.exitCode",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 885,
-          "raw": "assertEquals(process.exitCode, 127)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
       "subject": "process.getBuiltinModule",
       "verb_class": "generic_assertion",
       "constraints_in": 2,
@@ -27154,52 +27489,6 @@
           "file": "tests/unit_node/process_test.ts",
           "line": 1368,
           "raw": "assert(process.getBuiltinModule(\"node:fs\"))"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
-      "subject": "process.getgid",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "process.getgid",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 960,
-          "raw": "assertEquals(process.getgid, undefined)"
-        },
-        {
-          "test_name": "process.getgid",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 962,
-          "raw": "assertEquals(process.getgid?.(), Deno.gid())"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
-      "subject": "process.getuid",
-      "verb_class": "equivalence",
-      "constraints_in": 2,
-      "antichain": [
-        {
-          "test_name": "process.getuid",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 968,
-          "raw": "assertEquals(process.getuid, undefined)"
-        },
-        {
-          "test_name": "process.getuid",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 970,
-          "raw": "assertEquals(process.getuid?.(), Deno.uid())"
         }
       ],
       "construction_style": false,
@@ -30018,23 +30307,6 @@
       ]
     },
     {
-      "subject": "Deno.env.delete",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 25,
-          "raw": "assertEquals(Deno.env.delete(\"TEST_VAR\"), undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
-      ]
-    },
-    {
       "subject": "Deno.env.has",
       "verb_class": "generic_assertion",
       "constraints_in": 1,
@@ -30061,23 +30333,6 @@
           "file": "tests/unit/os_test.ts",
           "line": 13,
           "raw": "assertEquals(env[\"TEST_VAR\"], \"A\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.gid",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 302,
-          "raw": "assertEquals(Deno.gid(), null)"
         }
       ],
       "construction_style": false,
@@ -30138,23 +30393,6 @@
     },
     {
       "subject": "Deno.pid",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 163,
-          "raw": "assertEquals(typeof Deno.pid, \"number\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.pid",
       "verb_class": "generic_assertion",
       "constraints_in": 1,
       "antichain": [
@@ -30163,23 +30401,6 @@
           "file": "tests/unit/os_test.ts",
           "line": 164,
           "raw": "assert(Deno.pid > 0)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.ppid",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 168,
-          "raw": "assertEquals(typeof Deno.ppid, \"number\")"
         }
       ],
       "construction_style": false,
@@ -30202,23 +30423,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/os_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.readDirSync",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/read_dir_test.ts",
-          "line": 32,
-          "raw": "assertEquals(typeof iterator.map, \"function\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/read_dir_test.ts"
       ]
     },
     {
@@ -30440,23 +30644,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/stdio_test.ts"
-      ]
-    },
-    {
-      "subject": "Deno.uid",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/os_test.ts",
-          "line": 292,
-          "raw": "assertEquals(Deno.uid(), null)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/os_test.ts"
       ]
     },
     {
@@ -31446,23 +31633,6 @@
       ]
     },
     {
-      "subject": "assert.default.CallTracker",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "[node/assert] CallTracker correctly exported",
-          "file": "tests/unit_node/assert_test.ts",
-          "line": 30,
-          "raw": "assert.strictEqual(typeof assert.default.CallTracker, \"function\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/assert_test.ts"
-      ]
-    },
-    {
       "subject": "asyncTask.test_tsfn_get_context",
       "verb_class": "equivalence",
       "constraints_in": 1,
@@ -32296,23 +32466,6 @@
       ]
     },
     {
-      "subject": "cluster.on",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "[node/cluster] has all node exports",
-          "file": "tests/unit_node/cluster_test.ts",
-          "line": 11,
-          "raw": "assertEquals(typeof cluster.on, \"function\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/cluster_test.ts"
-      ]
-    },
-    {
       "subject": "cluster.setupMaster",
       "verb_class": "equivalence",
       "constraints_in": 1,
@@ -32735,23 +32888,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/webcrypto_test.ts"
-      ]
-    },
-    {
-      "subject": "crypto.timingSafeEqual",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "timingSafeEqual ArrayBuffer and TypedArray",
-          "file": "tests/unit_node/crypto/crypto_timing_safe_equal_test.ts",
-          "line": 14,
-          "raw": "assertEquals(eq, true)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/crypto/crypto_timing_safe_equal_test.ts"
       ]
     },
     {
@@ -34965,23 +35101,6 @@
       ]
     },
     {
-      "subject": "globalThis.crypto.subtle.generateKey",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/webcrypto_test.ts",
-          "line": 189,
-          "raw": "assertEquals(key.extractable, true)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/webcrypto_test.ts"
-      ]
-    },
-    {
       "subject": "globalThis.crypto.subtle.verify",
       "verb_class": "generic_assertion",
       "constraints_in": 1,
@@ -35013,23 +35132,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/webstorage_test.ts"
-      ]
-    },
-    {
-      "subject": "globalThis.name",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/globals_test.ts",
-          "line": 114,
-          "raw": "assertEquals(typeof globalThis.name, \"string\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/globals_test.ts"
       ]
     },
     {
@@ -35608,40 +35710,6 @@
       "construction_style": false,
       "source_files": [
         "tests/unit/console_test.ts"
-      ]
-    },
-    {
-      "subject": "inspector.open",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "[node/inspector] - importing inspector works",
-          "file": "tests/unit_node/inspector_test.ts",
-          "line": 9,
-          "raw": "assertEquals(typeof inspector.open, \"function\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/inspector_test.ts"
-      ]
-    },
-    {
-      "subject": "inspector.url",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "[node/inspector] - url() returns undefined when no --inspect flag",
-          "file": "tests/unit_node/inspector_test.ts",
-          "line": 108,
-          "raw": "assertEquals(url, undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/inspector_test.ts"
       ]
     },
     {
@@ -38365,40 +38433,6 @@
       ]
     },
     {
-      "subject": "process.getBuiltinModule",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "getBuiltinModule",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 1369,
-          "raw": "assertEquals(process.getBuiltinModule(\"something\"), undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
-      "subject": "process.geteuid",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "process.geteuid",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 976,
-          "raw": "assertEquals(process.geteuid, undefined)"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
       "subject": "process.geteuid",
       "verb_class": "generic_assertion",
       "constraints_in": 1,
@@ -38408,23 +38442,6 @@
           "file": "tests/unit_node/process_test.ts",
           "line": 979,
           "raw": "assert(typeof process.geteuid?.() === \"number\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit_node/process_test.ts"
-      ]
-    },
-    {
-      "subject": "process.kill",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit_node/process_test.ts",
-          "line": 279,
-          "raw": "assertEquals(process.kill(p.pid, 0), true)"
         }
       ],
       "construction_style": false,
@@ -38838,23 +38855,6 @@
       "construction_style": false,
       "source_files": [
         "libs/npm_installer/bin_entries/windows_shim.rs"
-      ]
-    },
-    {
-      "subject": "queueMicrotask",
-      "verb_class": "equivalence",
-      "constraints_in": 1,
-      "antichain": [
-        {
-          "test_name": "",
-          "file": "tests/unit/timers_test.ts",
-          "line": 531,
-          "raw": "assertEquals(typeof queueMicrotask, \"function\")"
-        }
-      ],
-      "construction_style": false,
-      "source_files": [
-        "tests/unit/timers_test.ts"
       ]
     },
     {

@@ -4,13 +4,13 @@
 
 @provides: headers-surface-property
   threshold: HEAD1
-  interface: [Headers, Headers]
+  interface: [Headers]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 2 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 2. Total witnessing constraint clauses: 16.
+Surface drawn from 2 candidate properties across the Bun test corpus. Construction-style: 1; behavioral (high-cardinality): 1. Total witnessing constraint clauses: 16.
 
 ## HEAD1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**Headers** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 11)
+**Headers** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 11 constraint clauses across 1 test files. Antichain representatives:
 

@@ -4,13 +4,13 @@
 
 @provides: response-surface-property
   threshold: RESP1
-  interface: [Response, Response.redirect]
+  interface: [Response]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 2 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 2. Total witnessing constraint clauses: 19.
+Surface drawn from 2 candidate properties across the Bun test corpus. Construction-style: 1; behavioral (high-cardinality): 1. Total witnessing constraint clauses: 19.
 
 ## RESP1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**Response** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 13)
+**Response** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 13 constraint clauses across 2 test files. Antichain representatives:
 

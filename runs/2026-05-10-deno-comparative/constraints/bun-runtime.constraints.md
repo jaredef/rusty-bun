@@ -11,7 +11,7 @@
     from: path
     path: ./deno.constraints.md
     as: deno
-    # witnessing-clauses: 439
+    # witnessing-clauses: 447
   - property: fetch-surface-property
     from: path
     path: ./fetch.constraints.md
@@ -31,7 +31,7 @@
     from: path
     path: ./crypto.constraints.md
     as: crypto
-    # witnessing-clauses: 56
+    # witnessing-clauses: 60
   - property: promise-surface-property
     from: path
     path: ./promise.constraints.md
@@ -72,11 +72,16 @@
     path: ./dommatrix.constraints.md
     as: dommatrix
     # witnessing-clauses: 27
+  - property: performance-surface-property
+    from: path
+    path: ./performance.constraints.md
+    as: performance
+    # witnessing-clauses: 27
   - property: buffer-surface-property
     from: path
     path: ./buffer.constraints.md
     as: buffer
-    # witnessing-clauses: 24
+    # witnessing-clauses: 26
   - property: imagedata-surface-property
     from: path
     path: ./imagedata.constraints.md
@@ -87,16 +92,16 @@
     path: ./quotaexceedederror.constraints.md
     as: quotaexceedederror
     # witnessing-clauses: 21
-  - property: performance-surface-property
-    from: path
-    path: ./performance.constraints.md
-    as: performance
-    # witnessing-clauses: 20
   - property: response-surface-property
     from: path
     path: ./response.constraints.md
     as: response
     # witnessing-clauses: 19
+  - property: process-surface-property
+    from: path
+    path: ./process.constraints.md
+    as: process
+    # witnessing-clauses: 17
   - property: headers-surface-property
     from: path
     path: ./headers.constraints.md
@@ -107,10 +112,20 @@
     path: ./path.constraints.md
     as: path
     # witnessing-clauses: 16
+  - property: cluster-surface-property
+    from: path
+    path: ./cluster.constraints.md
+    as: cluster
+    # witnessing-clauses: 15
   - property: request-surface-property
     from: path
     path: ./request.constraints.md
     as: request
+    # witnessing-clauses: 14
+  - property: fs-surface-property
+    from: path
+    path: ./fs.constraints.md
+    as: fs
     # witnessing-clauses: 14
   - property: json-surface-property
     from: path
@@ -137,6 +152,41 @@
     path: ./structuredclone.constraints.md
     as: structuredclone
     # witnessing-clauses: 11
+  - property: globalthis-surface-property
+    from: path
+    path: ./globalthis.constraints.md
+    as: globalthis
+    # witnessing-clauses: 9
+  - property: customevent-surface-property
+    from: path
+    path: ./customevent.constraints.md
+    as: customevent
+    # witnessing-clauses: 8
+  - property: http-surface-property
+    from: path
+    path: ./http.constraints.md
+    as: http
+    # witnessing-clauses: 8
+  - property: eventtarget-surface-property
+    from: path
+    path: ./eventtarget.constraints.md
+    as: eventtarget
+    # witnessing-clauses: 7
+  - property: assert-surface-property
+    from: path
+    path: ./assert.constraints.md
+    as: assert
+    # witnessing-clauses: 3
+  - property: abortsignal-surface-property
+    from: path
+    path: ./abortsignal.constraints.md
+    as: abortsignal
+    # witnessing-clauses: 2
+  - property: queuemicrotask-surface-property
+    from: path
+    path: ./queuemicrotask.constraints.md
+    as: queuemicrotask
+    # witnessing-clauses: 1
 
 @pins: []
 
@@ -147,15 +197,15 @@ scope: system
 status: active
 depends-on: []
 
-The Bun runtime contract is composed of 26 surface modules drafted from the test corpus. Per [Doc 704 §3](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error), target-language derivation operates over this composition; the constraint set is the durable artifact and target-language implementations are ephemeral cache.
+The Bun runtime contract is composed of 36 surface modules drafted from the test corpus. Per [Doc 704 §3](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error), target-language derivation operates over this composition; the constraint set is the durable artifact and target-language implementations are ephemeral cache.
 
 Top surfaces by witnessing-clause count:
 
-- **Deno** — 439 clauses
+- **Deno** — 447 clauses
 - **fetch** — 174 clauses
 - **URL** — 170 clauses
 - **TextDecoder** — 82 clauses
-- **crypto** — 56 clauses
+- **crypto** — 60 clauses
 - **Promise** — 55 clauses
 - **URLSearchParams** — 55 clauses
 - **module** — 55 clauses
@@ -164,10 +214,10 @@ Top surfaces by witnessing-clause count:
 - **String** — 30 clauses
 - **Array** — 28 clauses
 - **DOMMatrix** — 27 clauses
-- **Buffer** — 24 clauses
+- **performance** — 27 clauses
+- **Buffer** — 26 clauses
 - **ImageData** — 22 clauses
 - **QuotaExceededError** — 21 clauses
-- **performance** — 20 clauses
 - **Response** — 19 clauses
+- **process** — 17 clauses
 - **Headers** — 16 clauses
-- **path** — 16 clauses

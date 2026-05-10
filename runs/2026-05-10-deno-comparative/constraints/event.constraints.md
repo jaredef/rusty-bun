@@ -10,7 +10,7 @@
 
 @pins: []
 
-Surface drawn from 1 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 1. Total witnessing constraint clauses: 31.
+Surface drawn from 1 candidate properties across the Bun test corpus. Construction-style: 1; behavioral (high-cardinality): 0. Total witnessing constraint clauses: 31.
 
 ## EVEN1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**Event** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 31)
+**Event** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 31 constraint clauses across 2 test files. Antichain representatives:
 

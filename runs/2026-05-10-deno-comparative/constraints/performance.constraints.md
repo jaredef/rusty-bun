@@ -4,13 +4,13 @@
 
 @provides: performance-surface-property
   threshold: PERF1
-  interface: [performance.mark, performance.getEntriesByType, performance.mark]
+  interface: [performance.mark, performance.measure, performance.eventLoopUtilization]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 3 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 3. Total witnessing constraint clauses: 20.
+Surface drawn from 5 candidate properties across the Bun test corpus. Construction-style: 3; behavioral (high-cardinality): 2. Total witnessing constraint clauses: 27.
 
 ## PERF1
 type: predicate
@@ -19,7 +19,7 @@ scope: module
 status: active
 depends-on: []
 
-**performance.mark** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 10)
+**performance.mark** — produces values matching the documented patterns under the documented inputs. (construction-style)
 
 Witnessed by 10 constraint clauses across 1 test files. Antichain representatives:
 
@@ -34,6 +34,36 @@ scope: module
 status: active
 depends-on: []
 
+**performance.measure** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 4 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/performance_test.ts:155` —  → `assertEquals(measure1.detail, null)`
+- `tests/unit/performance_test.ts:156` —  → `assertEquals(measure1.name, measureName1)`
+- `tests/unit/performance_test.ts:157` —  → `assertEquals(measure1.entryType, "measure")`
+
+## PERF3
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**performance.eventLoopUtilization** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 3 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit_node/perf_hooks_test.ts:27` — [perf_hooks]: eventLoopUtilization → `assertEquals(typeof obj.idle, "number")`
+- `tests/unit_node/perf_hooks_test.ts:28` — [perf_hooks]: eventLoopUtilization → `assertEquals(typeof obj.active, "number")`
+- `tests/unit_node/perf_hooks_test.ts:29` — [perf_hooks]: eventLoopUtilization → `assertEquals(typeof obj.utilization, "number")`
+
+## PERF4
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
 **performance.getEntriesByType** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 5)
 
 Witnessed by 5 constraint clauses across 1 test files. Antichain representatives:
@@ -42,7 +72,7 @@ Witnessed by 5 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/performance_test.ts:52` —  → `assertEquals(performance.getEntriesByType("mark").length, 0)`
 - `tests/unit/performance_test.ts:67` —  → `assertEquals(performance.getEntriesByType("measure").length, measuresNum - 2)`
 
-## PERF3
+## PERF5
 type: predicate
 authority: derived
 scope: module

@@ -4,15 +4,29 @@
 
 @provides: buffer-surface-property
   threshold: BUFF1
-  interface: [Buffer.alloc, Buffer.from]
+  interface: [Buffer.isBuffer]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 2 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 2. Total witnessing constraint clauses: 24.
+Surface drawn from 3 candidate properties across the Bun test corpus. Construction-style: 1; behavioral (high-cardinality): 2. Total witnessing constraint clauses: 26.
 
 ## BUFF1
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Buffer.isBuffer** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 2 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit_node/_fs/_fs_readFile_test.ts:167` — fs.readFile returns Buffer when encoding is not provided → `assertEquals(Buffer.isBuffer(data), true)`
+- `tests/unit_node/_fs/_fs_readFile_test.ts:188` — fs.readFileSync returns Buffer when encoding is not provided → `assertEquals(Buffer.isBuffer(data), true)`
+
+## BUFF2
 type: predicate
 authority: derived
 scope: module
@@ -27,7 +41,7 @@ Witnessed by 17 constraint clauses across 1 test files. Antichain representative
 - `tests/unit_node/_fs/_fs_raw_fd_test.ts:88` — [node/fs] readSync with position reads at offset without moving cursor → `assertEquals(buf2.toString(), "abc")`
 - `tests/unit_node/_fs/_fs_raw_fd_test.ts:101` — [node/fs] readSync sequential reads advance cursor → `assertEquals(buf1.toString(), "hello")`
 
-## BUFF2
+## BUFF3
 type: predicate
 authority: derived
 scope: module

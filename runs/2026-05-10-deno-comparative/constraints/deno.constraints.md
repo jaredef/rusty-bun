@@ -4,15 +4,152 @@
 
 @provides: deno-surface-property
   threshold: DENO1
-  interface: [Deno.statSync, Deno.statSync, Deno.inspect, Deno.Command, Deno, Deno.lstatSync, Deno.listenDatagram, Deno.readFileSync]
+  interface: [Deno.Command, Deno.bundle, Deno.env.get, Deno.serveHttp, Deno.env.delete, Deno.gid, Deno.pid, Deno.ppid, Deno.readDirSync, Deno.uid]
 
 @imports: []
 
 @pins: []
 
-Surface drawn from 26 candidate properties across the Bun test corpus. Construction-style: 0; behavioral (high-cardinality): 26. Total witnessing constraint clauses: 439.
+Surface drawn from 33 candidate properties across the Bun test corpus. Construction-style: 10; behavioral (high-cardinality): 23. Total witnessing constraint clauses: 447.
 
 ## DENO1
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.Command** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 35 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/command_test.ts:502` —  → `assertEquals(output.success, true)`
+- `tests/unit/command_test.ts:503` —  → `assertEquals(output.code, 0)`
+- `tests/unit/command_test.ts:504` —  → `assertEquals(output.signal, null)`
+
+## DENO2
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.bundle** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 13 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/bundle_test.ts:80` — bundle: basic in-memory bundle succeeds and returns content → `assertEquals(result.success, true)`
+- `tests/unit/bundle_test.ts:81` — bundle: basic in-memory bundle succeeds and returns content → `assertEquals(result.errors.length, 0)`
+- `tests/unit/bundle_test.ts:125` — bundle: write to outputDir omits outputFiles and writes files → `assertEquals(result.success, true)`
+
+## DENO3
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.env.get** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 5 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:19` —  → `assertEquals(r, undefined)`
+- `tests/unit/os_test.ts:24` —  → `assertEquals(Deno.env.get("TEST_VAR"), "A")`
+- `tests/unit/os_test.ts:26` —  → `assertEquals(Deno.env.get("TEST_VAR"), undefined)`
+
+## DENO4
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.serveHttp** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 2 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/http_test.ts:240` —  → `assertEquals(await httpConn.nextRequest(), null)`
+- `tests/unit/http_test.ts:352` —  → `assertEquals(await httpConn.nextRequest(), null)`
+
+## DENO5
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.env.delete** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:25` —  → `assertEquals(Deno.env.delete("TEST_VAR"), undefined)`
+
+## DENO6
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.gid** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:302` —  → `assertEquals(Deno.gid(), null)`
+
+## DENO7
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.pid** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:163` —  → `assertEquals(typeof Deno.pid, "number")`
+
+## DENO8
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.ppid** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:168` —  → `assertEquals(typeof Deno.ppid, "number")`
+
+## DENO9
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.readDirSync** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/read_dir_test.ts:32` —  → `assertEquals(typeof iterator.map, "function")`
+
+## DENO10
+type: predicate
+authority: derived
+scope: module
+status: active
+depends-on: []
+
+**Deno.uid** — produces values matching the documented patterns under the documented inputs. (construction-style)
+
+Witnessed by 1 constraint clauses across 1 test files. Antichain representatives:
+
+- `tests/unit/os_test.ts:292` —  → `assertEquals(Deno.uid(), null)`
+
+## DENO11
 type: predicate
 authority: derived
 scope: module
@@ -27,7 +164,7 @@ Witnessed by 81 constraint clauses across 5 test files. Antichain representative
 - `tests/unit_node/_fs/_fs_writeFile_test.ts:353` — Mode is correctly set when writing synchronously → `assert(fileInfo && fileInfo.mode)`
 - `tests/unit_node/_fs/_fs_mkdir_test.ts:37` — [node/fs] mkdir mode → `assert(Deno.statSync(tmpDir).mode! & 0o777)`
 
-## DENO2
+## DENO12
 type: predicate
 authority: derived
 scope: module
@@ -42,7 +179,7 @@ Witnessed by 62 constraint clauses across 5 test files. Antichain representative
 - `tests/unit_node/_fs/_fs_writeFile_test.ts:354` — Mode is correctly set when writing synchronously → `assertEquals(fileInfo.mode & 0o777, modeSync)`
 - `tests/unit_node/_fs/_fs_copy_test.ts:86` — [std/node/fs] cpSync preserveTimestamps copies atime/mtime → `assertEquals(destStat.atime.getTime(), srcStat.atime.getTime())`
 
-## DENO3
+## DENO13
 type: predicate
 authority: derived
 scope: module
@@ -57,22 +194,7 @@ Witnessed by 36 constraint clauses across 5 test files. Antichain representative
 - `tests/unit/response_test.ts:78` —  → `assertEquals( Deno.inspect(response), 'Response { body: null, bodyUsed: false, headers: Headers {}, ok: true, redirected: false, status: 200, statusText: "", url: "" }', )`
 - `tests/unit/request_test.ts:59` —  → `assertEquals( Deno.inspect(request), 'Request { bodyUsed: false, headers: Headers {}, method: "GET", redirect: "follow", url: "https://example.com/" }', )`
 
-## DENO4
-type: predicate
-authority: derived
-scope: module
-status: active
-depends-on: []
-
-**Deno.Command** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 35)
-
-Witnessed by 35 constraint clauses across 1 test files. Antichain representatives:
-
-- `tests/unit/command_test.ts:502` —  → `assertEquals(output.success, true)`
-- `tests/unit/command_test.ts:503` —  → `assertEquals(output.code, 0)`
-- `tests/unit/command_test.ts:504` —  → `assertEquals(output.signal, null)`
-
-## DENO5
+## DENO14
 type: predicate
 authority: derived
 scope: module
@@ -87,7 +209,7 @@ Witnessed by 23 constraint clauses across 2 test files. Antichain representative
 - `tests/unit/canvas_test.ts:110` —  → `assertEquals(bitmapData.length, expectedData.length)`
 - `tests/unit/image_bitmap_test.ts:67` —  → `assertEquals(Deno[Deno.internal].getBitmapData(imageBitmap), new Uint8Array([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 2, 0, 0, 1, 3, 0, 0, 1, 0, 0, 0, 0, 0,…`
 
-## DENO6
+## DENO15
 type: predicate
 authority: derived
 scope: module
@@ -102,7 +224,7 @@ Witnessed by 21 constraint clauses across 5 test files. Antichain representative
 - `tests/unit/symlink_test.ts:19` —  → `assert(newNameInfoLStat.isSymlink)`
 - `tests/unit/stat_test.ts:86` —  → `assert(packageInfo.isFile)`
 
-## DENO7
+## DENO16
 type: predicate
 authority: derived
 scope: module
@@ -117,7 +239,7 @@ Witnessed by 20 constraint clauses across 1 test files. Antichain representative
 - `tests/unit/net_test.ts:44` —  → `assertEquals(socket.addr.port, listenPort)`
 - `tests/unit/net_test.ts:78` —  → `assertEquals(socket.addr.path, filePath)`
 
-## DENO8
+## DENO17
 type: predicate
 authority: derived
 scope: module
@@ -132,7 +254,7 @@ Witnessed by 18 constraint clauses across 4 test files. Antichain representative
 - `tests/unit/write_file_test.ts:425` —  → `assertEquals(Deno.readFileSync(filename), new Uint8Array([1, 2]))`
 - `tests/unit/truncate_test.ts:15` —  → `assertEquals(Deno.readFileSync(filename).byteLength, 20)`
 
-## DENO9
+## DENO18
 type: predicate
 authority: derived
 scope: module
@@ -147,7 +269,7 @@ Witnessed by 18 constraint clauses across 2 test files. Antichain representative
 - `tests/unit/write_text_file_test.ts:16` —  → `assertEquals(dataRead, "Hello")`
 - `tests/unit_node/_fs/_fs_raw_fd_test.ts:174` — [node/fs] async write with position does not move cursor → `assertEquals(Deno.readTextFileSync(path), "ZZaaaXYaaa")`
 
-## DENO10
+## DENO19
 type: predicate
 authority: derived
 scope: module
@@ -162,22 +284,7 @@ Witnessed by 14 constraint clauses across 2 test files. Antichain representative
 - `tests/unit/stat_test.ts:132` —  → `assert(readmeInfo.isFile)`
 - `tests/unit_node/_fs/_fs_writeFile_test.ts:232` — Mode is not set when rid is passed → `assert(fileInfo.mode)`
 
-## DENO11
-type: predicate
-authority: derived
-scope: module
-status: active
-depends-on: []
-
-**Deno.bundle** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 13)
-
-Witnessed by 13 constraint clauses across 1 test files. Antichain representatives:
-
-- `tests/unit/bundle_test.ts:80` — bundle: basic in-memory bundle succeeds and returns content → `assertEquals(result.success, true)`
-- `tests/unit/bundle_test.ts:81` — bundle: basic in-memory bundle succeeds and returns content → `assertEquals(result.errors.length, 0)`
-- `tests/unit/bundle_test.ts:125` — bundle: write to outputDir omits outputFiles and writes files → `assertEquals(result.success, true)`
-
-## DENO12
+## DENO20
 type: predicate
 authority: derived
 scope: module
@@ -192,7 +299,7 @@ Witnessed by 13 constraint clauses across 1 test files. Antichain representative
 - `tests/unit/net_test.ts:77` —  → `assert(socket.addr.transport === "unixpacket")`
 - `tests/unit/net_test.ts:114` —  → `assert(socket.addr.transport === "unixpacket")`
 
-## DENO13
+## DENO21
 type: predicate
 authority: derived
 scope: module
@@ -207,7 +314,7 @@ Witnessed by 8 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/net_test.ts:225` —  → `assert(conn.localAddr != null)`
 - `tests/unit/net_test.ts:257` —  → `assert(conn.remoteAddr.transport === "tcp")`
 
-## DENO14
+## DENO22
 type: predicate
 authority: derived
 scope: module
@@ -222,7 +329,7 @@ Witnessed by 7 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/net_test.ts:224` —  → `assertEquals(conn.remoteAddr.port, listenPort)`
 - `tests/unit/net_test.ts:258` —  → `assertEquals(conn.remoteAddr.hostname, "127.0.0.1")`
 
-## DENO15
+## DENO23
 type: predicate
 authority: derived
 scope: module
@@ -237,7 +344,7 @@ Witnessed by 7 constraint clauses across 1 test files. Antichain representatives
 - `libs/core_testing/unit/serialize_deserialize_test.ts:115` —  → `assertEquals(cloned.test2, circularObject.test2)`
 - `libs/core_testing/unit/serialize_deserialize_test.ts:116` —  → `assertEquals(cloned.test3, circularObject.test3)`
 
-## DENO16
+## DENO24
 type: predicate
 authority: derived
 scope: module
@@ -252,7 +359,7 @@ Witnessed by 7 constraint clauses across 4 test files. Antichain representatives
 - `tests/unit_node/_fs/_fs_handle_test.ts:401` — [node/fs filehandle.createWriteStream] Create a write stream → `assertEquals(await Deno.readTextFile(tempFile), "a\n")`
 - `tests/unit/net_test.ts:1042` —  → `assertEquals(res, "hello world!")`
 
-## DENO17
+## DENO25
 type: predicate
 authority: derived
 scope: module
@@ -267,7 +374,7 @@ Witnessed by 7 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/os_test.ts:281` —  → `assert(info.free >= 0)`
 - `tests/unit/os_test.ts:282` —  → `assert(info.available >= 0)`
 
-## DENO18
+## DENO26
 type: predicate
 authority: derived
 scope: module
@@ -282,7 +389,7 @@ Witnessed by 6 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/kv_test.ts:592` — KvU64 comparison → `assertEquals(a, new Deno.KvU64(2n))`
 - `tests/unit/kv_test.ts:610` — KvU64 unbox → `assertEquals(a.value, 1n)`
 
-## DENO19
+## DENO27
 type: predicate
 authority: derived
 scope: module
@@ -297,7 +404,7 @@ Witnessed by 6 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/stat_test.ts:201` —  → `assert(readmeInfoByUrl.isFile)`
 - `tests/unit/stat_test.ts:206` —  → `assert(modulesInfo.isSymlink)`
 
-## DENO20
+## DENO28
 type: predicate
 authority: derived
 scope: module
@@ -312,7 +419,7 @@ Witnessed by 6 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/real_path_test.ts:67` —  → `assert(realPath.endsWith(relativePath))`
 - `tests/unit/real_path_test.ts:70` —  → `assert(realPath.endsWith(relativePath.replace(/\//g, "\\")))`
 
-## DENO21
+## DENO29
 type: predicate
 authority: derived
 scope: module
@@ -327,7 +434,7 @@ Witnessed by 6 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/real_path_test.ts:16` —  → `assert(realPath.endsWith(relative))`
 - `tests/unit/real_path_test.ts:19` —  → `assert(realPath.endsWith(relative.replace(/\//g, "\\")))`
 
-## DENO22
+## DENO30
 type: predicate
 authority: derived
 scope: module
@@ -342,7 +449,7 @@ Witnessed by 5 constraint clauses across 1 test files. Antichain representatives
 - `tests/unit/bundle_test.ts:128` — bundle: write to outputDir omits outputFiles and writes files → `assert(result.outputFiles == null)`
 - `tests/unit/bundle_test.ts:249` — bundle: code splitting with multiple entrypoints → `assert(result.outputFiles !== undefined)`
 
-## DENO23
+## DENO31
 type: predicate
 authority: derived
 scope: module
@@ -357,7 +464,7 @@ Witnessed by 5 constraint clauses across 1 test files. Antichain representatives
 - `libs/core_testing/unit/stats_test.ts:131` —  → `assertEquals(tracesAfter.size, tracesBefore.size + 1)`
 - `libs/core_testing/unit/stats_test.ts:134` —  → `assertEquals(tracesFinal.size, tracesBefore.size)`
 
-## DENO24
+## DENO32
 type: predicate
 authority: derived
 scope: module
@@ -372,22 +479,7 @@ Witnessed by 5 constraint clauses across 1 test files. Antichain representatives
 - `libs/core_testing/unit/type_test.ts:53` —  → `assert(Deno.core.isBoxedPrimitive(new Boolean(true)))`
 - `libs/core_testing/unit/type_test.ts:54` —  → `assert(Deno.core.isBoxedPrimitive(new Number(1)))`
 
-## DENO25
-type: predicate
-authority: derived
-scope: module
-status: active
-depends-on: []
-
-**Deno.env.get** — produces values matching the documented patterns under the documented inputs. (behavioral; cardinality 5)
-
-Witnessed by 5 constraint clauses across 1 test files. Antichain representatives:
-
-- `tests/unit/os_test.ts:19` —  → `assertEquals(r, undefined)`
-- `tests/unit/os_test.ts:24` —  → `assertEquals(Deno.env.get("TEST_VAR"), "A")`
-- `tests/unit/os_test.ts:26` —  → `assertEquals(Deno.env.get("TEST_VAR"), undefined)`
-
-## DENO26
+## DENO33
 type: predicate
 authority: derived
 scope: module

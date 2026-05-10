@@ -576,6 +576,31 @@ fn has_structural_equivalence_value(raw: &str) -> bool {
             }
         }
     }
+    // Deno-style and Node-assert-style: the structural value lives in the
+    // second positional argument: `assertEquals(subject, "function")`.
+    let assert_matchers = [
+        "assertEquals(",
+        "assertStrictEquals(",
+        "assertNotEquals(",
+        "assert.equal(",
+        "assert.strictEqual(",
+        "assert.deepEqual(",
+        "assert.deepStrictEqual(",
+    ];
+    for m in assert_matchers {
+        if let Some(idx) = raw.find(m) {
+            let after = &raw[idx + m.len()..];
+            let first = first_call_arg(after);
+            let rest_start = idx + m.len() + first.len();
+            if rest_start < raw.len() && raw.as_bytes()[rest_start] == b',' {
+                let after_comma = &raw[rest_start + 1..];
+                let second = first_call_arg(after_comma);
+                if is_structural_value(second.trim()) {
+                    return true;
+                }
+            }
+        }
+    }
     false
 }
 
@@ -695,6 +720,8 @@ fn is_public_surface(subject: &str) -> bool {
 const PUBLIC_API_HEADS: &[&str] = &[
     // Bun runtime
     "Bun",
+    // Deno runtime
+    "Deno",
     // Web-platform globals
     "URL",
     "URLSearchParams",

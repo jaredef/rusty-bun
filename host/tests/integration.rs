@@ -1729,3 +1729,117 @@ fn js_compose_cjs_with_pilots_canonical_pattern() {
     assert_eq!(r, "1:2:hello world");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ════════════════════ ESM module loading (Tier-H.3 #2) ═══════════════════
+
+use rusty_bun_host::eval_esm_module;
+
+fn esm_test_setup(suffix: &str) -> String {
+    let pid = std::process::id();
+    let root = format!("/tmp/rusty-bun-esm-{}-{}", pid, suffix);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+#[test]
+fn js_esm_basic_relative_import() {
+    let root = esm_test_setup("basic");
+    std::fs::write(format!("{}/lib.js", root),
+        r#"export function greet(name) { return "hello " + name; }"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"import { greet } from "./lib.js"; globalThis.__esmResult = greet("world");"#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    assert_eq!(r, "hello world");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_esm_default_export() {
+    let root = esm_test_setup("default");
+    std::fs::write(format!("{}/lib.js", root),
+        r#"export default function(x) { return x * 2; }"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"import double from "./lib.js"; globalThis.__esmResult = String(double(21));"#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    assert_eq!(r, "42");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_esm_chained_imports() {
+    let root = esm_test_setup("chain");
+    std::fs::write(format!("{}/a.js", root),
+        r#"export const a = "A";"#).unwrap();
+    std::fs::write(format!("{}/b.js", root),
+        r#"import { a } from "./a.js"; export const b = a + "B";"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"import { b } from "./b.js"; globalThis.__esmResult = b + "C";"#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    assert_eq!(r, "ABC");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_esm_bare_specifier_node_modules() {
+    let root = esm_test_setup("bare");
+    std::fs::create_dir_all(format!("{}/node_modules/lib", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/lib/package.json", root),
+        r#"{"module": "./entry.js"}"#).unwrap();
+    std::fs::write(format!("{}/node_modules/lib/entry.js", root),
+        r#"export const v = "from-bare";"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"import { v } from "lib"; globalThis.__esmResult = v;"#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    assert_eq!(r, "from-bare");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_esm_uses_wired_globals() {
+    let root = esm_test_setup("globals");
+    std::fs::write(format!("{}/main.js", root),
+        r#"
+        const enc = new TextEncoder();
+        const dec = new TextDecoder();
+        globalThis.__esmResult = dec.decode(enc.encode("hello-esm"));
+        "#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    assert_eq!(r, "hello-esm");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Canonical-docs composition: ESM module composing wired pilots in a way
+// real consumer code would. Uses URLSearchParams + crypto + Buffer across
+// imports.
+#[test]
+fn js_compose_esm_canonical_pattern() {
+    let root = esm_test_setup("compose");
+    std::fs::write(format!("{}/qs.js", root),
+        r#"
+        export function parse(query) {
+            const p = new URLSearchParams(query);
+            const out = {};
+            for (const [k, v] of p) out[k] = v;
+            return out;
+        }
+        "#).unwrap();
+    std::fs::write(format!("{}/encode.js", root),
+        r#"
+        export function encodeStr(s) {
+            return Buffer.encodeBase64(Buffer.from(s));
+        }
+        "#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"
+        import { parse } from "./qs.js";
+        import { encodeStr } from "./encode.js";
+        const obj = parse("user=alice&id=42");
+        const encoded = encodeStr(obj.user + ":" + obj.id);
+        globalThis.__esmResult = encoded;
+        "#).unwrap();
+    let r = eval_esm_module(&format!("{}/main.js", root)).unwrap();
+    // base64("alice:42") = "YWxpY2U6NDI="
+    assert_eq!(r, "YWxpY2U6NDI=");
+    let _ = std::fs::remove_dir_all(&root);
+}

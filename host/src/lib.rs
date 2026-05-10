@@ -19,19 +19,208 @@
 //!     .existsSync / .statSync          via rusty-node-fs
 
 use rquickjs::{
-    function::Opt, Context, Function, Object, Result as JsResult, Runtime, Value,
+    function::Opt,
+    loader::{Loader, Resolver},
+    module::Declared,
+    Context, Ctx, Error as JsErr, Function, Module, Object, Result as JsResult, Runtime, Value,
 };
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
-/// into globalThis.
+/// into globalThis. Includes the ESM node-style module resolver/loader
+/// (Tier-H.3); CommonJS is still wired JS-side via `bootRequire(absPath)`.
 pub fn new_runtime() -> JsResult<(Runtime, Context)> {
     let runtime = Runtime::new()?;
+    runtime.set_loader(NodeResolver, FsLoader);
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> JsResult<()> {
         wire_globals(ctx)?;
         Ok(())
     })?;
     Ok((runtime, context))
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ESM resolver + loader (Tier-H.3 #2)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Node-style resolution for ESM imports: relative (./, ../), absolute,
+// and bare specifiers walking node_modules. Mirrors the JS-side CJS
+// resolver in COMMONJS_LOADER_JS, in Rust against std::fs.
+
+const ESM_EXTENSIONS: &[&str] = &["", ".mjs", ".js", ".cjs"];
+const ESM_INDEX_FILES: &[&str] = &["index.mjs", "index.js", "index.cjs"];
+
+fn try_extensions(abs_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    for ext in ESM_EXTENSIONS {
+        let candidate = if ext.is_empty() {
+            abs_path.to_path_buf()
+        } else {
+            let mut s = abs_path.as_os_str().to_owned();
+            s.push(ext);
+            std::path::PathBuf::from(s)
+        };
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn try_directory_with_index(abs_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let pkg_json = abs_dir.join("package.json");
+    if pkg_json.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&pkg_json) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                let main_str = parsed
+                    .get("module")
+                    .or_else(|| parsed.get("main"))
+                    .and_then(|v| v.as_str());
+                if let Some(main) = main_str {
+                    let target = abs_dir.join(main);
+                    if let Some(f) = try_extensions(&target) {
+                        return Some(f);
+                    }
+                    if target.is_dir() {
+                        if let Some(f) = try_directory_with_index(&target) {
+                            return Some(f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for idx in ESM_INDEX_FILES {
+        let candidate = abs_dir.join(idx);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn split_bare_specifier(specifier: &str) -> (&str, &str) {
+    if let Some(stripped) = specifier.strip_prefix('@') {
+        let rest = stripped;
+        if let Some(slash) = rest.find('/') {
+            let after = &rest[slash + 1..];
+            if let Some(second) = after.find('/') {
+                let pkg_end = 1 + slash + 1 + second;
+                return (&specifier[..pkg_end], &specifier[pkg_end..]);
+            }
+        }
+        return (specifier, "");
+    }
+    if let Some(slash) = specifier.find('/') {
+        (&specifier[..slash], &specifier[slash..])
+    } else {
+        (specifier, "")
+    }
+}
+
+fn resolve_node_style(base: &str, specifier: &str) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    let base_dir: PathBuf = if base.is_empty() {
+        std::env::current_dir().ok()?
+    } else {
+        let p = Path::new(base);
+        if p.is_dir() {
+            p.to_path_buf()
+        } else if let Some(d) = p.parent() {
+            d.to_path_buf()
+        } else {
+            std::env::current_dir().ok()?
+        }
+    };
+
+    if specifier.starts_with("./") || specifier.starts_with("../") || specifier == "." || specifier == ".." {
+        let joined = base_dir.join(specifier);
+        let normalized = normalize_path(&joined);
+        if let Some(f) = try_extensions(&normalized) {
+            return Some(f);
+        }
+        if normalized.is_dir() {
+            return try_directory_with_index(&normalized);
+        }
+        return None;
+    }
+
+    if specifier.starts_with('/') {
+        let p = PathBuf::from(specifier);
+        if let Some(f) = try_extensions(&p) {
+            return Some(f);
+        }
+        if p.is_dir() {
+            return try_directory_with_index(&p);
+        }
+        return None;
+    }
+
+    let (pkg_name, sub_path) = split_bare_specifier(specifier);
+    let mut dir = base_dir.as_path();
+    loop {
+        let pkg_root = dir.join("node_modules").join(pkg_name);
+        if pkg_root.is_dir() {
+            if sub_path.is_empty() {
+                if let Some(f) = try_directory_with_index(&pkg_root) {
+                    return Some(f);
+                }
+            } else {
+                let sub = sub_path.trim_start_matches('/');
+                let target = pkg_root.join(sub);
+                if let Some(f) = try_extensions(&target) {
+                    return Some(f);
+                }
+                if target.is_dir() {
+                    if let Some(f) = try_directory_with_index(&target) {
+                        return Some(f);
+                    }
+                }
+            }
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => break,
+        }
+    }
+    None
+}
+
+fn normalize_path(p: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+#[derive(Default, Clone, Copy)]
+struct NodeResolver;
+
+impl Resolver for NodeResolver {
+    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> JsResult<String> {
+        match resolve_node_style(base, name) {
+            Some(p) => Ok(p.to_string_lossy().into_owned()),
+            None => Err(JsErr::new_resolving(base, name)),
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct FsLoader;
+
+impl Loader for FsLoader {
+    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> JsResult<Module<'js, Declared>> {
+        let source = std::fs::read_to_string(name)
+            .map_err(|_| JsErr::new_loading(name))?;
+        Module::declare(ctx.clone(), name, source)
+    }
 }
 
 fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
@@ -2310,6 +2499,36 @@ pub fn eval_i64(source: &str) -> Result<i64, String> {
     let (_runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
     context.with(|ctx| {
         ctx.eval::<i64, _>(source).map_err(|e| format!("eval: {:?}", e))
+    })
+}
+
+/// Evaluate the ESM module at `entry_path` (absolute path); after the
+/// module's top-level executes, read `globalThis.__esmResult` as a string.
+/// Tier-H.3 #2: ESM with node-style resolution.
+pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
+    let (runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
+    let source = std::fs::read_to_string(entry_path)
+        .map_err(|e| format!("read entry: {}", e))?;
+    let entry_name = entry_path.to_string();
+    context.with(|ctx| -> Result<(), String> {
+        ctx.globals().set("__esmResult", rquickjs::Value::new_undefined(ctx.clone()))
+            .map_err(|e| format!("init result slot: {:?}", e))?;
+        let _promise = Module::evaluate(ctx.clone(), entry_name.as_str(), source.as_str())
+            .map_err(|e| format!("declare entry: {:?}", e))?;
+        Ok(())
+    })?;
+    for _ in 0..10_000 {
+        match runtime.execute_pending_job() {
+            Ok(true) => continue,
+            Ok(false) => break,
+            Err(_) => break,
+        }
+    }
+    context.with(|ctx| -> Result<String, String> {
+        let g = ctx.globals();
+        let res: Option<String> = g.get::<_, Option<String>>("__esmResult")
+            .map_err(|e| format!("read result: {:?}", e))?;
+        res.ok_or_else(|| "module did not set __esmResult".to_string())
     })
 }
 

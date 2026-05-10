@@ -335,6 +335,7 @@ dependencies = [
  "rusty-textencoder",
  "rusty-urlsearchparams",
  "rusty-web-crypto",
+ "serde_json",
 ]
 
 [[package]]

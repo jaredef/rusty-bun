@@ -1,0 +1,49 @@
+
+=== derive-constraints cluster ===
+scan source:        /home/jaredef/rusty-bun/runs/2026-05-10-bun-derive-constraints/bun-scan.json
+constraints in:     42680
+properties out:     6546
+antichain size:     11100
+reduction ratio:    0.2601 (antichain / constraints_in)
+construction-style: 109 (1.7% of properties)
+behavioral:         6437 (98.3% of properties)
+
+property cardinality buckets:
+         1  3764 properties
+   101-500  48 properties
+       2-5  1961 properties
+    21-100  183 properties
+      501+  10 properties
+      6-20  580 properties
+
+verb-class distribution:
+  containment        705 properties
+  equivalence        4086 properties
+  error              10 properties
+  existence          630 properties
+  genericassertion   47 properties
+  ordering           453 properties
+  other              301 properties
+  typeinstance       314 properties
+
+top 20 construction-style properties (by cardinality):
+  n=  131  error             assert.throws
+  n=   40  existence         expect
+  n=   12  typeinstance      expect
+  n=   10  existence         url
+  n=    4  existence         module
+  n=    3  typeinstance      process
+  n=    2  existence         Bun.cron.parse
+  n=    2  typeinstance      Bun.randomUUIDv5
+  n=    2  existence         fs.access
+  n=    2  typeinstance      inspector.console
+  n=    2  existence         inspector.url
+  n=    2  typeinstance      it.each
+  n=    2  existence         module.SourceMap
+  n=    2  existence         process.getuid
+  n=    2  typeinstance      tls.rootCertificates
+  n=    2  existence         tls.rootCertificates
+  n=    1  typeinstance      Blob
+  n=    1  existence         BroadcastChannel
+  n=    1  typeinstance      Buffer.prototype.inspect
+  n=    1  existence         Buffer.prototype.offset

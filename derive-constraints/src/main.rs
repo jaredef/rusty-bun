@@ -3,6 +3,7 @@
 //! in docs/derivation-inversion-on-bun-tests.md. The cluster / invert /
 //! predict phases are downstream layers that consume this scan's JSON.
 
+mod cluster;
 mod extract;
 mod scan;
 
@@ -30,6 +31,19 @@ enum Cmd {
         #[arg(long)]
         summary: bool,
     },
+    /// Cluster a scan's constraints into a property catalog: canonicalize
+    /// each constraint by (subject, verb-class), select a minimal antichain
+    /// per property, classify properties as construction-style or behavioral.
+    Cluster {
+        /// Path to a scan JSON produced by `derive-constraints scan`.
+        scan: PathBuf,
+        /// Optional output file; defaults to stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Print human-readable summary in addition to JSON output.
+        #[arg(long)]
+        summary: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -43,8 +57,25 @@ fn main() -> Result<()> {
                 print_summary(&report);
             }
         }
+        Cmd::Cluster { scan, out, summary } => {
+            let scan_report: scan::ScanReport = read_json(&scan)
+                .with_context(|| format!("loading scan from {}", scan.display()))?;
+            let mut report = cluster::cluster(&scan_report)?;
+            report.source_path = Some(scan.to_string_lossy().into_owned());
+            write_json(&out, &report)?;
+            if summary {
+                print_cluster_summary(&report);
+            }
+        }
     }
     Ok(())
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let value = serde_json::from_slice(&data)
+        .with_context(|| format!("parse json {}", path.display()))?;
+    Ok(value)
 }
 
 fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<()> {
@@ -59,6 +90,62 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
         }
     }
     Ok(())
+}
+
+fn print_cluster_summary(report: &cluster::ClusterReport) {
+    let s = &report.stats;
+    eprintln!("\n=== derive-constraints cluster ===");
+    if let Some(ref src) = report.source_path {
+        eprintln!("scan source:        {}", src);
+    }
+    eprintln!("constraints in:     {}", s.constraints_in);
+    eprintln!("properties out:     {}", s.properties_out);
+    eprintln!("antichain size:     {}", s.antichain_size);
+    eprintln!(
+        "reduction ratio:    {:.4} (antichain / constraints_in)",
+        s.reduction_ratio
+    );
+    eprintln!(
+        "construction-style: {} ({:.1}% of properties)",
+        s.construction_style_count,
+        if s.properties_out == 0 {
+            0.0
+        } else {
+            100.0 * s.construction_style_count as f64 / s.properties_out as f64
+        }
+    );
+    eprintln!(
+        "behavioral:         {} ({:.1}% of properties)",
+        s.behavioral_count,
+        if s.properties_out == 0 {
+            0.0
+        } else {
+            100.0 * s.behavioral_count as f64 / s.properties_out as f64
+        }
+    );
+    eprintln!("\nproperty cardinality buckets:");
+    for (bucket, count) in &s.property_cardinality_buckets {
+        eprintln!("  {:>8}  {} properties", bucket, count);
+    }
+    eprintln!("\nverb-class distribution:");
+    for (verb, count) in &s.by_verb_class {
+        eprintln!("  {:<18} {} properties", verb, count);
+    }
+    eprintln!("\ntop 20 construction-style properties (by cardinality):");
+    let cs: Vec<&cluster::Property> = report
+        .properties
+        .iter()
+        .filter(|p| p.construction_style)
+        .take(20)
+        .collect();
+    for p in cs {
+        eprintln!(
+            "  n={:>5}  {:<16}  {}",
+            p.constraints_in,
+            format!("{:?}", p.verb_class).to_lowercase(),
+            p.subject
+        );
+    }
 }
 
 fn print_summary(report: &scan::ScanReport) {

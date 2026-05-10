@@ -32,9 +32,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `bf5948a` | **fetch-api system pilot — Headers + Request + Response (405 LOC, 50/50; 6.5% naive LOC ratio)** |
 | 2026-05-10 | `37c009b` | **node-path pilot — first Tier-2 ecosystem-compat anchor (303 LOC vs 3,656; 8.3% naive ratio); largest reference target** |
 | 2026-05-10 | `7f2e73a` | Resume Vector for rusty-bun (seed.md + trajectory.md per Doc 581) |
-| 2026-05-10 | (this) | **streams pilot — first Tier-A substrate from queue (453 LOC across 3 composed surfaces; 11.2% naive ratio); first pilot where spec-extract layer dominates over test-corpus layer** |
+| 2026-05-10 | `d660263` | **streams pilot — first Tier-A substrate from queue (453 LOC across 3 composed surfaces; 11.2% naive ratio); first pilot where spec-extract layer dominates over test-corpus layer** |
+| 2026-05-10 | (this) | **buffer pilot — Tier-A #2 from queue (261 LOC; 11.1% naive ratio against Bun's 2,359 LOC); 11 cited consumer dependencies across Node ecosystem** |
 
-**Pilot inventory (8 pilots):**
+**Pilot inventory (10 pilots):**
 
 | # | Pilot | Class | LOC (code-only) | Verifier | Consumer | Aggregate ratio anchor |
 |---:|---|---|---:|---:|---:|---|
@@ -47,9 +48,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 7 | fetch-api (Headers + Request + Response) | system / multi-surface | 405 | 34 | 16 | 6.5% naive / ~20% adj |
 | 8 | node-path | Tier-2 Node-compat pure-function | 303 | 51 | 11 | 8.3% naive / ~12–15% adj |
 | 9 | streams (Readable + Writable + Transform) | substrate / async-state-machine | 453 | 29 | 9 | 11.2% naive / ~12–15% adj |
-|   | **Aggregate** | | **2,063** | **254 (1 skip)** | **96** | **~5.6% across ~37,000+ LOC upstream** |
+| 10 | buffer | Tier-2 Node-compat binary type | 261 | 44 | 11 | 11.1% naive / ~17% adj |
+|   | **Aggregate** | | **2,324** | **298 (1 skip)** | **107** | **~6.0% across ~39,000+ LOC upstream** |
 
-Total tests: **350 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
+Total tests: **405 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
 
 Doc-tier corpus output:
 - [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error) — port-as-translation is a category error
@@ -67,7 +69,7 @@ Doc-tier corpus output:
 
 1. ~~Streams pilot~~ — **DONE** 2026-05-10 (453 LOC, 38/38 tests, 11.2% naive ratio, first pilot where spec-extract layer dominated)
 
-2. **Buffer pilot — Node-compat binary type (Tier 2)** — used by 70%+ of npm packages; substrate for many Node-compat surfaces. Bun's `Buffer.rs` is large; clause cardinality on Bun's tests: 457 clauses. Estimated: 300–500 LOC, Tier-2 ecosystem.
+2. ~~Buffer pilot~~ — **DONE** 2026-05-10 (261 LOC; 11.1% naive ratio; 11 cited consumer dependencies; 44+11 tests)
 
 ### Tier-B — flagship Bun-namespace pilots (Tier 2 ecosystem-only; tests apparatus on no-spec target)
 

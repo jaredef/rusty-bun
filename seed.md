@@ -75,6 +75,12 @@ For Sub-criterion 4 of the completion telos (JS host integration), pilots wire i
 
 4. **Testing surface:** every wired pilot has at least one JS-side integration test in `host/tests/integration.rs` plus appears in `host/examples/runtime-demo.js`. The workspace runner (`./bin/run-pilots.sh`) covers the host suite alongside per-pilot suites.
 
+5. **Decode polymorphic JS shapes JS-side, not Rust-side.** When a JS API accepts a polymorphic argument shape — e.g., Bun.serve's `routes: { "/x": fn | { GET: fn, POST: fn } }`, fetch's `init: { headers: HeadersInit | Headers, body: BodyInit }` — the JS-side wrapper performs the discrimination and only hands canonical values to the Rust helpers. The Rust pilot stays a pure algorithm (e.g., `match_pattern(pattern, url)`); decoding the user's polymorphic input is JS work. This keeps pilot crates clean of host-encoding concerns and lets a single Rust helper serve many JS surface shapes.
+
+6. **Cross-boundary type translation:** rquickjs does not bind tuples or structs as function args; use `Vec<Vec<String>>` as a pair-list across the FFI when the data is naturally `Vec<(String, String)>`. The JS-side wrapper assembles/disassembles into objects.
+
+7. **Canonical-docs composition test.** Every wired flagship surface ships with at least one integration test that mirrors the upstream's documented usage example *verbatim* (see `js_compose_bun_serve_canonical_pattern`). This test is the smallest unit of "real consumer can swap rusty-bun for Bun" and is the verification of choice for sub-criterion 4. Per-method tests verify the surface; canonical-docs tests verify the **swap-in property**.
+
 ## IV. Future-move discipline
 
 **M1. Pilot prioritization.** The next pilot is chosen from the trajectory's queue. Selection criteria, in order:

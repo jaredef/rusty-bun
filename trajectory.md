@@ -178,7 +178,13 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 ~~**H.1 — JS engine selection.**~~ — **DONE** 2026-05-10 (selected rquickjs 0.6; production-tested QuickJS Rust binding; ~150 LOC of FFI glue produces a 1.6 MB binary)
 
-**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 16 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn). Remaining: structuredClone, streams, node-http data-layer — each is incremental against the formalized integration base (seed §III.A8 + host/HOST-INTEGRATION-PATTERN.md).
+**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 16 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn). Remaining wirings, **priority-ordered for next session**:
+
+  1. **structuredClone** — pure-value pilot (Pattern 1 from HOST-INTEGRATION-PATTERN.md), no statefulness, no transport. Lowest-friction pickup. Composes with everything (errors, Map, Set serialization).
+  2. **streams (ReadableStream/WritableStream/TransformStream)** — stateful (Pattern 3), but the pilot is already shipped. Wiring blocks Response.body() and fetch() composition; high downstream leverage.
+  3. **node-http data-layer** — last data-layer surface; Pattern 3 with method-keyed dispatch (same shape as Bun.serve route table). Use Bun.serve's `routes:` decoder as the template; the JS-side polymorphic-shape decode is the canonical move.
+
+  Pick #1 first unless the keeper specifies otherwise. Each wiring should ship with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim — this test is the smallest unit of "real consumer can swap rusty-bun for Bun" and is the verification of choice for sub-criterion 4.
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

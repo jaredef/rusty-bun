@@ -2104,3 +2104,26 @@ fn js_compose_url_canonical_pattern() {
     "#).unwrap();
     assert_eq!(r, "GET|https://api.example.com/v1/users?limit=10&offset=20&filter=active");
 }
+
+// ════════════════════ Tier-J: consumer-shape application ═════════════════
+//
+// First Tier-J consumer pilot: a tiny Bun-flavored todo API at
+// host/tests/fixtures/consumer-todo-api/. Exercises ESM imports across
+// module boundaries, bare-specifier resolution through node_modules,
+// Bun.serve route tables, URL + URLSearchParams, Request + Response,
+// structuredClone, Date, Map, Set, Buffer, JSON. If this runs cleanly,
+// at least one real-shape consumer can swap rusty-bun for Bun.
+//
+// Sub-criterion 5 of the engagement telos. The diff against actual Bun
+// is a follow-up — it requires running both runtimes against the same
+// fixtures and recording outcome matrices.
+
+#[test]
+fn js_consumer_todo_api_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-todo-api/src/main.js");
+    let result = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    // 10 self-test cases inside main.js; expect all pass.
+    assert!(result.starts_with("10/10"),
+        "consumer self-test failed: {}", result);
+}

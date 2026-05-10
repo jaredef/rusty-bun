@@ -1,0 +1,7 @@
+{
+  "name": "consumer-todo-api",
+  "version": "0.1.0",
+  "description": "Tier-J consumer-shape pilot: a tiny Bun-flavored todo API exercising URL, URLSearchParams, Request, Response, Bun.serve, Buffer, structuredClone across module boundaries.",
+  "module": "./src/main.js",
+  "main": "./src/main.js"
+}

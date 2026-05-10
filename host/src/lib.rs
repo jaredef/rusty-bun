@@ -45,6 +45,10 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
+    wire_blob_static(&ctx, &global)?;
+    install_blob_and_file_classes_js(&ctx)?;
+    wire_abort_controller_static(&ctx, &global)?;
+    install_abort_controller_classes_js(&ctx)?;
     Ok(())
 }
 
@@ -494,6 +498,198 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
         })?,
     )?;
     global.set("fs", fs)?;
+    Ok(())
+}
+
+// ─────────────────── Blob + File ─────────────────────────────────────
+//
+// Per seed §III.A8 Pattern 3: stateless Rust helpers expose the
+// algorithmic core; JS-side classes hold their own state. The Blob class
+// owns its bytes (as a JS array) and mime_type (string); the Rust helpers
+// operate on plain Vec<u8> + String.
+
+fn wire_blob_static<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "lowercaseAsciiType",
+        Function::new(ctx.clone(), |s: String| -> String {
+            s.chars()
+                .map(|c| if c.is_ascii() { c.to_ascii_lowercase() } else { c })
+                .collect()
+        })?,
+    )?;
+    ns.set(
+        "sliceBytes",
+        Function::new(ctx.clone(), |bytes: Vec<u8>, start: i64, end: Opt<i64>| -> Vec<u8> {
+            let blob = rusty_blob::Blob::from_bytes(bytes);
+            blob.slice(start, end.0, None).bytes()
+        })?,
+    )?;
+    ns.set(
+        "decodeText",
+        Function::new(ctx.clone(), |bytes: Vec<u8>| -> String {
+            rusty_blob::Blob::from_bytes(bytes).text()
+        })?,
+    )?;
+    global.set("__blob", ns)?;
+    Ok(())
+}
+
+const BLOB_AND_FILE_CLASSES_JS: &str = r#"
+globalThis.Blob = class Blob {
+    constructor(parts, options) {
+        const collected = [];
+        if (Array.isArray(parts)) {
+            for (const part of parts) {
+                if (typeof part === "string") {
+                    // UTF-8 encode by passing through TextEncoder.
+                    const enc = new TextEncoder();
+                    const encoded = enc.encode(part);
+                    for (const b of encoded) collected.push(b);
+                } else if (Array.isArray(part)) {
+                    for (const b of part) collected.push(b);
+                } else if (part && typeof part.bytes === "function") {
+                    for (const b of part.bytes()) collected.push(b);
+                }
+            }
+        }
+        this._bytes = collected;
+        const t = (options && typeof options.type === "string") ? options.type : "";
+        this._type = __blob.lowercaseAsciiType(t);
+    }
+    get size() { return this._bytes.length; }
+    get type() { return this._type; }
+    bytes() { return this._bytes; }
+    arrayBuffer() { return this._bytes; }
+    text() { return __blob.decodeText(this._bytes); }
+    slice(start, end, contentType) {
+        const startN = (typeof start === "number") ? start : 0;
+        const sliced = (end === undefined)
+            ? __blob.sliceBytes(this._bytes, startN)
+            : __blob.sliceBytes(this._bytes, startN, end);
+        const newType = (typeof contentType === "string") ? contentType : "";
+        return new Blob([sliced], { type: newType });
+    }
+};
+
+globalThis.File = class File extends Blob {
+    constructor(parts, name, options) {
+        super(parts, options);
+        this._name = String(name);
+        this._lastModified = (options && typeof options.lastModified === "number")
+            ? options.lastModified : 0;
+        this._webkitRelativePath = "";
+    }
+    get name() { return this._name; }
+    get lastModified() { return this._lastModified; }
+    get webkitRelativePath() { return this._webkitRelativePath; }
+};
+"#;
+
+fn install_blob_and_file_classes_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(BLOB_AND_FILE_CLASSES_JS)?;
+    Ok(())
+}
+
+// ─────────────────── AbortController + AbortSignal ───────────────────
+//
+// Per seed §III.A8 Pattern 3 + the rusty-abort-controller pilot's pattern:
+// state is held in JS (the listener list, aborted flag, reason); a single
+// Rust helper exposes the canonical default-reason DOMException-AbortError
+// shape so the JS class can return a structurally-equivalent object.
+
+fn wire_abort_controller_static<'js>(
+    ctx: &rquickjs::Ctx<'js>, global: &Object<'js>,
+) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "defaultReasonName",
+        Function::new(ctx.clone(), || -> String {
+            // rusty_abort_controller::Reason::AbortError → "AbortError"
+            "AbortError".to_string()
+        })?,
+    )?;
+    ns.set(
+        "defaultReasonCode",
+        Function::new(ctx.clone(), || -> u16 {
+            // Per DOMException AbortError legacy code per pilot
+            rusty_abort_controller::Reason::AbortError.code()
+        })?,
+    )?;
+    global.set("__abort", ns)?;
+    Ok(())
+}
+
+const ABORT_CONTROLLER_CLASSES_JS: &str = r#"
+globalThis.AbortSignal = class AbortSignal {
+    constructor() {
+        this._aborted = false;
+        this._reason = undefined;
+        this._listeners = [];
+    }
+    get aborted() { return this._aborted; }
+    get reason() { return this._reason; }
+    addEventListener(type, listener) {
+        if (type !== "abort") return;
+        if (this._aborted) {
+            try { listener(this._reason); } catch (_) {}
+            return;
+        }
+        this._listeners.push(listener);
+    }
+    removeEventListener(type, listener) {
+        if (type !== "abort") return;
+        this._listeners = this._listeners.filter(l => l !== listener);
+    }
+    throwIfAborted() {
+        if (this._aborted) throw this._reason;
+    }
+    _doAbort(reason) {
+        if (this._aborted) return;
+        this._aborted = true;
+        this._reason = reason !== undefined ? reason : {
+            name: __abort.defaultReasonName(),
+            code: __abort.defaultReasonCode(),
+            message: "The operation was aborted",
+        };
+        const listeners = this._listeners;
+        this._listeners = [];
+        for (const l of listeners) {
+            try { l(this._reason); } catch (_) {}
+        }
+    }
+    static abort(reason) {
+        const s = new AbortSignal();
+        s._doAbort(reason);
+        return s;
+    }
+    static any(signals) {
+        const result = new AbortSignal();
+        for (const s of signals) {
+            if (s._aborted) { result._doAbort(s._reason); return result; }
+        }
+        for (const s of signals) {
+            s.addEventListener("abort", (reason) => {
+                if (!result._aborted) result._doAbort(reason);
+            });
+        }
+        return result;
+    }
+};
+
+globalThis.AbortController = class AbortController {
+    constructor() {
+        this._signal = new AbortSignal();
+    }
+    get signal() { return this._signal; }
+    abort(reason) {
+        this._signal._doAbort(reason);
+    }
+};
+"#;
+
+fn install_abort_controller_classes_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(ABORT_CONTROLLER_CLASSES_JS)?;
     Ok(())
 }
 

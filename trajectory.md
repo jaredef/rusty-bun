@@ -113,13 +113,89 @@ Doc-tier corpus output:
 
 12. ~~AuthorityTier schema extension~~ — **DONE** 2026-05-10 (Spec / Ecosystem / Contingent enum on every clause; `classify_authority_tier()` default-tagging; spec extracts always Spec, web-platform subjects always Spec, Bun-namespace + Node-API always Ecosystem, default Contingent; Bun corpus breakdown: 1.3% / 9.1% / 89.7%)
 
-### Tier-E — completion-criterion-anchoring docs
+### Tier-E — apparatus-saturation-anchoring docs
 
-13. ~~Doc 708 — completion criterion~~ — **DONE** 2026-05-10 (records all 4 seed §VII criteria met: coverage / aggregate-ratio / consumer-corpus / doc-tier; numerical summary at §VII; 5 cybernetic modes named at §II; full provenance at §VIII)
+13. ~~Doc 708 — apparatus saturation record~~ — **DONE** 2026-05-10 (records the four prior-framing criteria as met: coverage of architectural classes / aggregate-ratio / consumer-corpus / doc-tier; folds these into Sub-criterion 1 of the new completion telos at seed §VII)
 
-14. **Cumulative apparatus paper** — academic-style writeup of the apparatus + the eight-plus pilots + the bidirectional reading. Audience: external. Defer until pilot library is broader.
+14. **Cumulative apparatus paper** — academic-style writeup of the apparatus + the bidirectional reading + the saturation-to-completion arc. Audience: external. Defer until completion arc has accumulated more measurement.
 
 ---
+
+## TELOS UPDATE 2026-05-10
+
+The seed's §VII has been re-anchored. **Telos: rusty-bun is complete against Bun when a real consumer can swap rusty-bun for Bun and run their JS-using application without regression.** The prior framing (apparatus saturation) is now Sub-criterion 1 of five. Saturation is necessary; completion requires the remaining four sub-criteria. Tiers F through J anchor those.
+
+---
+
+### Tier-F — Surface-API completeness (Sub-criterion 2)
+
+Every Bun runtime API has a pilot anchor. Estimated 50-80 additional pilots beyond the current 16. The list below is a starting partition; per-surface scope is decided at pilot time.
+
+**F.1 — Web Crypto subtle full surface.** generateKey / deriveKey / importKey / exportKey / sign / verify / wrapKey / unwrapKey across HMAC + AES-GCM + AES-CBC + AES-CTR + RSA-OAEP + RSA-PSS + RSA-SSA-PKCS1-v1_5 + ECDSA + ECDH + Ed25519 + X25519 + HKDF + PBKDF2. Plus SHA-1, SHA-384, SHA-512 digests. Big lift; multi-pilot.
+
+**F.2 — Streams full surface.** ReadableByteStream BYOB reads, async iterator (`Symbol.asyncIterator`), transferable streams, pipeTo / pipeThrough automation. Composes with the existing streams pilot.
+
+**F.3 — Node-compat: net, tls, dgram, dns.** Socket-level networking. Each is its own pilot.
+
+**F.4 — Node-compat: zlib, stream (Node-style), events, os.** Compression + Node's stream variant + EventEmitter + OS info.
+
+**F.5 — Node-compat: cluster, worker_threads, vm, perf_hooks, async_hooks.** Process / thread / VM / observability surfaces.
+
+**F.6 — Node-compat: readline, repl, tty, assert, timers, inspector, module.** Interactive + assertion + module surfaces.
+
+**F.7 — Bun-namespace: Bun.password, Bun.SQLite, bun:redis, bun:s3.** Stateful / transactional surfaces.
+
+**F.8 — Bun-namespace: Bun.Cookie, Bun.JSONL, Bun.Image, Bun.Archive, Bun.Glob, Bun.YAML, Bun.CryptoHasher, Bun.deepEquals, Bun.inspect.** Utility surfaces.
+
+**F.9 — Bun-namespace: Bun.connect, Bun.listen, Bun.dns, Bun.write, Bun.fileURLToPath, Bun.pathToFileURL, Bun.Terminal, Bun.cron.** I/O + Bun-specific utilities.
+
+**F.10 — Worker / MessagePort / BroadcastChannel.** Cross-realm message passing. Composes with structuredClone (anchored) + streams (anchored).
+
+**F.11 — WebSocket (server + client).** Bidirectional networking. Composes with streams + transport-layer (Tier-G).
+
+### Tier-G — Transport-layer pilots (Sub-criterion 3)
+
+The data-layer-only pilots lift to wire-format. Each is significantly larger than its data-layer counterpart.
+
+**G.1 — fetch transport.** HTTP/1.1 wire format + connection pooling + TLS handshake + redirect handling + body streaming. Composes with fetch-api (Pilot 7).
+
+**G.2 — Bun.serve transport.** Socket binding + HTTP/1.1 wire parsing + WebSocket upgrade + TLS termination + file streaming. Composes with Bun.serve (Pilot 12).
+
+**G.3 — Bun.spawn transport.** IPC channels + streaming stdio + terminal mode. Composes with Bun.spawn (Pilot 13).
+
+**G.4 — Node http/https transport.** HTTP wire format + cert handling + connection pool. Composes with node-http (Pilot 15).
+
+**G.5 — HTTP/2 + HTTP/3 transport.** Modern protocols. Heavy lift; deferred until G.1 + G.4 land.
+
+### Tier-H — JS host integration (Sub-criterion 4)
+
+**H.1 — JS engine selection.** Decide between QuickJS, Boa, or building a minimal engine. QuickJS has Rust bindings (rquickjs); Boa is pure-Rust. Tradeoffs: QuickJS is smaller and faster; Boa has better ECMAScript spec coverage.
+
+**H.2 — Pilots-to-JS FFI.** Expose every pilot's API to JS code as JS-host objects. Bridge between Rust types (Buffer, Blob, Headers, etc.) and JS-host values.
+
+**H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
+
+**H.4 — globalThis setup.** Wire all the globals (URL, fetch, console, setTimeout, structuredClone, etc.) into the JS host's `globalThis`.
+
+**H.5 — Console + error reporting.** Bun's console output format, error stack traces, source maps.
+
+### Tier-I — WPT runner (compliance signal)
+
+**I.1 — WPT runner adapter.** `wpt run` adapter for the integrated rusty-bun runtime. Exposes the rusty-bun executable as a "browser" wpt knows how to drive.
+
+**I.2 — WPT execution per surface.** Run WPT against each piloted surface. Record pass-rate per WHATWG spec area (URL / Encoding / Streams / Fetch / FileAPI / etc.).
+
+**I.3 — WPT pass-rate vs Bun.** Compare rusty-bun's WPT pass-rate against Bun's published WPT pass-rate for the same surfaces. Equivalence = spec-conformance plug-and-play.
+
+### Tier-J — Differential testing against Bun-using applications (Sub-criterion 5)
+
+**J.1 — Application basket.** Curate a representative basket of Bun-using applications: Hono / Elysia frameworks at example-app level; npm packages whose test suites Bun runs cleanly; Cloudflare Workers examples; small but real-world apps.
+
+**J.2 — Differential runner.** Tooling to run `npm test` under both Bun and rusty-bun and diff outcomes per test.
+
+**J.3 — Per-app regression closure.** For each app in the basket: P_bun ⊆ P_drv (every test passing on Bun also passes on rusty-bun). Zero regressions per app.
+
+**J.4 — Aggregate basket pass.** N apps × zero regressions × zero crashes = real plug-and-play. The operational completion criterion of the engagement.
 
 ## III. Deferred — with explicit re-open conditions
 

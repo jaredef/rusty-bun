@@ -1035,3 +1035,160 @@ fn js_compose_bun_serve_with_url_search_params() {
     "#).unwrap();
     assert_eq!(r, "user=alice");
 }
+
+// ════════════════════ structuredClone ════════════════════
+
+#[test]
+fn js_structured_clone_primitives() {
+    let r = eval_string(r#"
+        const x = structuredClone({n: 1, s: "x", b: true, nul: null});
+        x.n + ":" + x.s + ":" + x.b + ":" + (x.nul === null)
+    "#).unwrap();
+    assert_eq!(r, "1:x:true:true");
+}
+
+#[test]
+fn js_structured_clone_independence() {
+    let r = eval_bool(r#"
+        const a = {x: 1};
+        const b = structuredClone(a);
+        b.x = 2;
+        a.x === 1 && b.x === 2
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_structured_clone_nested() {
+    let r = eval_i64(r#"
+        const a = {inner: {n: 42}};
+        const b = structuredClone(a);
+        b.inner.n = 99;
+        a.inner.n
+    "#).unwrap();
+    assert_eq!(r, 42);
+}
+
+#[test]
+fn js_structured_clone_array() {
+    let r = eval_string(r#"
+        const a = [1, [2, 3], {k: 4}];
+        const b = structuredClone(a);
+        b[1][0] = 99;
+        b[2].k = 88;
+        a[1][0] + ":" + a[2].k + ":" + b[1][0] + ":" + b[2].k
+    "#).unwrap();
+    assert_eq!(r, "2:4:99:88");
+}
+
+#[test]
+fn js_structured_clone_date() {
+    let r = eval_bool(r#"
+        const d = new Date(1234567890000);
+        const c = structuredClone(d);
+        c instanceof Date && c.getTime() === d.getTime() && c !== d
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_structured_clone_regexp() {
+    let r = eval_string(r#"
+        const r = /foo/gi;
+        const c = structuredClone(r);
+        c.source + ":" + c.flags + ":" + (c instanceof RegExp) + ":" + (c !== r)
+    "#).unwrap();
+    assert_eq!(r, "foo:gi:true:true");
+}
+
+#[test]
+fn js_structured_clone_map() {
+    let r = eval_string(r#"
+        const m = new Map([["a", 1], ["b", {n: 2}]]);
+        const c = structuredClone(m);
+        c.get("b").n = 99;
+        m.get("b").n + ":" + c.get("b").n + ":" + (c instanceof Map)
+    "#).unwrap();
+    assert_eq!(r, "2:99:true");
+}
+
+#[test]
+fn js_structured_clone_set() {
+    let r = eval_string(r#"
+        const s = new Set([1, 2, 3]);
+        const c = structuredClone(s);
+        c.add(4);
+        s.size + ":" + c.size + ":" + (c instanceof Set)
+    "#).unwrap();
+    assert_eq!(r, "3:4:true");
+}
+
+#[test]
+fn js_structured_clone_cycle() {
+    let r = eval_bool(r#"
+        const a = {x: 1};
+        a.self = a;
+        const b = structuredClone(a);
+        b.self === b && b !== a && b.x === 1
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_structured_clone_array_buffer() {
+    let r = eval_string(r#"
+        const buf = new ArrayBuffer(4);
+        const view = new Uint8Array(buf);
+        view[0] = 65; view[1] = 66; view[2] = 67; view[3] = 68;
+        const c = structuredClone(buf);
+        const cview = new Uint8Array(c);
+        cview[0] = 99;
+        view[0] + ":" + cview[0] + ":" + (c !== buf) + ":" + (c.byteLength === 4)
+    "#).unwrap();
+    assert_eq!(r, "65:99:true:true");
+}
+
+#[test]
+fn js_structured_clone_typed_array() {
+    let r = eval_string(r#"
+        const a = new Uint16Array([1, 2, 3]);
+        const c = structuredClone(a);
+        c[0] = 99;
+        a[0] + ":" + c[0] + ":" + (c.constructor === Uint16Array)
+    "#).unwrap();
+    assert_eq!(r, "1:99:true");
+}
+
+#[test]
+fn js_structured_clone_function_throws() {
+    let r = eval_bool(r#"
+        try {
+            structuredClone(() => 1);
+            false
+        } catch (e) {
+            e.name === "DataCloneError"
+        }
+    "#).unwrap();
+    assert!(r);
+}
+
+// Canonical-docs composition test: MDN's flagship structuredClone example.
+#[test]
+fn js_compose_structured_clone_canonical_pattern() {
+    let r = eval_string(r#"
+        const original = {
+            name: "MDN",
+            details: { coords: [37.7749, -122.4194] },
+            tags: new Set(["web", "docs"]),
+            modified: new Date(0),
+        };
+        const copy = structuredClone(original);
+        copy.details.coords[0] = 0;
+        copy.tags.add("clone");
+        original.details.coords[0] + "|" +
+            original.tags.has("clone") + "|" +
+            copy.tags.has("clone") + "|" +
+            (copy.modified instanceof Date)
+    "#).unwrap();
+    assert_eq!(r, "37.7749|false|true|true");
+}

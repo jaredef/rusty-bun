@@ -58,6 +58,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_bun_serve_js(&ctx)?;
     wire_bun_spawn_static(&ctx, &global)?;
     install_bun_spawn_js(&ctx)?;
+    install_structured_clone_js(&ctx)?;
     Ok(())
 }
 
@@ -1312,6 +1313,159 @@ const BUN_SPAWN_JS: &str = r#"
 
 fn install_bun_spawn_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(BUN_SPAWN_JS)?;
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// structuredClone — JS-side wiring (Pattern: pure-JS algorithm pilot)
+// ════════════════════════════════════════════════════════════════════════
+//
+// The structured-clone pilot's Rust crate models the algorithm against a
+// custom Heap/Value representation for verifier-test purposes. Routing
+// JS-side values through that Heap representation would require a
+// round-tripping bridge that adds no value: the algorithm is pure
+// recursion plus a memo for cycle handling, and JS already has all the
+// primitives it needs (Date, RegExp, Map, Set, ArrayBuffer, TypedArrays,
+// Blob, File). The pilot's Rust crate stays the canonical algorithmic
+// reference; the host wires structuredClone as a JS-side reimplementation
+// against the same constraint set the pilot was derived from.
+//
+// This is a third pattern alongside Pattern 1 (pure-value Rust) and
+// Pattern 3 (stateless Rust + JS class): Pattern 4, "spec-formalization
+// pilot, JS-side instantiation". Folded back into seed §III.A8 in the
+// resolution-increase pass that ships with this round.
+
+const STRUCTURED_CLONE_JS: &str = r#"
+(function() {
+    function clone(value, memo) {
+        // Primitives: cloned by value automatically.
+        if (value === null || value === undefined) return value;
+        const t = typeof value;
+        if (t === "number" || t === "string" || t === "boolean" || t === "bigint") return value;
+        if (t === "symbol") throw new DOMExceptionLike("Symbols are not cloneable", "DataCloneError");
+        if (t === "function") throw new DOMExceptionLike("Functions are not cloneable", "DataCloneError");
+
+        // Cycle handling.
+        if (memo.has(value)) return memo.get(value);
+
+        // Date.
+        if (value instanceof Date) {
+            const out = new Date(value.getTime());
+            memo.set(value, out);
+            return out;
+        }
+
+        // RegExp.
+        if (value instanceof RegExp) {
+            const out = new RegExp(value.source, value.flags);
+            memo.set(value, out);
+            return out;
+        }
+
+        // Map.
+        if (value instanceof Map) {
+            const out = new Map();
+            memo.set(value, out);
+            for (const [k, v] of value) {
+                out.set(clone(k, memo), clone(v, memo));
+            }
+            return out;
+        }
+
+        // Set.
+        if (value instanceof Set) {
+            const out = new Set();
+            memo.set(value, out);
+            for (const v of value) {
+                out.add(clone(v, memo));
+            }
+            return out;
+        }
+
+        // ArrayBuffer.
+        if (value instanceof ArrayBuffer) {
+            const out = value.slice(0);
+            memo.set(value, out);
+            return out;
+        }
+
+        // Typed arrays / DataView.
+        if (ArrayBuffer.isView(value)) {
+            const buf = clone(value.buffer, memo);
+            const ctor = value.constructor;
+            const out = value instanceof DataView
+                ? new DataView(buf, value.byteOffset, value.byteLength)
+                : new ctor(buf, value.byteOffset, value.length);
+            memo.set(value, out);
+            return out;
+        }
+
+        // Blob / File: rely on the host's Blob.slice for byte-copy.
+        if (typeof Blob !== "undefined" && value instanceof Blob) {
+            // Re-assemble via the bytes-getter the wired Blob exposes.
+            const bytes = value._bytes ? value._bytes.slice() : [];
+            if (typeof File !== "undefined" && value instanceof File) {
+                const out = new File([new Uint8Array(bytes)], value.name, {
+                    type: value.type,
+                    lastModified: value.lastModified,
+                });
+                memo.set(value, out);
+                return out;
+            }
+            const out = new Blob([new Uint8Array(bytes)], { type: value.type });
+            memo.set(value, out);
+            return out;
+        }
+
+        // Array.
+        if (Array.isArray(value)) {
+            const out = [];
+            memo.set(value, out);
+            for (let i = 0; i < value.length; i++) {
+                out[i] = clone(value[i], memo);
+            }
+            return out;
+        }
+
+        // Plain object (own enumerable string keys; Symbol keys excluded per spec).
+        if (t === "object") {
+            const proto = Object.getPrototypeOf(value);
+            if (proto !== null && proto !== Object.prototype) {
+                throw new DOMExceptionLike(
+                    "Object with non-plain prototype is not cloneable",
+                    "DataCloneError"
+                );
+            }
+            const out = {};
+            memo.set(value, out);
+            for (const k of Object.keys(value)) {
+                out[k] = clone(value[k], memo);
+            }
+            return out;
+        }
+
+        throw new DOMExceptionLike("Value is not cloneable", "DataCloneError");
+    }
+
+    // Lightweight DOMException stand-in for the DataCloneError surface.
+    function DOMExceptionLike(message, name) {
+        const err = new Error(message);
+        err.name = name || "Error";
+        return err;
+    }
+
+    globalThis.structuredClone = function structuredClone(value, options) {
+        // options.transfer is part of the spec but per pilot scope (Doc 708:
+        // "structured-clone pilot, ecosystem-only"), transfer-list semantics
+        // are deferred. The arg is accepted for API compatibility.
+        const memo = new Map();
+        return clone(value, memo);
+    };
+})();
+"#;
+
+fn install_structured_clone_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(STRUCTURED_CLONE_JS)?;
     Ok(())
 }
 

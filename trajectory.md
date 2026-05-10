@@ -50,7 +50,11 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `11ad07f` | **Apparatus self-iteration: host-integration learnings formalized** (seed §III.A8 + §IV.M6; bug-catcher E.4/E.5; HOST-INTEGRATION-PATTERN.md; 6th Pin-Art class) |
 | 2026-05-10 | `c00f52c` | **Tier-H continued: Blob + File + AbortController/AbortSignal wired** (650 workspace tests) |
 | 2026-05-10 | `1e48dd7` | **Tier-H continued: Headers + Request + Response + Bun.file wired** (680 workspace tests) |
-| 2026-05-10 | (this) | **Tier-H continued: Bun.serve + Bun.spawn wired** (16 pilot families now wired into JS host; 107/107 host integration tests; 698/698 workspace tests; flagship Bun API + subprocess management both runnable from JS) |
+| 2026-05-10 | `8498988` | **Tier-H continued: Bun.serve + Bun.spawn wired** (16 pilot families; 107/107 host tests; 698/698 workspace tests) |
+| 2026-05-10 | `e162e19` | **Resume vector resolution-increase pass #1** (3 patterns folded back: JS-side polymorphic decode, Vec<Vec<String>> pair-list, canonical-docs composition test) |
+| 2026-05-10 | `57a9b1f` | **Level-2 cybernetic loop closed: seed §IV.M7** (resolution-increase pass becomes a recurring self-triggering mode with five named trigger conditions) |
+| 2026-05-10 | corpus `bc5d287` / resolve `011ae5c` | **Doc 708 second amendment** (records M7 closure; sharpens keeper-mediation reading: dyad ascends rather than collapses) |
+| 2026-05-10 | (this) | **Tier-H continued: structuredClone wired** (17 pilot families; 120/120 host tests; introduced Pattern 4 — spec-formalization pilot, JS-side instantiation; folded back as seed §III.A8.2bis per M7) |
 
 **Pilot inventory (16 pilots):**
 
@@ -180,11 +184,11 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 **H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 16 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn). Remaining wirings, **priority-ordered for next session**:
 
-  1. **structuredClone** — pure-value pilot (Pattern 1 from HOST-INTEGRATION-PATTERN.md), no statefulness, no transport. Lowest-friction pickup. Composes with everything (errors, Map, Set serialization).
+  1. ~~**structuredClone**~~ — DONE 2026-05-10 (Pattern 4 — spec-formalization pilot, JS-side instantiation; 13 integration tests + canonical-docs composition test).
   2. **streams (ReadableStream/WritableStream/TransformStream)** — stateful (Pattern 3), but the pilot is already shipped. Wiring blocks Response.body() and fetch() composition; high downstream leverage.
   3. **node-http data-layer** — last data-layer surface; Pattern 3 with method-keyed dispatch (same shape as Bun.serve route table). Use Bun.serve's `routes:` decoder as the template; the JS-side polymorphic-shape decode is the canonical move.
 
-  Pick #1 first unless the keeper specifies otherwise. Each wiring should ship with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim — this test is the smallest unit of "real consumer can swap rusty-bun for Bun" and is the verification of choice for sub-criterion 4.
+  Pick #2 next unless the keeper specifies otherwise. Each wiring ships with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim, AND (b) a fold-back commit per M7 if any new patterns surfaced.
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

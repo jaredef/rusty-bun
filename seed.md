@@ -116,6 +116,14 @@ Concrete trigger conditions (any one fires the pass):
 
 The pass updates seed §III/§IV, bug-catcher, or HOST-INTEGRATION-PATTERN.md, then is committed as `Sharpen resume vector: integrate <round-name> patterns`. Only after that commit lands may the next implementation round begin.
 
+**M9. Spec-first fixture authoring.** Tier-J fixtures are authored against the comparator runtime's *specified* API from inception, not against rusty-bun's current surface. The authoring loop: (1) write the fixture using Bun-spec idioms; (2) run under Bun first to capture the comparator's output; (3) run under rusty-bun-host; (4) for each divergence surfaced during step 3, apply M8 in-round (align the apparatus, or scope-limit + remove); (5) commit fixture and reconciliations together. Consequence: fixtures ship J.1.a directly without ever transiting J.1.b.
+
+This is the inverse of the natural flow (write against what you have, then maybe align later). It works because a fixture authored against the comparator's spec is *already in J.1.a's shape by construction* — the only question is whether the apparatus has caught up. M8 catches the apparatus up; M9 ensures the question gets asked at fixture-author time, not after a separate "porting" round that would itself be drift.
+
+Operational consequence: J.1.b becomes a transient never-occupied state in the current-cycle basket. A fixture occupies J.1.b only when a divergence cannot be reconciled in the current round and the fixture must be temporarily parked with explicit re-open conditions. Under M9, this is rare; under the prior implicit practice of "build against rusty-bun then port," J.1.b was the default landing state.
+
+M9 was operationalized after consumer-request-signer (2026-05-10) shipped J.1.a from inception with one in-round M8 reconciliation (digest API), demonstrating that the fixture-build → divergence-surfacing → reconciliation → commit cycle works as a single coherent unit rather than as separate phases.
+
 **M8. Divergence reconciliation is non-deferrable.** When a Tier-J differential surfaces a divergence between rusty-bun and the comparator runtime (Bun), the divergence must be reconciled in the round it is discovered, before the next round begins. There are exactly two acceptable reconciliations: (a) bring the apparatus into alignment with the comparator (preferred, if feasible within the current round); (b) explicitly record the divergence as an intentional scope-limit with a re-open condition per Doc 581 D4 (the deferred-list discipline) AND remove from the Tier-J fixture set every fixture that depends on the divergent shape, so subsequent fixtures cannot be built on the misaligned plank.
 
 What is forbidden: "noted, will deal with later." That phrasing is the drift mechanism. Each Tier-J fixture built atop an unreconciled divergence inherits the misalignment; the cumulative error grows monotonically with rounds. M7 closes the level-2 loop for primitive-discovery; M8 closes it for divergence-reconciliation. Both are needed because both are mechanisms by which substrate work can drift out of plumb.
@@ -156,10 +164,11 @@ The trajectory's Deferred section lists items considered and explicitly *deferre
 
 This is a much larger commitment than the prior framing. The engagement's prior milestone — apparatus saturation at 16 pilots / 8 architectural classes (Doc 708) — is a **necessary** precondition for completion but not sufficient. Saturation establishes that the apparatus' methodology works; completion requires applying the methodology across Bun's full runtime API surface, integrating with a JS engine, and demonstrating differential equivalence against actual Bun-using applications.
 
-Two cybernetic compensation rules govern progress toward completion and prevent drift:
+Three cybernetic compensation rules govern progress toward completion and prevent drift:
   - **§IV.M7** closes the level-2 loop for primitive-discovery: every round must self-check for new patterns and fold them back before the next round begins.
   - **§IV.M8** closes the level-2 loop for divergence-reconciliation: every divergence between rusty-bun and the comparator runtime must be reconciled in the round it is discovered, not deferred.
-Without M7 the substrate accumulates work without consolidating its primitives; without M8 fixtures inherit misalignment from prior fixtures and the differential count never converges. Both rules were instituted under keeper rung-2 intervention after observed drift; both are now self-triggering.
+  - **§IV.M9** prevents the divergence in the first place: Tier-J fixtures are authored spec-first against Bun, not against rusty-bun's current surface, so divergences surface during authoring and reconciliations land in the same commit.
+Without M7 the substrate accumulates work without consolidating its primitives; without M8 fixtures inherit misalignment from prior fixtures and the differential count never converges; without M9 every fixture round transits J.1.b before reaching J.1.a, doubling the work and creating windows where drift can compound. M7 and M8 were instituted under keeper rung-2 intervention; M9 was operationalized after a fixture (consumer-request-signer) shipped J.1.a from inception under spec-first authoring, demonstrating the workflow as a single coherent unit. All three are self-triggering.
 
 The completion telos has five sub-criteria, in dependency order:
 

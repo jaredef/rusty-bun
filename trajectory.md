@@ -37,9 +37,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `1bc2163` | Bun bug catcher published (35 entries across 5 categories) |
 | 2026-05-10 | `f3e85ea` | **Bun.file pilot — first Tier-B Bun-namespace, first pilot with real I/O (95 LOC; 3.0% naive paired with rusty-blob)** |
 | 2026-05-10 | `5159d09` | **Bun.serve pilot — flagship Bun API, data-layer system (175 LOC; 0.5% naive against 32,344-LOC upstream / ~20-30% adj)** |
-| 2026-05-10 | (this) | **Bun.spawn pilot — Tier-B #5; subprocess management (179 LOC; 2.8% naive / ~15-20% adj); completes Tier-B Bun-namespace** |
+| 2026-05-10 | `71bf953` | **Bun.spawn pilot — Tier-B #5; subprocess management (179 LOC; 2.8% naive / ~15-20% adj); completes Tier-B Bun-namespace** |
+| 2026-05-10 | (this) | **node-fs pilot — Tier-C #6; sync subset (95 LOC; 0.4% naive against 21,540-LOC reference / ~8% adj)** |
 
-**Pilot inventory (13 pilots):**
+**Pilot inventory (14 pilots):**
 
 | # | Pilot | Class | LOC (code-only) | Verifier | Consumer | Aggregate ratio anchor |
 |---:|---|---|---:|---:|---:|---|
@@ -56,9 +57,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 11 | Bun.file | Tier-2 Bun-namespace + first I/O | 95 | 24 | 8 | 3.0% naive (with Blob) / ~20-30% adj |
 | 12 | Bun.serve | Tier-2 Bun-namespace flagship / data-layer system | 175 | 24 | 8 | 0.5% naive / ~20-30% adj |
 | 13 | Bun.spawn | Tier-2 Bun-namespace subprocess | 179 | 19 | 8 | 2.8% naive / ~15-20% adj |
-|   | **Aggregate** | | **2,773** | **365 (1 skip)** | **131** | **~3.6% naive across ~78,000+ LOC upstream** |
+| 14 | node-fs | Tier-2 Node-compat fs sync subset | 95 | 28 | 8 | 0.4% naive / ~8% adj |
+|   | **Aggregate** | | **2,868** | **393 (1 skip)** | **139** | **~2.9% naive across ~99,000+ LOC upstream** |
 
-Total tests: **496 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
+Total tests: **532 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
 
 Doc-tier corpus output:
 - [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error) — port-as-translation is a category error
@@ -88,7 +90,7 @@ Doc-tier corpus output:
 
 ### Tier-C — major Node-compat surfaces
 
-6. **Node `fs` (sync subset) pilot** — file system surface. Huge consumer impact. Use `std::fs` for the derivation. Estimated: 250–400 LOC.
+6. ~~Node fs sync subset~~ — **DONE** 2026-05-10 (95 LOC; 36/36 tests; first Tier-C pilot; 21,540 LOC upstream; std::fs wrapper)
 
 7. **Node `http`/`https` pilot — data-layer scope** — Node's HTTP module. Composes with fetch-api system pilot's headers + request + response data structures. Estimated: 200–350 LOC.
 

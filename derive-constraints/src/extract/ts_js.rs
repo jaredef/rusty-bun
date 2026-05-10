@@ -354,6 +354,19 @@ fn capture_bindings(node: &Node, src: &[u8], bindings: &mut BindingMap) {
             if name.kind() == "identifier" {
                 let name_text = text(&name, src);
                 let value_text = collapse(&text(&value, src));
+                // Only record bindings whose RHS is a simple call/member
+                // chain — `new Foo()`, `Bun.file(p).text()`,
+                // `await x.y()`. Reject RHS values containing top-level
+                // binary operators or boolean expressions: those are
+                // computed values whose later use as a subject would
+                // mis-attribute architectural identity (the TextDecoder
+                // false-positive seen in the TextEncoder pilot:
+                // `const headerEnd = new TextDecoder()…> 0;
+                //  assert(headerEnd > 0)` would substitute the
+                // TextDecoder-bearing RHS into the unrelated assertion).
+                if !is_simple_call_chain(&value_text) {
+                    continue;
+                }
                 // Don't overwrite an existing binding with later one in
                 // the same scope — first definition wins. This matches
                 // the common test pattern where setup-time bindings
@@ -371,6 +384,15 @@ fn capture_bindings(node: &Node, src: &[u8], bindings: &mut BindingMap) {
 /// the underlying binding rather than treating `await` as the head.
 fn resolve_binding(s: &str, bindings: &BindingMap) -> String {
     if bindings.is_empty() {
+        return s.to_string();
+    }
+    // Only substitute when the input is itself a simple call/member chain.
+    // If the input contains a comparison (`headerEnd > 0`), arithmetic
+    // (`offset + 4`), or boolean operator, the bound value is being used
+    // as a scalar, not as the architectural object — substituting the
+    // chain head misattributes the subject (the TextDecoder false-positive
+    // from the TextEncoder pilot).
+    if !is_simple_call_chain(s) {
         return s.to_string();
     }
     let mut work: &str = s;
@@ -399,6 +421,18 @@ fn resolve_binding(s: &str, bindings: &BindingMap) -> String {
     if let Some(replacement) = bindings.get(head) {
         let prefix_len = head.len();
         let rest = &trimmed[prefix_len..];
+        // Only substitute when the trailing tail after the bound head
+        // does not invoke a method call (`.method(...)`). A method call
+        // shifts the architectural identity to the method's return-type,
+        // not the binding's chain head — substituting would attribute the
+        // assertion to the wrong surface (the TextDecoder false-positive
+        // pattern: `const r = new TextDecoder().decode(buf);
+        //  assert(r.startsWith("..."))` — `.startsWith` is a String
+        // method, not a TextDecoder property). Bare-identifier tails and
+        // pure-getter tails (`.url`, `.pathname`) remain substitutable.
+        if rest.contains('(') {
+            return s.to_string();
+        }
         return format!("{}{}", replacement, rest);
     }
     work.to_string()
@@ -437,6 +471,72 @@ fn take_identifier_prefix(s: &str) -> String {
         end += 1;
     }
     s[..last_id_end].to_string()
+}
+
+/// True if `value` looks like a pure call/member chain — i.e. an identifier
+/// path optionally followed by balanced `(...)`, `[...]`, and `.member` tails,
+/// optionally preceded by `await `, `new `, `typeof `. Rejects values
+/// containing top-level binary operators (`>`, `<`, `==`, `&&`, `?`, `+`, …)
+/// because such RHS values are computed booleans/numbers whose architectural
+/// identity is not the prefix call expression they happen to contain.
+fn is_simple_call_chain(value: &str) -> bool {
+    let mut s = value.trim();
+    loop {
+        let t = s.trim_start();
+        if let Some(r) = t.strip_prefix("await ") { s = r; continue; }
+        if let Some(r) = t.strip_prefix("new ") { s = r; continue; }
+        if let Some(r) = t.strip_prefix("typeof ") { s = r; continue; }
+        s = t;
+        break;
+    }
+    let bytes = s.as_bytes();
+    if bytes.is_empty() { return false; }
+    let is_id_start = |c: u8| matches!(c, b'_' | b'$' | b'A'..=b'Z' | b'a'..=b'z');
+    let is_id_cont  = |c: u8| matches!(c, b'_' | b'$' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z');
+    if !is_id_start(bytes[0]) { return false; }
+    let mut i = 0;
+    while i < bytes.len() && (is_id_cont(bytes[i]) || bytes[i] == b'.') {
+        // Disallow consecutive dots (would mean an operator-like construct).
+        if bytes[i] == b'.' && (i + 1 >= bytes.len() || !is_id_start(bytes[i + 1])) {
+            break;
+        }
+        i += 1;
+    }
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            b'(' | b'[' => {
+                let close = if c == b'(' { b')' } else { b']' };
+                let open = c;
+                let mut depth = 1i32;
+                i += 1;
+                let mut in_str: Option<u8> = None;
+                let mut prev_back = false;
+                while i < bytes.len() && depth > 0 {
+                    let cc = bytes[i];
+                    if let Some(q) = in_str {
+                        if cc == b'\\' && !prev_back { prev_back = true; i += 1; continue; }
+                        if cc == q && !prev_back { in_str = None; }
+                        prev_back = false;
+                    } else if matches!(cc, b'"' | b'\'' | b'`') {
+                        in_str = Some(cc);
+                    } else if cc == open { depth += 1; }
+                    else if cc == close { depth -= 1; }
+                    i += 1;
+                }
+                if depth != 0 { return false; }
+            }
+            b'.' => {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && is_id_cont(bytes[i]) { i += 1; }
+                if i == start { return false; }
+            }
+            b' ' | b'\t' | b'\n' | b'\r' => { i += 1; }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn classify_constraint(node: &Node, src: &[u8], bindings: &BindingMap) -> Option<ConstraintClause> {

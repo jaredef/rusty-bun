@@ -205,6 +205,10 @@ struct NodeResolver;
 
 impl Resolver for NodeResolver {
     fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> JsResult<String> {
+        // node:* and bare-builtin names short-circuit; FsLoader recognizes them.
+        if is_node_builtin(name) {
+            return Ok(name.to_string());
+        }
         match resolve_node_style(base, name) {
             Some(p) => Ok(p.to_string_lossy().into_owned()),
             None => Err(JsErr::new_resolving(base, name)),
@@ -212,11 +216,60 @@ impl Resolver for NodeResolver {
     }
 }
 
+fn is_node_builtin(name: &str) -> bool {
+    matches!(name,
+        "node:fs" | "fs" |
+        "node:path" | "path" |
+        "node:http" | "http" |
+        "node:crypto" | "crypto" |
+        "node:buffer" | "buffer" |
+        "node:url" | "url"
+    )
+}
+
+/// Generate an ESM re-export source for a node:* builtin module.
+/// Per M8/M9: aligns ESM import semantics for node-builtins with Bun's
+/// surface, so consumer code using `import x from "node:path"` works.
+fn node_builtin_esm_source(name: &str) -> Option<String> {
+    let (global_var, named_exports): (&str, &[&str]) = match name {
+        "node:fs" | "fs" => ("fs", &["readFileSync", "readFileSyncUtf8", "readFileSyncBytes",
+            "writeFileSync", "existsSync", "isFileSync", "isDirectorySync",
+            "unlinkSync", "mkdirSyncRecursive", "rmdirSyncRecursive"]),
+        "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
+            "normalize", "isAbsolute", "sep"]),
+        "node:http" | "http" => ("nodeHttp", &["createServer", "request",
+            "IncomingMessage", "ServerResponse", "ClientRequest", "Server"]),
+        "node:crypto" | "crypto" => ("crypto", &["randomUUID", "subtle"]),
+        "node:buffer" | "buffer" => ("Buffer", &[]),  // see special handling below
+        "node:url" | "url" => ("URL", &[]),
+        _ => return None,
+    };
+    // node:buffer exports `{ Buffer }` not the Buffer itself.
+    if name == "node:buffer" || name == "buffer" {
+        return Some(
+            "const __m = globalThis.Buffer;\nexport const Buffer = __m;\nexport default { Buffer: __m };\n".to_string()
+        );
+    }
+    if name == "node:url" || name == "url" {
+        return Some(
+            "const __URL = globalThis.URL;\nconst __USP = globalThis.URLSearchParams;\nexport const URL = __URL;\nexport const URLSearchParams = __USP;\nexport default { URL: __URL, URLSearchParams: __USP };\n".to_string()
+        );
+    }
+    let mut s = format!("const __m = globalThis.{};\nexport default __m;\n", global_var);
+    for ex in named_exports {
+        s.push_str(&format!("export const {} = __m.{};\n", ex, ex));
+    }
+    Some(s)
+}
+
 #[derive(Default, Clone, Copy)]
 struct FsLoader;
 
 impl Loader for FsLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> JsResult<Module<'js, Declared>> {
+        if let Some(src) = node_builtin_esm_source(name) {
+            return Module::declare(ctx.clone(), name, src);
+        }
         let source = std::fs::read_to_string(name)
             .map_err(|_| JsErr::new_loading(name))?;
         Module::declare(ctx.clone(), name, source)

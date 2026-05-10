@@ -1,0 +1,8 @@
+{
+  "name": "consumer-log-aggregator",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #4: log-aggregator pattern. Exercises node:path operations + user-defined event emitter + structuredClone on complex graphs (Date, RegExp, Map) + URLSearchParams filter building + JSON pretty-print. Spec-first M9 authoring.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

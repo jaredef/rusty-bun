@@ -49,7 +49,56 @@ pub struct MetricZScore {
     pub target_value: f64,
     pub baseline_mean: f64,
     pub baseline_std: f64,
-    pub z: f64,
+    /// Finite z-score. None when the baseline distribution had zero variance
+    /// — see `z_infinite` for the sign of the deviation in that case. JSON's
+    /// lack of an Infinity literal forced the split (serde_json silently
+    /// emits `null` for non-finite floats and round-trips them as None).
+    pub z: Option<f64>,
+    /// When `z` is None, this carries `+1` for an upward deviation, `-1` for
+    /// downward, and `0` when the target equals the (zero-variance) baseline.
+    /// When `z` is Some, this field is None.
+    pub z_infinite: Option<i8>,
+}
+
+fn make_zscore(metric: &str, target: f64, mean: f64, std: f64) -> MetricZScore {
+    let (z, z_infinite) = if std == 0.0 {
+        let sign = if target > mean {
+            Some(1)
+        } else if target < mean {
+            Some(-1)
+        } else {
+            Some(0)
+        };
+        (None, sign)
+    } else {
+        (Some((target - mean) / std), None)
+    };
+    MetricZScore {
+        metric: metric.to_string(),
+        target_value: target,
+        baseline_mean: mean,
+        baseline_std: std,
+        z,
+        z_infinite,
+    }
+}
+
+impl MetricZScore {
+    /// Returns true when the baseline was zero-variance and target deviated
+    /// upward — the strongest "this construct exists in the target but not in
+    /// the baseline at all" signal.
+    pub fn is_unbounded_anomaly(&self) -> bool {
+        self.z_infinite == Some(1)
+    }
+    /// Effective z-score for ranking purposes: finite z when present,
+    /// otherwise a large sentinel matching the sign of `z_infinite`.
+    pub fn rank_z(&self) -> f64 {
+        match (self.z, self.z_infinite) {
+            (Some(z), _) => z,
+            (None, Some(s)) => (s as f64) * 1e6,
+            (None, None) => 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,18 +190,12 @@ pub fn compare(
             let dist = baseline.distributions.iter().find(|d| d.name == *name)?;
             let target_count: u64 = target.files.iter().map(|f| accessor(f)).sum();
             let target_density = density(target_count, target_total_loc).unwrap_or(0.0);
-            Some(MetricZScore {
-                metric: name.to_string(),
-                target_value: target_density,
-                baseline_mean: dist.mean,
-                baseline_std: dist.std,
-                z: z_score(target_density, dist.mean, dist.std),
-            })
+            Some(make_zscore(name, target_density, dist.mean, dist.std))
         })
         .collect();
 
     // Per-file flagging: any file whose z-score on at least one metric exceeds
-    // threshold_z.
+    // threshold_z (or is an upward unbounded anomaly).
     let mut anomalous_files: Vec<AnomalousFile> = target
         .files
         .iter()
@@ -167,21 +210,23 @@ pub fn compare(
                     Some(v) => v,
                     None => continue,
                 };
-                let z = z_score(d, dist.mean, dist.std);
-                if z >= threshold_z {
-                    flagged.push(MetricZScore {
-                        metric: name.to_string(),
-                        target_value: d,
-                        baseline_mean: dist.mean,
-                        baseline_std: dist.std,
-                        z,
-                    });
+                let zs = make_zscore(name, d, dist.mean, dist.std);
+                let pass = match zs.z {
+                    Some(z) => z >= threshold_z,
+                    None => zs.is_unbounded_anomaly(),
+                };
+                if pass {
+                    flagged.push(zs);
                 }
             }
             if flagged.is_empty() {
                 None
             } else {
-                flagged.sort_by(|a, b| b.z.partial_cmp(&a.z).unwrap_or(std::cmp::Ordering::Equal));
+                flagged.sort_by(|a, b| {
+                    b.rank_z()
+                        .partial_cmp(&a.rank_z())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 Some(AnomalousFile {
                     path: f.path.clone(),
                     loc: f.loc,
@@ -191,11 +236,19 @@ pub fn compare(
         })
         .collect();
 
-    // Sort anomalous files by max z-score descending so the worst offenders
+    // Sort anomalous files by max rank_z descending so the worst offenders
     // surface first in the report.
     anomalous_files.sort_by(|a, b| {
-        let max_a = a.flagged_metrics.iter().map(|m| m.z).fold(f64::MIN, f64::max);
-        let max_b = b.flagged_metrics.iter().map(|m| m.z).fold(f64::MIN, f64::max);
+        let max_a = a
+            .flagged_metrics
+            .iter()
+            .map(|m| m.rank_z())
+            .fold(f64::MIN, f64::max);
+        let max_b = b
+            .flagged_metrics
+            .iter()
+            .map(|m| m.rank_z())
+            .fold(f64::MIN, f64::max);
         max_b.partial_cmp(&max_a).unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -208,19 +261,3 @@ pub fn compare(
     }
 }
 
-fn z_score(value: f64, mean: f64, std: f64) -> f64 {
-    // Guard against zero-variance baseline distributions. When std is 0, any
-    // deviation is "infinitely anomalous"; we clamp to a large finite value
-    // so the report remains meaningful.
-    if std == 0.0 {
-        if value == mean {
-            0.0
-        } else if value > mean {
-            f64::INFINITY
-        } else {
-            f64::NEG_INFINITY
-        }
-    } else {
-        (value - mean) / std
-    }
-}

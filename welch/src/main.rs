@@ -117,6 +117,15 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
     Ok(())
 }
 
+fn fmt_z(m: &compare::MetricZScore) -> String {
+    match (m.z, m.z_infinite) {
+        (Some(z), _) => format!("{:+.1}", z),
+        (None, Some(1)) => "+inf".into(),
+        (None, Some(-1)) => "-inf".into(),
+        _ => "0".into(),
+    }
+}
+
 fn print_summary(report: &compare::AnomalyReport) {
     eprintln!("\n=== welch anomaly report ===");
     eprintln!("baseline:   {}", report.baseline_source);
@@ -125,29 +134,38 @@ fn print_summary(report: &compare::AnomalyReport) {
     eprintln!("\naggregate (corpus-wide density per kLOC vs baseline distribution):");
     for m in &report.aggregate {
         eprintln!(
-            "  {:<16} target={:>9.3}  baseline μ={:>9.3} σ={:>9.3}  z={:>+7.2}",
-            m.metric, m.target_value, m.baseline_mean, m.baseline_std, m.z
+            "  {:<16} target={:>9.3}  baseline μ={:>9.3} σ={:>9.3}  z={:>6}",
+            m.metric,
+            m.target_value,
+            m.baseline_mean,
+            m.baseline_std,
+            fmt_z(m)
         );
     }
     eprintln!(
-        "\n{} anomalous files (z >= {:.2} on at least one metric):",
+        "\n{} anomalous files (z >= {:.2} on at least one metric, or unbounded upward):",
         report.anomalous_files.len(),
         report.threshold_z
     );
     for f in report.anomalous_files.iter().take(20) {
-        let max_z = f
+        let max_rank = f
             .flagged_metrics
             .iter()
-            .map(|m| m.z)
+            .map(|m| m.rank_z())
             .fold(f64::MIN, f64::max);
+        let max_label = if max_rank >= 1e6 {
+            "+inf".to_string()
+        } else {
+            format!("{:+.1}", max_rank)
+        };
         let metric_summary: Vec<String> = f
             .flagged_metrics
             .iter()
-            .map(|m| format!("{}(z={:+.1})", m.metric, m.z))
+            .map(|m| format!("{}(z={})", m.metric, fmt_z(m)))
             .collect();
         eprintln!(
-            "  z={:>+6.1}  loc={:>5}  {}  [{}]",
-            max_z,
+            "  z={:>6}  loc={:>5}  {}  [{}]",
+            max_label,
             f.loc,
             f.path,
             metric_summary.join(", ")

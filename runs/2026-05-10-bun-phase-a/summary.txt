@@ -1,0 +1,36 @@
+
+=== welch anomaly report ===
+baseline:   /tmp/welch-corpus/baseline
+target:     /tmp/welch-corpus/target/bun
+threshold:  z >= 3.00
+
+aggregate (corpus-wide density per kLOC vs baseline distribution):
+  unsafe_blocks    target=   13.888  baseline μ=    2.908 σ=   10.108  z=  +1.1
+  unsafe_loc       target=   13.888  baseline μ=    2.908 σ=   10.108  z=  +1.1
+  unsafe_fns       target=    1.419  baseline μ=    0.735 σ=    3.987  z=  +0.2
+  raw_pointers     target=   14.642  baseline μ=    1.213 σ=    7.835  z=  +1.7
+  transmutes       target=    0.030  baseline μ=    0.047 σ=    0.874  z=  -0.0
+  extern_blocks    target=    0.585  baseline μ=    0.000 σ=    0.000  z=  +inf
+
+424 anomalous files (z >= 3.00 on at least one metric, or unbounded upward):
+  z=  +inf  loc=  494  src/zstd/lib.rs  [extern_blocks(z=+inf), raw_pointers(z=+6.0)]
+  z=  +inf  loc=  247  src/zlib_sys/win32.rs  [extern_blocks(z=+inf), raw_pointers(z=+34.5), unsafe_fns(z=+4.9)]
+  z=  +inf  loc=  107  src/zlib_sys/posix.rs  [extern_blocks(z=+inf), raw_pointers(z=+20.1), unsafe_fns(z=+11.5), unsafe_blocks(z=+4.3), unsafe_loc(z=+4.3)]
+  z=  +inf  loc= 1110  src/zlib/lib.rs  [extern_blocks(z=+inf), raw_pointers(z=+3.3)]
+  z=  +inf  loc=  194  src/workaround_missing_symbols.rs  [extern_blocks(z=+inf), raw_pointers(z=+26.2), unsafe_blocks(z=+4.3), unsafe_loc(z=+4.3)]
+  z=  +inf  loc= 1404  src/windows_sys/externs.rs  [extern_blocks(z=+inf), raw_pointers(z=+10.8)]
+  z=  +inf  loc=  505  src/uws_sys/us_socket_t.rs  [extern_blocks(z=+inf), raw_pointers(z=+8.7), unsafe_blocks(z=+3.2), unsafe_loc(z=+3.2)]
+  z=  +inf  loc=  252  src/uws_sys/udp.rs  [extern_blocks(z=+inf), raw_pointers(z=+23.1), unsafe_blocks(z=+3.2), unsafe_loc(z=+3.2)]
+  z=  +inf  loc=   95  src/uws_sys/quic/Stream.rs  [extern_blocks(z=+inf), raw_pointers(z=+20.0), unsafe_blocks(z=+10.1), unsafe_loc(z=+10.1)]
+  z=  +inf  loc=   69  src/uws_sys/quic/Socket.rs  [extern_blocks(z=+inf), raw_pointers(z=+12.8), unsafe_blocks(z=+6.9), unsafe_loc(z=+6.9)]
+  z=  +inf  loc=   38  src/uws_sys/quic/PendingConnect.rs  [extern_blocks(z=+inf), raw_pointers(z=+20.0), unsafe_blocks(z=+7.5), unsafe_loc(z=+7.5)]
+  z=  +inf  loc=  169  src/uws_sys/quic/Context.rs  [extern_blocks(z=+inf), raw_pointers(z=+34.6), unsafe_blocks(z=+6.2), unsafe_loc(z=+6.2)]
+  z=  +inf  loc=   35  src/uws_sys/quic.rs  [extern_blocks(z=+inf)]
+  z=  +inf  loc=  305  src/uws_sys/lib.rs  [extern_blocks(z=+inf), raw_pointers(z=+4.9)]
+  z=  +inf  loc=  710  src/uws_sys/h3.rs  [extern_blocks(z=+inf), raw_pointers(z=+27.3), unsafe_blocks(z=+5.4), unsafe_loc(z=+5.4)]
+  z=  +inf  loc=  835  src/uws_sys/WebSocket.rs  [extern_blocks(z=+inf), raw_pointers(z=+13.8), unsafe_blocks(z=+5.8), unsafe_loc(z=+5.8), unsafe_fns(z=+5.2)]
+  z=  +inf  loc=  119  src/uws_sys/Timer.rs  [extern_blocks(z=+inf), raw_pointers(z=+7.4), unsafe_blocks(z=+4.7), unsafe_loc(z=+4.7)]
+  z=  +inf  loc=  372  src/uws_sys/SocketGroup.rs  [extern_blocks(z=+inf), raw_pointers(z=+29.7)]
+  z=  +inf  loc=  305  src/uws_sys/SocketContext.rs  [extern_blocks(z=+inf), raw_pointers(z=+8.6), unsafe_blocks(z=+4.6), unsafe_loc(z=+4.6)]
+  z=  +inf  loc= 1125  src/uws_sys/Response.rs  [extern_blocks(z=+inf), raw_pointers(z=+14.8)]
+  ... (404 more)

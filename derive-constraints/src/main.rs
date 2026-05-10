@@ -4,6 +4,7 @@
 //! predict phases are downstream layers that consume this scan's JSON.
 
 mod cluster;
+mod couple;
 mod extract;
 mod invert;
 mod scan;
@@ -64,6 +65,24 @@ enum Cmd {
     /// by signal-vector agreement. Operationalizes RESOLVE Doc 705
     /// (Pin-Art for intra-architectural seam detection) per the design
     /// at docs/seam-detection-design.md.
+    /// Cross-reference a seams report with a welch per-file anomaly
+    /// report by surface-name path-component matching. Identifies
+    /// candidate implementation-internal seams (high welch anomaly +
+    /// low test-corpus architectural signal density) and contract-only
+    /// seams (high test-corpus architectural signal + low welch
+    /// implementation-source anomaly).
+    Couple {
+        /// Path to a seams JSON produced by `derive-constraints seams`.
+        seams: PathBuf,
+        /// Path to a welch anomaly JSON produced by `welch compare`.
+        welch: PathBuf,
+        /// Optional output file; defaults to stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Print human-readable summary to stderr.
+        #[arg(long)]
+        summary: bool,
+    },
     Seams {
         /// Path to a cluster JSON produced by `derive-constraints cluster`.
         cluster: PathBuf,
@@ -118,6 +137,27 @@ fn main() -> Result<()> {
                 print_invert_summary(&report);
             }
         }
+        Cmd::Couple {
+            seams: seams_path,
+            welch: welch_path,
+            out,
+            summary,
+        } => {
+            let seams_report: seams::SeamsReport = read_json(&seams_path)
+                .with_context(|| format!("loading seams from {}", seams_path.display()))?;
+            let welch_report: couple::WelchAnomalyReport = read_json(&welch_path)
+                .with_context(|| format!("loading welch from {}", welch_path.display()))?;
+            let report = couple::couple(
+                &seams_report,
+                &welch_report,
+                Some(&seams_path),
+                Some(&welch_path),
+            )?;
+            write_json(&out, &report)?;
+            if summary {
+                print_couple_summary(&report);
+            }
+        }
         Cmd::Seams {
             cluster: cluster_path,
             out,
@@ -157,6 +197,64 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
         }
     }
     Ok(())
+}
+
+fn print_couple_summary(report: &couple::CoupledReport) {
+    let s = &report.stats;
+    eprintln!("\n=== derive-constraints couple ===");
+    if let Some(ref sp) = report.seams_source {
+        eprintln!("seams source:           {}", sp);
+    }
+    if let Some(ref wp) = report.welch_source {
+        eprintln!("welch source:           {}", wp);
+    }
+    eprintln!("surfaces total:         {}", s.surfaces_total);
+    eprintln!(
+        "surfaces with welch match: {} ({:.1}%)",
+        s.surfaces_with_welch_match,
+        if s.surfaces_total == 0 {
+            0.0
+        } else {
+            100.0 * s.surfaces_with_welch_match as f64 / s.surfaces_total as f64
+        }
+    );
+    eprintln!("mismatch candidates:    {}", s.mismatch_candidates);
+    eprintln!("\ntop 30 surfaces (mismatches first, then by welch max-z):");
+    for sc in report.surfaces.iter().take(30) {
+        let mismatch_tag = match sc.mismatch {
+            Some(couple::MismatchKind::WelchHotSeamsCold) => "[w-hot/s-cold]",
+            Some(couple::MismatchKind::SeamsHotWelchCold) => "[s-hot/w-cold]",
+            None => "              ",
+        };
+        let welch_z = match &sc.welch_summary {
+            Some(w) => match w.max_z {
+                Some(z) => format!("z={:+.1}", z),
+                None if w.any_unbounded_upward => "z=+inf".to_string(),
+                _ => "z=?".to_string(),
+            },
+            None => "no-match".into(),
+        };
+        let card = sc.seams_summary.cardinality_total;
+        eprintln!(
+            "  {}  {:<24}  seams=card={:>5}/clu={:>2}/sig={:<14}  welch={}",
+            mismatch_tag,
+            truncate(&sc.surface, 24),
+            card,
+            sc.seams_summary.clusters_count,
+            truncate(&sc.seams_summary.dominant_signal_name, 14),
+            welch_z
+        );
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
 }
 
 fn print_seams_summary(report: &seams::SeamsReport) {

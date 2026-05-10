@@ -1,0 +1,39 @@
+
+=== derive-constraints couple ===
+seams source:           runs/2026-05-10-bun-derive-constraints/bun-seams-v3.json
+welch source:           runs/2026-05-10-bun-phase-a/anomalies.json
+surfaces total:         307
+surfaces with welch match: 44 (14.3%)
+mismatch candidates:    12
+
+top 30 surfaces (mismatches first, then by welch max-z):
+  [w-hot/s-cold]  Stream                    seams=card=12283/clu= 1/sig=slack           welch=z=+20.0
+  [w-hot/s-cold]  App                       seams=card=12283/clu= 1/sig=slack           welch=z=+15.9
+  [w-hot/s-cold]  SourceMap                 seams=card=12283/clu= 1/sig=slack           welch=z=+15.3
+  [w-hot/s-cold]  WebSocket                 seams=card=12283/clu= 1/sig=slack           welch=z=+13.8
+  [w-hot/s-cold]  Hmac                      seams=card=12283/clu= 1/sig=slack           welch=z=+13.1
+  [w-hot/s-cold]  http                      seams=card=12283/clu= 1/sig=slack           welch=z=+9.4
+  [w-hot/s-cold]  Server                    seams=card=12283/clu= 1/sig=slack           welch=z=+5.2
+  [s-hot/w-cold]  Headers                   seams=card=16199/clu= 3/sig=slack           welch=z=+4.1
+  [s-hot/w-cold]  S3                        seams=card=  301/clu= 1/sig=cfg|async       welch=z=+3.7
+  [w-hot/s-cold]  FakeTimers                seams=card=12283/clu= 1/sig=slack           welch=z=+3.4
+  [w-hot/s-cold]  url                       seams=card=21825/clu= 3/sig=slack           welch=z=+inf
+  [w-hot/s-cold]  vm                        seams=card=12283/clu= 1/sig=slack           welch=z=+inf
+                  zlib                      seams=card=12509/clu= 2/sig=slack           welch=z=+34.5
+                  Event                     seams=card= 2055/clu= 1/sig=cfg             welch=z=+23.9
+                  Bun                       seams=card=32117/clu=26/sig=slack           welch=z=+22.0
+                  Request                   seams=card=14225/clu= 3/sig=slack           welch=z=+21.1
+                  stream                    seams=card=17083/clu= 3/sig=slack           welch=z=+20.0
+                  C                         seams=card=  666/clu= 2/sig=slack           welch=z=+19.1
+                  Socket                    seams=card= 2055/clu= 1/sig=cfg             welch=z=+16.8
+                  Response                  seams=card=22716/clu= 8/sig=slack           welch=z=+14.8
+                  crypto                    seams=card=22853/clu= 5/sig=slack           welch=z=+13.1
+                  URLSearchParams           seams=card=16199/clu= 3/sig=slack           welch=z=+12.6
+                  AbortSignal               seams=card=14338/clu= 2/sig=slack           welch=z=+10.4
+                  fetch                     seams=card=18620/clu= 5/sig=slack           welch=z=+9.4
+                  fs                        seams=card=19880/clu=10/sig=slack           welch=z=+9.4
+                  tls                       seams=card=18495/clu= 3/sig=slack           welch=z=+8.8
+                  SQL                       seams=card=13085/clu= 2/sig=slack           welch=z=+8.7
+                  Error                     seams=card=17833/clu= 3/sig=slack           welch=z=+7.5
+                  dns                       seams=card=18336/clu= 3/sig=slack           welch=z=+5.5
+                  TextEncoder               seams=card= 2055/clu= 1/sig=cfg             welch=z=+5.3

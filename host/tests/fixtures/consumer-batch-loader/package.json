@@ -1,0 +1,8 @@
+{
+  "name": "consumer-batch-loader",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #6: batch data-loader. Exercises Promise.all/allSettled/race + Proxy + Reflect + BigInt + tagged template literals + Map-as-cache. Spec-first M9 authoring.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

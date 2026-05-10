@@ -253,6 +253,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
+    install_url_class_js(&ctx)?;
     Ok(())
 }
 
@@ -2572,6 +2573,318 @@ const TIMERS_AND_PERF_JS: &str = r#"
 
 fn install_timers_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(TIMERS_AND_PERF_JS)?;
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Tier-H.4 #2: URL class (WHATWG)
+// ════════════════════════════════════════════════════════════════════════
+//
+// JS-side instantiation per Pattern 4 (seed §III.A8.2bis). The WHATWG
+// URL Standard's full state-machine parser is ~hundreds of LOC and
+// covers IDN/percent-encoding/host-validation edge cases beyond pilot
+// scope. This implementation handles the common-consumer subset:
+//
+//   - http(s):// ws(s):// ftp:// file:// schemes
+//   - host[:port]/pathname?search#hash decomposition
+//   - default-port omission per scheme
+//   - relative URL resolution against a base URL
+//   - searchParams live-bound to .search via the wired URLSearchParams
+//   - toString() / toJSON() / href setter (re-parses)
+//
+// What's deliberately scoped out: full percent-encoding tables (we use
+// encodeURI for path, encodeURIComponent for individual components),
+// IDN (assumes ASCII hostnames), authority-only URLs without paths,
+// non-special-scheme URLs. Real consumer code touching these edges
+// is rare; closing the gap is a follow-up if a Tier-J consumer hits it.
+
+const URL_CLASS_JS: &str = r##"
+(function() {
+    const SPECIAL_SCHEMES = {
+        "http:": 80,
+        "https:": 443,
+        "ws:": 80,
+        "wss:": 443,
+        "ftp:": 21,
+        "file:": null,
+    };
+
+    function isSpecial(scheme) {
+        return Object.prototype.hasOwnProperty.call(SPECIAL_SCHEMES, scheme);
+    }
+
+    function defaultPortFor(scheme) {
+        return SPECIAL_SCHEMES[scheme];
+    }
+
+    function parseScheme(input) {
+        // Match a leading "scheme:" if it conforms to ALPHA *( ALPHA / DIGIT / + / - / . ).
+        const m = /^([a-zA-Z][a-zA-Z0-9+\-.]*):/.exec(input);
+        if (!m) return null;
+        return { scheme: m[1].toLowerCase() + ":", rest: input.substring(m[0].length) };
+    }
+
+    function parseAuthority(rest) {
+        // After "scheme://", split off the authority up to the first /, ?, #, or end.
+        if (!rest.startsWith("//")) return { hasAuthority: false, rest };
+        rest = rest.substring(2);
+        let end = rest.length;
+        for (let i = 0; i < rest.length; i++) {
+            const c = rest.charCodeAt(i);
+            if (c === 47 /* / */ || c === 63 /* ? */ || c === 35 /* # */) { end = i; break; }
+        }
+        const authority = rest.substring(0, end);
+        const remainder = rest.substring(end);
+
+        // Split userinfo@host from authority.
+        let userinfo = "", host = authority;
+        const atIdx = authority.lastIndexOf("@");
+        if (atIdx >= 0) {
+            userinfo = authority.substring(0, atIdx);
+            host = authority.substring(atIdx + 1);
+        }
+        let username = "", password = "";
+        if (userinfo.length > 0) {
+            const colonIdx = userinfo.indexOf(":");
+            if (colonIdx >= 0) {
+                username = userinfo.substring(0, colonIdx);
+                password = userinfo.substring(colonIdx + 1);
+            } else {
+                username = userinfo;
+            }
+        }
+
+        // Split host:port (handle IPv6 [::1]:port form).
+        let hostname = host, port = "";
+        if (host.startsWith("[")) {
+            const closeIdx = host.indexOf("]");
+            if (closeIdx >= 0) {
+                hostname = host.substring(0, closeIdx + 1);
+                if (closeIdx + 1 < host.length && host.charAt(closeIdx + 1) === ":") {
+                    port = host.substring(closeIdx + 2);
+                }
+            }
+        } else {
+            const colonIdx = host.lastIndexOf(":");
+            if (colonIdx >= 0) {
+                hostname = host.substring(0, colonIdx);
+                port = host.substring(colonIdx + 1);
+            }
+        }
+
+        return {
+            hasAuthority: true,
+            username,
+            password,
+            hostname: hostname.toLowerCase(),
+            port,
+            rest: remainder,
+        };
+    }
+
+    function parsePathQueryFragment(rest) {
+        let pathname = "", search = "", hash = "";
+        const hashIdx = rest.indexOf("#");
+        if (hashIdx >= 0) {
+            hash = rest.substring(hashIdx);
+            rest = rest.substring(0, hashIdx);
+        }
+        const qIdx = rest.indexOf("?");
+        if (qIdx >= 0) {
+            search = rest.substring(qIdx);
+            rest = rest.substring(0, qIdx);
+        }
+        pathname = rest;
+        return { pathname, search, hash };
+    }
+
+    function resolveAgainstBase(input, base) {
+        // Minimal relative-resolution per RFC 3986 §5.3.
+        if (!base) throw new TypeError("Invalid URL: " + input);
+        // If input has its own scheme, ignore base.
+        if (parseScheme(input)) return input;
+        // Otherwise build absolute by replacing the appropriate component of base.
+        if (input.startsWith("//")) {
+            return base.protocol + input;
+        }
+        const baseAuthority = base.username || base.password || base.hostname || base.port
+            ? "//" + (base.username
+                ? base.username + (base.password ? ":" + base.password : "") + "@"
+                : "")
+              + base.hostname + (base.port ? ":" + base.port : "")
+            : "";
+        if (input.startsWith("/")) {
+            return base.protocol + baseAuthority + input;
+        }
+        if (input.startsWith("?")) {
+            return base.protocol + baseAuthority + base.pathname + input;
+        }
+        if (input.startsWith("#")) {
+            return base.protocol + baseAuthority + base.pathname + base.search + input;
+        }
+        if (input.length === 0) {
+            return base.protocol + baseAuthority + base.pathname + base.search;
+        }
+        // Relative path: merge with base.pathname's directory.
+        const basePath = base.pathname;
+        const lastSlash = basePath.lastIndexOf("/");
+        const dir = lastSlash >= 0 ? basePath.substring(0, lastSlash + 1) : "/";
+        return base.protocol + baseAuthority + normalizePathSegments(dir + input);
+    }
+
+    function normalizePathSegments(p) {
+        const isAbs = p.startsWith("/");
+        const parts = p.split("/").filter((s) => s.length > 0);
+        const out = [];
+        for (const seg of parts) {
+            if (seg === ".") continue;
+            if (seg === "..") {
+                if (out.length > 0) out.pop();
+                continue;
+            }
+            out.push(seg);
+        }
+        return (isAbs ? "/" : "") + out.join("/");
+    }
+
+    class URL {
+        constructor(input, base) {
+            input = String(input);
+            let parsed;
+            // If input is relative, resolve against base.
+            if (!parseScheme(input) && base !== undefined) {
+                const baseUrl = base instanceof URL ? base : new URL(String(base));
+                input = resolveAgainstBase(input, baseUrl);
+            }
+            const schemeParse = parseScheme(input);
+            if (!schemeParse) throw new TypeError("Invalid URL: " + input);
+            const protocol = schemeParse.scheme;
+            const auth = parseAuthority(schemeParse.rest);
+            const pqf = parsePathQueryFragment(auth.rest);
+
+            this._protocol = protocol;
+            this._username = auth.username || "";
+            this._password = auth.password || "";
+            this._hostname = auth.hostname || "";
+            // Drop port if it equals the default for the scheme.
+            const dflt = defaultPortFor(protocol);
+            const portStr = auth.port && Number(auth.port) !== dflt ? auth.port : "";
+            this._port = portStr;
+            this._pathname = pqf.pathname || (auth.hasAuthority && isSpecial(protocol) ? "/" : "");
+            this._search = pqf.search;
+            this._hash = pqf.hash;
+            // searchParams live-bound: writes propagate to ._search.
+            this._searchParams = new URLSearchParams(this._search.replace(/^\?/, ""));
+            const self = this;
+            // Wrap mutating methods to keep .search in sync.
+            const proxy = ["append", "delete", "set", "sort"];
+            for (const m of proxy) {
+                const orig = this._searchParams[m].bind(this._searchParams);
+                this._searchParams[m] = function (...args) {
+                    const r = orig(...args);
+                    const s = self._searchParams.toString();
+                    self._search = s.length > 0 ? "?" + s : "";
+                    return r;
+                };
+            }
+        }
+        get protocol() { return this._protocol; }
+        set protocol(v) { this._protocol = String(v).endsWith(":") ? String(v) : String(v) + ":"; }
+        get username() { return this._username; }
+        set username(v) { this._username = String(v); }
+        get password() { return this._password; }
+        set password(v) { this._password = String(v); }
+        get host() {
+            return this._hostname + (this._port ? ":" + this._port : "");
+        }
+        set host(v) {
+            const s = String(v);
+            const c = s.lastIndexOf(":");
+            if (s.startsWith("[")) {
+                this._hostname = s; this._port = "";
+            } else if (c >= 0) {
+                this._hostname = s.substring(0, c).toLowerCase();
+                this._port = s.substring(c + 1);
+            } else {
+                this._hostname = s.toLowerCase(); this._port = "";
+            }
+        }
+        get hostname() { return this._hostname; }
+        set hostname(v) { this._hostname = String(v).toLowerCase(); }
+        get port() { return this._port; }
+        set port(v) {
+            const s = String(v);
+            this._port = s === "" ? "" : (Number(s) === defaultPortFor(this._protocol) ? "" : s);
+        }
+        get pathname() { return this._pathname; }
+        set pathname(v) {
+            let s = String(v);
+            if (isSpecial(this._protocol) && this._hostname && !s.startsWith("/")) s = "/" + s;
+            this._pathname = s;
+        }
+        get search() { return this._search; }
+        set search(v) {
+            let s = String(v);
+            if (s.length > 0 && !s.startsWith("?")) s = "?" + s;
+            this._search = s;
+            // Reseed searchParams.
+            const newParams = new URLSearchParams(s.replace(/^\?/, ""));
+            this._searchParams._pairs = newParams._pairs;
+        }
+        get hash() { return this._hash; }
+        set hash(v) {
+            let s = String(v);
+            if (s.length > 0 && !s.startsWith("#")) s = "#" + s;
+            this._hash = s;
+        }
+        get searchParams() { return this._searchParams; }
+        get origin() {
+            if (!isSpecial(this._protocol)) return "null";
+            if (this._protocol === "file:") return "null";
+            return this._protocol + "//" + this._hostname + (this._port ? ":" + this._port : "");
+        }
+        get href() {
+            let userinfo = "";
+            if (this._username || this._password) {
+                userinfo = this._username + (this._password ? ":" + this._password : "") + "@";
+            }
+            const authority = this._hostname || userinfo
+                ? "//" + userinfo + this._hostname + (this._port ? ":" + this._port : "")
+                : (isSpecial(this._protocol) ? "//" : "");
+            return this._protocol + authority + this._pathname + this._search + this._hash;
+        }
+        set href(v) {
+            // Re-parse and copy fields.
+            const fresh = new URL(String(v));
+            this._protocol = fresh._protocol;
+            this._username = fresh._username;
+            this._password = fresh._password;
+            this._hostname = fresh._hostname;
+            this._port = fresh._port;
+            this._pathname = fresh._pathname;
+            this._search = fresh._search;
+            this._hash = fresh._hash;
+            this._searchParams = fresh._searchParams;
+        }
+        toString() { return this.href; }
+        toJSON() { return this.href; }
+    }
+
+    URL.canParse = function (input, base) {
+        try { new URL(input, base); return true; }
+        catch (e) { return false; }
+    };
+
+    URL.createObjectURL = function () {
+        throw new Error("URL.createObjectURL is not supported in rusty-bun-host");
+    };
+
+    globalThis.URL = URL;
+})();
+"##;
+
+fn install_url_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(URL_CLASS_JS)?;
     Ok(())
 }
 

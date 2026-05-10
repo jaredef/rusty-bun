@@ -1941,3 +1941,166 @@ fn js_compose_timers_canonical_pattern() {
     assert!(r.contains("microtask"));
     assert!(r.contains("promise"));
 }
+
+// ════════════════════ URL class (Tier-H.4 #2) ════════════════════════════
+
+#[test]
+fn js_url_basic_components() {
+    let r = eval_string(r#"
+        const u = new URL("https://example.com:8443/path/to/page?x=1&y=2#frag");
+        u.protocol + "|" + u.hostname + "|" + u.port + "|" + u.pathname + "|" + u.search + "|" + u.hash
+    "#).unwrap();
+    assert_eq!(r, "https:|example.com|8443|/path/to/page|?x=1&y=2|#frag");
+}
+
+#[test]
+fn js_url_default_port_omitted() {
+    let r = eval_string(r#"
+        const u = new URL("https://example.com:443/x");
+        u.port + "|" + u.host
+    "#).unwrap();
+    assert_eq!(r, "|example.com");
+}
+
+#[test]
+fn js_url_origin() {
+    let r = eval_string(r#"
+        new URL("https://example.com:8443/foo").origin
+    "#).unwrap();
+    assert_eq!(r, "https://example.com:8443");
+}
+
+#[test]
+fn js_url_userinfo() {
+    let r = eval_string(r#"
+        const u = new URL("https://alice:secret@example.com/x");
+        u.username + ":" + u.password + "@" + u.hostname
+    "#).unwrap();
+    assert_eq!(r, "alice:secret@example.com");
+}
+
+#[test]
+fn js_url_search_params_live_binding() {
+    let r = eval_string(r#"
+        const u = new URL("https://example.com/x?a=1");
+        u.searchParams.append("b", "2");
+        u.search + "|" + u.href
+    "#).unwrap();
+    assert_eq!(r, "?a=1&b=2|https://example.com/x?a=1&b=2");
+}
+
+#[test]
+fn js_url_search_setter_resyncs_searchparams() {
+    let r = eval_string(r#"
+        const u = new URL("https://example.com/x?a=1");
+        u.search = "z=99";
+        u.searchParams.get("z") + "|" + u.searchParams.get("a")
+    "#).unwrap();
+    assert_eq!(r, "99|null");
+}
+
+#[test]
+fn js_url_relative_resolution() {
+    let r = eval_string(r#"
+        new URL("./bar", "https://example.com/foo/baz").href
+    "#).unwrap();
+    assert_eq!(r, "https://example.com/foo/bar");
+}
+
+#[test]
+fn js_url_absolute_path_resolution() {
+    let r = eval_string(r#"
+        new URL("/elsewhere", "https://example.com/foo/baz").href
+    "#).unwrap();
+    assert_eq!(r, "https://example.com/elsewhere");
+}
+
+#[test]
+fn js_url_query_only_resolution() {
+    let r = eval_string(r#"
+        new URL("?x=1", "https://example.com/foo/baz").href
+    "#).unwrap();
+    assert_eq!(r, "https://example.com/foo/baz?x=1");
+}
+
+#[test]
+fn js_url_fragment_only_resolution() {
+    let r = eval_string(r##"
+        new URL("#section", "https://example.com/foo/baz?q=1").href
+    "##).unwrap();
+    assert_eq!(r, "https://example.com/foo/baz?q=1#section");
+}
+
+#[test]
+fn js_url_to_string_eq_href() {
+    let r = eval_bool(r#"
+        const u = new URL("https://example.com/x?y=1#z");
+        String(u) === u.href && u.toJSON() === u.href
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_url_can_parse() {
+    let r = eval_string(r#"
+        URL.canParse("https://x") + ":" + URL.canParse("not a url") + ":" + URL.canParse("./rel", "https://x/")
+    "#).unwrap();
+    assert_eq!(r, "true:false:true");
+}
+
+#[test]
+fn js_url_invalid_throws() {
+    let r = eval_bool(r#"
+        (() => {
+            try { new URL("not a url"); return false; }
+            catch (e) { return e instanceof TypeError; }
+        })()
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_url_pathname_setter_normalizes_leading_slash() {
+    let r = eval_string(r#"
+        const u = new URL("https://example.com/old");
+        u.pathname = "new";
+        u.href
+    "#).unwrap();
+    assert_eq!(r, "https://example.com/new");
+}
+
+#[test]
+fn js_url_file_scheme() {
+    let r = eval_string(r#"
+        const u = new URL("file:///home/user/file.txt");
+        u.protocol + "|" + u.pathname + "|" + u.origin
+    "#).unwrap();
+    assert_eq!(r, "file:|/home/user/file.txt|null");
+}
+
+#[test]
+fn js_url_ipv6_host() {
+    let r = eval_string(r#"
+        const u = new URL("http://[::1]:8080/x");
+        u.hostname + "|" + u.port + "|" + u.host
+    "#).unwrap();
+    assert_eq!(r, "[::1]|8080|[::1]:8080");
+}
+
+// Canonical-docs composition: a typical consumer pattern combining
+// URL parsing + URLSearchParams mutation + fetch-style request building.
+#[test]
+fn js_compose_url_canonical_pattern() {
+    let r = eval_string(r#"
+        // Build a URL the way real client code does.
+        const base = new URL("https://api.example.com/v1/");
+        const endpoint = new URL("./users", base);
+        endpoint.searchParams.set("limit", "10");
+        endpoint.searchParams.set("offset", "20");
+        endpoint.searchParams.set("filter", "active");
+        // Then construct a Request — exercises both pilots together.
+        const req = new Request(endpoint.href, {method: "GET"});
+        req.method + "|" + req.url
+    "#).unwrap();
+    assert_eq!(r, "GET|https://api.example.com/v1/users?limit=10&offset=20&filter=active");
+}

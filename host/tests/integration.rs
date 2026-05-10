@@ -2144,3 +2144,59 @@ fn js_consumer_stream_processor_runs_clean() {
     assert!(result.starts_with("8/8"),
         "consumer self-test failed: {}", result);
 }
+
+// ════════════════════ Tier-J #3: differential against actual Bun ═════════
+//
+// Runs the same JS script against both Bun (subprocess) and rusty-bun-host,
+// captures both outputs, asserts they match line-by-line. This is the
+// J.2/J.3 work — actual differential evidence that rusty-bun produces
+// outcomes equivalent to Bun for the spec-portable surface.
+//
+// Skipped at compile-time if `bun` is not on $PATH, so the test suite
+// passes in environments without Bun installed.
+
+#[test]
+fn js_differential_portable_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/differential/portable.js");
+
+    // Run under rusty-bun-host.
+    let rb_result = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+
+    // Run under Bun (as a subprocess). Skip cleanly if Bun isn't installed.
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => {
+            eprintln!("skipped: bun binary not found on PATH");
+            return;
+        }
+    };
+    assert!(bun.status.success(), "bun exited with error: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_stdout = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+
+    // UUID is non-deterministic — strip the uuid.length / uuid.version /
+    // uuid.format lines aren't comparable byte-for-byte, but we already
+    // record format-conformance booleans, so they'll match. Just diff
+    // line-by-line.
+    let rb_lines: Vec<&str> = rb_result.lines().collect();
+    let bun_lines: Vec<&str> = bun_stdout.lines().collect();
+
+    if rb_lines.len() != bun_lines.len() {
+        panic!("line count differs: rusty-bun={} bun={}\nrb:\n{}\nbun:\n{}",
+            rb_lines.len(), bun_lines.len(), rb_result, bun_stdout);
+    }
+
+    let mut mismatches = Vec::new();
+    for (i, (rb, bun)) in rb_lines.iter().zip(bun_lines.iter()).enumerate() {
+        if rb != bun {
+            mismatches.push(format!("  L{}: rb={}  bun={}", i + 1, rb, bun));
+        }
+    }
+    if !mismatches.is_empty() {
+        panic!("differential mismatches ({}):\n{}",
+            mismatches.len(), mismatches.join("\n"));
+    }
+}

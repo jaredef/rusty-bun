@@ -2,7 +2,7 @@
 //! dispatch each to the appropriate language extractor, and collect the
 //! per-file `TestFile` reports.
 
-use crate::extract::{rust, ts_js, zig, Language, TestFile};
+use crate::extract::{rust, spec, ts_js, zig, Language, TestFile};
 use anyhow::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,8 @@ pub struct ByLanguage {
     pub typescript: LangStats,
     pub javascript: LangStats,
     pub zig: LangStats,
+    #[serde(default)]
+    pub spec: LangStats,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -38,6 +40,32 @@ pub struct LangStats {
     pub files: u64,
     pub tests: u64,
     pub constraints: u64,
+}
+
+impl ScanReport {
+    /// Merge another ScanReport into this one. Used by the pipeline driver
+    /// to fold a spec-source scan into the test-corpus scan so cluster /
+    /// invert / seams treat them as a unified clause stream.
+    pub fn merge(&mut self, other: ScanReport) {
+        self.files.extend(other.files);
+        self.stats.files_scanned += other.stats.files_scanned;
+        self.stats.parse_failures += other.stats.parse_failures;
+        self.stats.tests_total += other.stats.tests_total;
+        self.stats.constraints_total += other.stats.constraints_total;
+        self.stats.by_language.rust.merge(other.stats.by_language.rust);
+        self.stats.by_language.typescript.merge(other.stats.by_language.typescript);
+        self.stats.by_language.javascript.merge(other.stats.by_language.javascript);
+        self.stats.by_language.zig.merge(other.stats.by_language.zig);
+        self.stats.by_language.spec.merge(other.stats.by_language.spec);
+    }
+}
+
+impl LangStats {
+    fn merge(&mut self, other: LangStats) {
+        self.files += other.files;
+        self.tests += other.tests;
+        self.constraints += other.constraints;
+    }
 }
 
 pub fn scan_dir(root: &Path) -> Result<ScanReport> {
@@ -80,6 +108,7 @@ pub fn scan_dir(root: &Path) -> Result<ScanReport> {
             Language::TypeScript => &mut stats.by_language.typescript,
             Language::JavaScript => &mut stats.by_language.javascript,
             Language::Zig => &mut stats.by_language.zig,
+            Language::Spec => &mut stats.by_language.spec,
         };
         bucket.files += 1;
         bucket.tests += f.tests.len() as u64;
@@ -99,6 +128,10 @@ pub fn scan_dir(root: &Path) -> Result<ScanReport> {
 /// an empty test list when there are none.
 fn classify_file(path: &Path) -> Option<Language> {
     let name = path.file_name()?.to_str()?;
+    // Spec-source markdown extracts.
+    if name.ends_with(".spec.md") {
+        return Some(Language::Spec);
+    }
     // Bun / Jest / Vitest convention (`.test.ts`, `.spec.ts`).
     if name.ends_with(".test.ts") || name.ends_with(".test.tsx") || name.ends_with(".spec.ts") {
         return Some(Language::TypeScript);
@@ -146,6 +179,7 @@ fn extract_one(path: &Path, root: &Path) -> TestFile {
         Language::Rust => rust::extract(&rel, &src),
         Language::Zig => zig::extract(&rel, &src),
         Language::TypeScript | Language::JavaScript => ts_js::extract(&rel, &src, language),
+        Language::Spec => spec::extract(&rel, &src),
     };
     match result {
         Ok(f) => f,

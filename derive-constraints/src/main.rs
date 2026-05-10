@@ -123,6 +123,12 @@ enum Cmd {
         /// inside the rusty-bun checkout.
         #[arg(long)]
         welch_binary: Option<PathBuf>,
+        /// Optional spec-source directory of *.spec.md files. When
+        /// provided, scanned alongside the test corpus and merged into
+        /// the same scan.json. Spec invariants flow through cluster /
+        /// invert / seams identically to test-derived clauses.
+        #[arg(long)]
+        specs: Option<PathBuf>,
     },
     Seams {
         /// Path to a cluster JSON produced by `derive-constraints cluster`.
@@ -212,8 +218,9 @@ fn main() -> Result<()> {
             baseline,
             out,
             welch_binary,
+            specs,
         } => {
-            run_pipeline(test_corpus, impl_source, baseline, out, welch_binary)?;
+            run_pipeline(test_corpus, impl_source, baseline, out, welch_binary, specs)?;
         }
         Cmd::Seams {
             cluster: cluster_path,
@@ -317,6 +324,7 @@ fn run_pipeline(
     baseline: PathBuf,
     out_dir: PathBuf,
     welch_binary_arg: Option<PathBuf>,
+    specs_dir: Option<PathBuf>,
 ) -> Result<()> {
     use std::time::Instant;
     std::fs::create_dir_all(&out_dir)
@@ -345,8 +353,19 @@ fn run_pipeline(
     let scan_path = out_dir.join("scan.json");
     let t = Instant::now();
     eprintln!("[1/8] scan ({})", test_corpus.display());
-    let scan_report = scan::scan_dir(&test_corpus)
+    let mut scan_report = scan::scan_dir(&test_corpus)
         .with_context(|| format!("scanning {}", test_corpus.display()))?;
+    if let Some(specs_path) = specs_dir.as_ref() {
+        let spec_scan = scan::scan_dir(specs_path)
+            .with_context(|| format!("scanning specs {}", specs_path.display()))?;
+        eprintln!(
+            "      + specs ({}): {} files, {} clauses",
+            specs_path.display(),
+            spec_scan.stats.files_scanned,
+            spec_scan.stats.constraints_total,
+        );
+        scan_report.merge(spec_scan);
+    }
     write_json_to(&scan_path, &scan_report)?;
     eprintln!(
         "      → {} ({} files, {} tests, {} clauses) in {:?}",

@@ -264,7 +264,39 @@ pub fn classify_verb(raw: &str, kind: ConstraintKind) -> VerbClass {
         ConstraintKind::AssertMacro => classify_assert_macro(raw),
         ConstraintKind::ZigTestingExpect => classify_zig_testing(raw),
         ConstraintKind::GuardThrow => VerbClass::Error,
+        ConstraintKind::SpecInvariant => classify_spec_invariant(raw),
     }
+}
+
+/// Classify a spec-source clause's prose into a verb class. Heuristic:
+/// `returns`/`is the string`/`always equals` → Equivalence;
+/// `throws`/`raises` → Error;
+/// `is defined`/`exists`/`is a` → Existence;
+/// `contains`/`includes` → Containment;
+/// otherwise GenericAssertion.
+fn classify_spec_invariant(raw: &str) -> VerbClass {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("throws") || lower.contains("raises") || lower.contains("rejects with") {
+        return VerbClass::Error;
+    }
+    if lower.contains(" returns ") || lower.contains("always equals")
+        || lower.contains("is the string") || lower.contains("evaluates to")
+    {
+        return VerbClass::Equivalence;
+    }
+    if lower.contains("is defined") || lower.contains("exists")
+        || lower.contains("is a global") || lower.contains("is a constructor")
+        || lower.contains("is an instance")
+    {
+        return VerbClass::Existence;
+    }
+    if lower.contains("contains") || lower.contains("includes") {
+        return VerbClass::Containment;
+    }
+    if lower.contains("greater than") || lower.contains("less than") {
+        return VerbClass::Ordering;
+    }
+    VerbClass::GenericAssertion
 }
 
 fn classify_expect_chain(raw: &str) -> VerbClass {

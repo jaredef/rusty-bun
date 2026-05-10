@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod rust;
+pub mod spec;
 pub mod ts_js;
 pub mod zig;
 
@@ -15,6 +16,10 @@ pub enum Language {
     TypeScript,
     JavaScript,
     Zig,
+    /// Spec-source markdown — manually-curated invariants extracted from
+    /// external specifications (WHATWG, ECMA, RFC, Node API docs).
+    /// Treated as test-equivalent input by the cluster phase.
+    Spec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,4 +101,8 @@ pub enum ConstraintKind {
     /// Top-level `if (cond) throw new Error(...)` or `panic!(...)` —
     /// the substrate may emit these instead of explicit assertions.
     GuardThrow,
+    /// Manually-curated invariant extracted from an external spec.
+    /// Carries the same shape as test-derived clauses but with `source: spec`
+    /// semantics: the assertion is normative, not test-witnessed.
+    SpecInvariant,
 }

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-meta-protocols",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #12: meta-protocols exercise. Symbol.hasInstance custom instanceof + AsyncGenerator with throw() + structuredClone circular refs + regex sticky /y + getter/setter accessor cycles.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

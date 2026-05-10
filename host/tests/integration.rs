@@ -537,3 +537,285 @@ fn js_compose_abort_signal_with_async_pattern() {
     "#).unwrap();
     assert_eq!(r, "before-abort|aborted:AbortError|after-abort");
 }
+
+// ════════════════════ Headers ════════════════════
+
+#[test]
+fn js_headers_construction_from_object() {
+    let r = eval_string(r#"
+        const h = new Headers({"Content-Type": "application/json"});
+        h.get("content-type")
+    "#).unwrap();
+    assert_eq!(r, "application/json");
+}
+
+#[test]
+fn js_headers_case_insensitive() {
+    let r = eval_string(r#"
+        const h = new Headers();
+        h.append("Content-Type", "text/html");
+        h.get("CONTENT-TYPE")
+    "#).unwrap();
+    assert_eq!(r, "text/html");
+}
+
+#[test]
+fn js_headers_multiple_values_combined_with_comma() {
+    let r = eval_string(r#"
+        const h = new Headers();
+        h.append("Accept", "text/html");
+        h.append("Accept", "application/json");
+        h.get("accept")
+    "#).unwrap();
+    assert_eq!(r, "text/html, application/json");
+}
+
+#[test]
+fn js_headers_set_replaces() {
+    let r = eval_string(r#"
+        const h = new Headers();
+        h.append("X", "1");
+        h.append("X", "2");
+        h.set("X", "only");
+        h.get("X")
+    "#).unwrap();
+    assert_eq!(r, "only");
+}
+
+#[test]
+fn js_headers_get_set_cookie_separate() {
+    let r = eval_i64(r#"
+        const h = new Headers();
+        h.append("Set-Cookie", "a=1");
+        h.append("Set-Cookie", "b=2");
+        h.append("Set-Cookie", "c=3");
+        h.getSetCookie().length
+    "#).unwrap();
+    assert_eq!(r, 3);
+}
+
+#[test]
+fn js_headers_invalid_name_throws() {
+    let r = eval_bool(r#"
+        try { new Headers().append("invalid name", "x"); false }
+        catch (e) { e instanceof TypeError }
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_headers_iteration_lowercased_sorted() {
+    let r = eval_string(r#"
+        const h = new Headers();
+        h.append("Z-Header", "z");
+        h.append("A-Header", "a");
+        h.append("M-Header", "m");
+        const names = [...h.keys()];
+        names.join(",")
+    "#).unwrap();
+    assert_eq!(r, "a-header,m-header,z-header");
+}
+
+// ════════════════════ Request ════════════════════
+
+#[test]
+fn js_request_default_method_get() {
+    let r = eval_string(r#"new Request("https://example.com").method"#).unwrap();
+    assert_eq!(r, "GET");
+}
+
+#[test]
+fn js_request_url_preserved() {
+    let r = eval_string(r#"new Request("https://api.example.com/users?id=1").url"#).unwrap();
+    assert_eq!(r, "https://api.example.com/users?id=1");
+}
+
+#[test]
+fn js_request_method_uppercased() {
+    let r = eval_string(r#"new Request("/", {method: "post"}).method"#).unwrap();
+    assert_eq!(r, "POST");
+}
+
+#[test]
+fn js_request_with_headers_init() {
+    let r = eval_string(r#"
+        const req = new Request("/", {headers: {"Authorization": "Bearer xyz"}});
+        req.headers.get("authorization")
+    "#).unwrap();
+    assert_eq!(r, "Bearer xyz");
+}
+
+#[test]
+fn js_request_text_body() {
+    let r = eval_string(r#"
+        const req = new Request("/", {method: "POST", body: "payload"});
+        req.text()
+    "#).unwrap();
+    assert_eq!(r, "payload");
+}
+
+#[test]
+fn js_request_clone_preserves_state() {
+    let r = eval_string(r#"
+        const orig = new Request("/users", {method: "POST", body: "data"});
+        const clone = orig.clone();
+        clone.method + "|" + clone.text()
+    "#).unwrap();
+    assert_eq!(r, "POST|data");
+}
+
+// ════════════════════ Response ════════════════════
+
+#[test]
+fn js_response_default_status() {
+    let r = eval_i64(r#"new Response().status"#).unwrap();
+    assert_eq!(r, 200);
+}
+
+#[test]
+fn js_response_ok_for_200() {
+    let r = eval_bool(r#"new Response().ok"#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_response_ok_false_for_404() {
+    let r = eval_bool(r#"new Response(null, {status: 404}).ok"#).unwrap();
+    assert!(!r);
+}
+
+#[test]
+fn js_response_text() {
+    let r = eval_string(r#"new Response("hello").text()"#).unwrap();
+    assert_eq!(r, "hello");
+}
+
+#[test]
+fn js_response_status_out_of_range_throws() {
+    let r = eval_bool(r#"
+        try { new Response(null, {status: 99}); false }
+        catch (e) { e instanceof RangeError }
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_response_static_json_sets_content_type() {
+    let r = eval_string(r#"
+        const r = Response.json({hello: "world"});
+        r.headers.get("content-type")
+    "#).unwrap();
+    assert_eq!(r, "application/json");
+}
+
+#[test]
+fn js_response_static_redirect_only_valid_codes() {
+    let r = eval_bool(r#"
+        try { Response.redirect("/", 200); false }
+        catch (e) { e instanceof RangeError }
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_response_static_redirect_sets_location() {
+    let r = eval_string(r#"
+        Response.redirect("https://target.example.com/", 301).headers.get("location")
+    "#).unwrap();
+    assert_eq!(r, "https://target.example.com/");
+}
+
+#[test]
+fn js_response_static_error() {
+    let r = eval_string(r#"
+        const e = Response.error();
+        e.type
+    "#).unwrap();
+    assert_eq!(r, "error");
+}
+
+// ════════════════════ Bun.file ════════════════════
+
+#[test]
+fn js_bun_file_construction_lazy() {
+    let r = eval_string(r#"Bun.file("/tmp/never-touched-by-this-test").name"#).unwrap();
+    assert_eq!(r, "/tmp/never-touched-by-this-test");
+}
+
+#[test]
+fn js_bun_file_text_round_trip() {
+    let tmp = format!("/tmp/rusty-bun-host-bunfile-{}", std::process::id());
+    let script = format!(r#"
+        const path = "{}";
+        fs.writeFileSync(path, "Bun.file demo");
+        const text = Bun.file(path).text();
+        fs.unlinkSync(path);
+        text
+    "#, tmp);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "Bun.file demo");
+}
+
+#[test]
+fn js_bun_file_size() {
+    let tmp = format!("/tmp/rusty-bun-host-bunfile-size-{}", std::process::id());
+    let script = format!(r#"
+        const path = "{}";
+        fs.writeFileSync(path, "12345");
+        const sz = Bun.file(path).size;
+        fs.unlinkSync(path);
+        sz
+    "#, tmp);
+    let r = eval_i64(&script).unwrap();
+    assert_eq!(r, 5);
+}
+
+#[test]
+fn js_bun_file_type_from_extension() {
+    let r = eval_string(r#"Bun.file("/tmp/something.html").type"#).unwrap();
+    assert!(r.starts_with("text/html"));
+}
+
+#[test]
+fn js_bun_file_explicit_type_override() {
+    let r = eval_string(r#"Bun.file("/tmp/data.bin", {type: "application/protobuf"}).type"#).unwrap();
+    assert_eq!(r, "application/protobuf");
+}
+
+// ════════════════════ Cross-pilot composition (system-level) ══════════
+
+#[test]
+fn js_compose_response_with_blob_body() {
+    let r = eval_string(r#"
+        const blob = new Blob(["payload"]);
+        const resp = new Response(blob.bytes());
+        resp.text()
+    "#).unwrap();
+    assert_eq!(r, "payload");
+}
+
+#[test]
+fn js_compose_request_response_roundtrip() {
+    let r = eval_string(r#"
+        const req = new Request("/users", {method: "POST", body: "input"});
+        const resp = new Response(req.text(), {status: 201});
+        resp.status + ":" + resp.text()
+    "#).unwrap();
+    assert_eq!(r, "201:input");
+}
+
+#[test]
+fn js_compose_bun_file_to_response() {
+    let tmp = format!("/tmp/rusty-bun-host-compose-{}", std::process::id());
+    let script = format!(r#"
+        const path = "{}";
+        fs.writeFileSync(path, "static file content");
+        const file = Bun.file(path);
+        const resp = new Response(file.text());
+        const result = resp.text();
+        fs.unlinkSync(path);
+        result
+    "#, tmp);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "static file content");
+}

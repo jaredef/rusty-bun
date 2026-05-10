@@ -49,6 +49,11 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_blob_and_file_classes_js(&ctx)?;
     wire_abort_controller_static(&ctx, &global)?;
     install_abort_controller_classes_js(&ctx)?;
+    wire_headers_static(&ctx, &global)?;
+    wire_response_static(&ctx, &global)?;
+    install_fetch_api_classes_js(&ctx)?;
+    wire_bun_namespace_static(&ctx, &global)?;
+    install_bun_namespace_js(&ctx)?;
     Ok(())
 }
 
@@ -690,6 +695,374 @@ globalThis.AbortController = class AbortController {
 
 fn install_abort_controller_classes_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(ABORT_CONTROLLER_CLASSES_JS)?;
+    Ok(())
+}
+
+// ─────────────────── Headers ─────────────────────────────────────────
+
+fn wire_headers_static<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "validateName",
+        Function::new(ctx.clone(), |name: String| -> bool {
+            // Validate via the pilot's append (cheapest way to invoke
+            // validate_name without exposing private fns).
+            let mut h = rusty_fetch_api::Headers::new();
+            h.append(&name, "x").is_ok()
+        })?,
+    )?;
+    ns.set(
+        "validateValue",
+        Function::new(ctx.clone(), |value: String| -> bool {
+            let mut h = rusty_fetch_api::Headers::new();
+            h.append("x", &value).is_ok()
+        })?,
+    )?;
+    ns.set(
+        "lowercaseName",
+        Function::new(ctx.clone(), |s: String| -> String {
+            s.to_ascii_lowercase()
+        })?,
+    )?;
+    ns.set(
+        "stripWhitespace",
+        Function::new(ctx.clone(), |s: String| -> String {
+            s.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r')).to_string()
+        })?,
+    )?;
+    global.set("__headers", ns)?;
+    Ok(())
+}
+
+// ─────────────────── Response (static helpers) ───────────────────────
+
+fn wire_response_static<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "validStatus",
+        Function::new(ctx.clone(), |s: u16| -> bool {
+            (200..=599).contains(&s)
+        })?,
+    )?;
+    ns.set(
+        "validRedirectStatus",
+        Function::new(ctx.clone(), |s: u16| -> bool {
+            matches!(s, 301 | 302 | 303 | 307 | 308)
+        })?,
+    )?;
+    global.set("__response", ns)?;
+    Ok(())
+}
+
+// ─────────────────── Fetch API JS-side classes ───────────────────────
+
+const FETCH_API_CLASSES_JS: &str = r#"
+globalThis.Headers = class Headers {
+    constructor(init) {
+        this._entries = [];
+        if (init === undefined || init === null) return;
+        if (init instanceof Headers) {
+            for (const [n, v] of init.entries()) this.append(n, v);
+        } else if (Array.isArray(init)) {
+            for (const pair of init) this.append(pair[0], pair[1]);
+        } else if (typeof init === "object") {
+            for (const [k, v] of Object.entries(init)) this.append(k, v);
+        }
+    }
+    append(name, value) {
+        if (!__headers.validateName(String(name))) {
+            throw new TypeError("Invalid header name: " + name);
+        }
+        const stripped = __headers.stripWhitespace(String(value));
+        if (!__headers.validateValue(stripped)) {
+            throw new TypeError("Invalid header value: " + value);
+        }
+        this._entries.push([__headers.lowercaseName(String(name)), stripped]);
+    }
+    delete(name) {
+        const lower = __headers.lowercaseName(String(name));
+        this._entries = this._entries.filter(p => p[0] !== lower);
+    }
+    get(name) {
+        const lower = __headers.lowercaseName(String(name));
+        const matches = this._entries.filter(p => p[0] === lower);
+        if (matches.length === 0) return null;
+        return matches.map(p => p[1]).join(", ");
+    }
+    getSetCookie() {
+        return this._entries.filter(p => p[0] === "set-cookie").map(p => p[1]);
+    }
+    has(name) {
+        const lower = __headers.lowercaseName(String(name));
+        return this._entries.some(p => p[0] === lower);
+    }
+    set(name, value) {
+        if (!__headers.validateName(String(name))) {
+            throw new TypeError("Invalid header name: " + name);
+        }
+        const stripped = __headers.stripWhitespace(String(value));
+        if (!__headers.validateValue(stripped)) {
+            throw new TypeError("Invalid header value: " + value);
+        }
+        const lower = __headers.lowercaseName(String(name));
+        const newEntries = [];
+        let placed = false;
+        for (const p of this._entries) {
+            if (p[0] === lower) {
+                if (!placed) { newEntries.push([lower, stripped]); placed = true; }
+            } else {
+                newEntries.push(p);
+            }
+        }
+        if (!placed) newEntries.push([lower, stripped]);
+        this._entries = newEntries;
+    }
+    *entries() {
+        const sorted = [...this._entries].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+        for (const e of sorted) yield e;
+    }
+    *keys() { for (const [n, _] of this.entries()) yield n; }
+    *values() { for (const [_, v] of this.entries()) yield v; }
+    forEach(cb) { for (const [n, v] of this.entries()) cb(v, n, this); }
+    [Symbol.iterator]() { return this.entries(); }
+};
+
+globalThis.Request = class Request {
+    constructor(input, init) {
+        if (typeof input !== "string" && !(input instanceof Request)) {
+            throw new TypeError("Invalid Request input");
+        }
+        if (input instanceof Request) {
+            this._method = input._method;
+            this._url = input._url;
+            this._headers = new Headers(input._headers);
+            this._body = input._body;
+            this._bodyUsed = false;
+        } else {
+            this._method = (init && init.method) ? String(init.method).toUpperCase() : "GET";
+            this._url = String(input);
+            this._headers = new Headers(init && init.headers);
+            this._body = (init && init.body !== undefined) ? init.body : null;
+            this._bodyUsed = false;
+        }
+        this._mode = (init && init.mode) || "cors";
+        this._credentials = (init && init.credentials) || "same-origin";
+        this._cache = (init && init.cache) || "default";
+        this._redirect = (init && init.redirect) || "follow";
+        this._signal = (init && init.signal) || new AbortSignal();
+    }
+    get method() { return this._method; }
+    get url() { return this._url; }
+    get headers() { return this._headers; }
+    get body() { return this._body; }
+    get bodyUsed() { return this._bodyUsed; }
+    get mode() { return this._mode; }
+    get credentials() { return this._credentials; }
+    get cache() { return this._cache; }
+    get redirect() { return this._redirect; }
+    get signal() { return this._signal; }
+    text() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return "";
+        if (typeof this._body === "string") return this._body;
+        if (Array.isArray(this._body)) {
+            return new TextDecoder().decode(this._body);
+        }
+        return String(this._body);
+    }
+    arrayBuffer() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return [];
+        if (typeof this._body === "string") return new TextEncoder().encode(this._body);
+        if (Array.isArray(this._body)) return this._body;
+        return [];
+    }
+    bytes() { return this.arrayBuffer(); }
+    json() {
+        const t = this.text();
+        return JSON.parse(t);
+    }
+    clone() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        return new Request(this);
+    }
+};
+
+globalThis.Response = class Response {
+    constructor(body, init) {
+        const status = (init && init.status !== undefined) ? init.status : 200;
+        if (!__response.validStatus(status)) {
+            throw new RangeError("Status out of range: " + status);
+        }
+        this._status = status;
+        this._statusText = (init && init.statusText) ? String(init.statusText) : "";
+        this._headers = new Headers(init && init.headers);
+        this._body = body !== undefined ? body : null;
+        this._bodyUsed = false;
+        this._type = "default";
+        this._url = "";
+        this._redirected = false;
+    }
+    static error() {
+        const r = Object.create(Response.prototype);
+        r._status = 0;
+        r._statusText = "";
+        r._headers = new Headers();
+        r._body = null;
+        r._bodyUsed = false;
+        r._type = "error";
+        r._url = "";
+        r._redirected = false;
+        return r;
+    }
+    static json(data, init) {
+        const headers = new Headers(init && init.headers);
+        headers.set("Content-Type", "application/json");
+        const body = (typeof data === "string") ? data : JSON.stringify(data);
+        return new Response(body, { ...init, headers });
+    }
+    static redirect(url, status) {
+        const s = (status === undefined) ? 302 : status;
+        if (!__response.validRedirectStatus(s)) {
+            throw new RangeError("Invalid redirect status: " + s);
+        }
+        const headers = new Headers();
+        headers.set("Location", String(url));
+        return new Response(null, { status: s, headers });
+    }
+    get status() { return this._status; }
+    get statusText() { return this._statusText; }
+    get headers() { return this._headers; }
+    get body() { return this._body; }
+    get bodyUsed() { return this._bodyUsed; }
+    get ok() { return this._status >= 200 && this._status <= 299; }
+    get type() { return this._type; }
+    get url() { return this._url; }
+    get redirected() { return this._redirected; }
+    text() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return "";
+        if (typeof this._body === "string") return this._body;
+        if (Array.isArray(this._body)) return new TextDecoder().decode(this._body);
+        return String(this._body);
+    }
+    arrayBuffer() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return [];
+        if (typeof this._body === "string") return new TextEncoder().encode(this._body);
+        if (Array.isArray(this._body)) return this._body;
+        return [];
+    }
+    bytes() { return this.arrayBuffer(); }
+    json() {
+        const t = this.text();
+        return JSON.parse(t);
+    }
+    clone() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        const r = new Response(this._body, {
+            status: this._status,
+            statusText: this._statusText,
+            headers: this._headers,
+        });
+        r._type = this._type;
+        r._url = this._url;
+        r._redirected = this._redirected;
+        return r;
+    }
+};
+"#;
+
+fn install_fetch_api_classes_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(FETCH_API_CLASSES_JS)?;
+    Ok(())
+}
+
+// ─────────────────── Bun namespace (Bun.file etc.) ───────────────────
+
+fn wire_bun_namespace_static<'js>(
+    ctx: &rquickjs::Ctx<'js>, global: &Object<'js>,
+) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "fileMimeType",
+        Function::new(ctx.clone(), |path: String| -> String {
+            // Use rusty-bun-file's extension-to-MIME mapping.
+            rusty_bun_file::BunFile::open(&path).mime_type()
+        })?,
+    )?;
+    ns.set(
+        "fileExists",
+        Function::new(ctx.clone(), |path: String| -> bool {
+            rusty_bun_file::BunFile::open(&path).exists()
+        })?,
+    )?;
+    ns.set(
+        "fileSize",
+        Function::new(ctx.clone(), |path: String| -> JsResult<i64> {
+            rusty_bun_file::BunFile::open(&path)
+                .size()
+                .map(|s| s as i64)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "fileSize", "i64", format!("{}", e)))
+        })?,
+    )?;
+    ns.set(
+        "fileText",
+        Function::new(ctx.clone(), |path: String| -> JsResult<String> {
+            rusty_bun_file::BunFile::open(&path).text().map_err(|e| {
+                rquickjs::Error::new_from_js_message("fileText", "string", format!("{}", e))
+            })
+        })?,
+    )?;
+    ns.set(
+        "fileBytes",
+        Function::new(ctx.clone(), |path: String| -> JsResult<Vec<u8>> {
+            rusty_bun_file::BunFile::open(&path).bytes().map_err(|e| {
+                rquickjs::Error::new_from_js_message("fileBytes", "Vec<u8>", format!("{}", e))
+            })
+        })?,
+    )?;
+    global.set("__bun", ns)?;
+    Ok(())
+}
+
+const BUN_NAMESPACE_JS: &str = r#"
+globalThis.Bun = {
+    file(path, options) {
+        const explicitType = (options && typeof options.type === "string") ? options.type : null;
+        const handle = {
+            _path: String(path),
+            _explicitType: explicitType,
+            get name() { return this._path; },
+            get size() { return __bun.fileSize(this._path); },
+            get type() {
+                return this._explicitType !== null
+                    ? this._explicitType
+                    : __bun.fileMimeType(this._path);
+            },
+            exists() { return __bun.fileExists(this._path); },
+            text() { return __bun.fileText(this._path); },
+            arrayBuffer() { return __bun.fileBytes(this._path); },
+            bytes() { return __bun.fileBytes(this._path); },
+            slice(start, end, contentType) {
+                const all = __bun.fileBytes(this._path);
+                const startN = (typeof start === "number") ? start : 0;
+                const blob = new Blob([all]);
+                return blob.slice(startN, end, contentType);
+            },
+        };
+        return handle;
+    },
+};
+"#;
+
+fn install_bun_namespace_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(BUN_NAMESPACE_JS)?;
     Ok(())
 }
 

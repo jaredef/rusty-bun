@@ -17,6 +17,8 @@ rquickjs = { version = "0.6", features = ["loader"] }
 rusty-abort-controller = { path = "../pilots/abort-controller/derived" }
 rusty-blob = { path = "../pilots/blob/derived" }
 rusty-buffer = { path = "../pilots/buffer/derived" }
+rusty-bun-file = { path = "../pilots/bun-file/derived" }
+rusty-fetch-api = { path = "../pilots/fetch-api/derived" }
 rusty-node-fs = { path = "../pilots/node-fs/derived" }
 rusty-node-path = { path = "../pilots/node-path/derived" }
 rusty-textencoder = { path = "../pilots/textencoder/derived" }

@@ -173,7 +173,7 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 ~~**H.1 — JS engine selection.**~~ — **DONE** 2026-05-10 (selected rquickjs 0.6; production-tested QuickJS Rust binding; ~150 LOC of FFI glue produces a 1.6 MB binary)
 
-**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 11 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal). Remaining: structuredClone, fetch-api (Headers/Request/Response), streams, node-http data-layer, Bun.file/serve/spawn — each is incremental against the formalized integration base (seed §III.A8 + host/HOST-INTEGRATION-PATTERN.md).
+**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 14 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file). Remaining: structuredClone, streams, node-http data-layer, Bun.serve, Bun.spawn — each is incremental against the formalized integration base (seed §III.A8 + host/HOST-INTEGRATION-PATTERN.md).
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

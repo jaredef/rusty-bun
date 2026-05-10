@@ -1,0 +1,8 @@
+{
+  "name": "consumer-request-signer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #3: middleware-composed request signer. Exercises ESM deep dependency graph + middleware chain composition + crypto.subtle.digest + async ReadableStream iteration + TextEncoder. Bun-portable from inception.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

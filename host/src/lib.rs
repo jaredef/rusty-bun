@@ -385,8 +385,53 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::digest_sha256_hex(data.as_bytes())
         })?,
     )?;
+    // Bytes form for spec digest(algorithm, data) JS wrapper.
+    subtle.set(
+        "digestSha256Bytes",
+        Function::new(ctx.clone(), |data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::digest_sha256(&data).to_vec()
+        })?,
+    )?;
     crypto.set("subtle", subtle)?;
     global.set("crypto", crypto)?;
+    // Spec-compliant crypto.subtle.digest(algorithm, data) → Promise<ArrayBuffer>.
+    // Per M8: aligns with Bun's WebCrypto surface so consumer code using the
+    // standard idiom works portably.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const subtle = globalThis.crypto.subtle;
+            subtle.digest = async function digest(algorithm, data) {
+                const algName = (typeof algorithm === "string")
+                    ? algorithm
+                    : (algorithm && algorithm.name);
+                const norm = String(algName || "").toUpperCase().replace(/-/g, "");
+                if (norm !== "SHA256") {
+                    throw new Error("Unsupported digest algorithm: " + algName);
+                }
+                // Normalize input to byte array.
+                let bytes;
+                if (typeof data === "string") {
+                    bytes = Array.from(new TextEncoder().encode(data));
+                } else if (data instanceof ArrayBuffer) {
+                    bytes = Array.from(new Uint8Array(data));
+                } else if (data && typeof data === "object" && "byteLength" in data) {
+                    // Typed array / DataView.
+                    bytes = Array.from(new Uint8Array(
+                        data.buffer || data, data.byteOffset || 0, data.byteLength));
+                } else if (Array.isArray(data)) {
+                    bytes = data;
+                } else {
+                    throw new TypeError("digest: unsupported data type");
+                }
+                const out = subtle.digestSha256Bytes(bytes);
+                // Spec returns ArrayBuffer; produce one from the byte array.
+                const ab = new ArrayBuffer(out.length);
+                const view = new Uint8Array(ab);
+                view.set(out);
+                return ab;
+            };
+        })();
+    "#)?;
     Ok(())
 }
 

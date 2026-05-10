@@ -1,0 +1,8 @@
+{
+  "name": "consumer-config-merger",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #10: config-merger using ES2023 immutable Array methods (toSorted/toReversed/toSpliced/with), Promise.withResolvers (ES2024 deferred), Object.groupBy (ES2024), structuredClone with TypedArrays, deep object spread.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

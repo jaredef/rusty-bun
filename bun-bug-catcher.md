@@ -278,6 +278,13 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **In-basin counterparts confirmed in same probe:** `Atomics`, `SharedArrayBuffer`, `WeakMap`, `WeakSet`, `Symbol.asyncIterator` — these were also probed and are PRESENT in rusty-bun-host's QuickJS. Lock-free primitives are available even though threading globals are not.
 - **Per M8(b):** scope-limits recorded; no Tier-J fixture has been built against these surfaces; future fixture-author attempts must check this entry first.
 
+### E10. Set.prototype.union / .intersection / .difference (ES2025) absent from rusty-bun-host (basin boundary)
+- **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `Set.prototype.union`, `.intersection`, `.difference` as functions (ES2025 / TC39 proposal-set-methods Stage 4). rusty-bun-host has them as `undefined` — its embedded QuickJS predates the merge.
+- **Severity.** Apparatus-side scope-limit; engine-version-bounded.
+- **What it means.** Consumer code using ES2025 Set algebra methods will fail on rusty-bun-host. Easy to polyfill JS-side (~10 LOC per method).
+- **Re-open condition.** Either (i) polyfill the three methods via JS-side install (`Object.defineProperty(Set.prototype, "union", { value: function(other) { ... } })`); cheap, ~30 LOC total, no Rust changes. OR (ii) upgrade rquickjs to a QuickJS build with the methods.
+- **In-basin counterparts confirmed in same probe:** Promise.withResolvers (ES2024), Array.prototype.toSorted/toReversed/toSpliced/with (ES2023), Object.groupBy (ES2024), structuredClone on Uint8Array, Atomics.wait/notify all PRESENT.
+
 ## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)
 
 Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixture authoring. NOT Bun bugs — these are cases where the author wrote spec-violating JS and the runtime (Bun and rusty-bun-host alike) correctly threw. The category is kept as a trace of what spec-strictness Bun enforces and what the author should remember when authoring future fixtures. Each entry implicitly attests Bun's spec compliance on the surface where the author tripped.

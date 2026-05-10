@@ -16,6 +16,20 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Grouping mode: surface (default — first-identifier-segment of subject)
+/// or seam (signal-vector cluster, per [Doc 705](https://jaredfoy.com/resolve/doc/705-pin-art-operationalized-for-intra-architectural-seam-detection)
+/// architectural-hedging signal probes). The two outputs are structurally
+/// different: surface grouping reflects the source language's namespace
+/// organization (the namespace decomposition Doc 704 names as the
+/// translation-frame artifact); seam grouping reflects the runtime's
+/// actual architectural form (the formalization-frame artifact).
+pub enum InvertGrouping {
+    BySurface,
+    BySeam {
+        corpus_root: Option<PathBuf>,
+    },
+}
+
 #[derive(Debug)]
 pub struct InvertReport {
     pub output_dir: PathBuf,
@@ -27,22 +41,69 @@ pub struct InvertReport {
 const MIN_BEHAVIORAL_CARDINALITY: u64 = 5;
 const MAX_CONSTRAINTS_PER_SURFACE: usize = 80;
 
-/// Emit one `.constraints.md` per architectural surface, plus a top-level
-/// `bun-runtime.constraints.md` index that imports each surface module.
-pub fn invert(report: &ClusterReport, out_dir: &Path) -> Result<InvertReport> {
+/// Emit one `.constraints.md` per group, plus a top-level index that
+/// imports each module. Grouping is by surface (namespace decomposition)
+/// or by seam (architectural-form decomposition) per `grouping`.
+pub fn invert(
+    report: &ClusterReport,
+    out_dir: &Path,
+    grouping: InvertGrouping,
+) -> Result<InvertReport> {
     std::fs::create_dir_all(out_dir)
         .with_context(|| format!("create output dir {}", out_dir.display()))?;
 
-    let mut by_surface: BTreeMap<String, Vec<&Property>> = BTreeMap::new();
+    let mut by_group: BTreeMap<String, Vec<&Property>> = BTreeMap::new();
     let mut skipped: u32 = 0;
-    for prop in &report.properties {
-        if !is_emittable(prop) {
-            skipped += 1;
-            continue;
+
+    match grouping {
+        InvertGrouping::BySurface => {
+            for prop in &report.properties {
+                if !is_emittable(prop) {
+                    skipped += 1;
+                    continue;
+                }
+                let surface = surface_of(&prop.subject);
+                by_group.entry(surface).or_default().push(prop);
+            }
         }
-        let surface = surface_of(&prop.subject);
-        by_surface.entry(surface).or_default().push(prop);
+        InvertGrouping::BySeam { ref corpus_root } => {
+            // Use the seams crate's shared signal-vector classifier to
+            // group properties by architectural seam name. Properties
+            // that share a signal vector go into the same module
+            // regardless of namespace; properties that share a namespace
+            // but differ on signal vector go into different modules.
+            let emittable: Vec<&Property> = report
+                .properties
+                .iter()
+                .filter(|p| {
+                    let keep = is_emittable(p);
+                    if !keep {
+                        skipped += 1;
+                    }
+                    keep
+                })
+                .collect();
+            let groups = crate::seams::group_properties_by_seam(
+                &report.properties,
+                corpus_root.as_deref(),
+            );
+            // Re-filter by is_emittable: groups still include all
+            // properties (the seams crate doesn't apply invert's emit
+            // filter); we want only emittable properties to land in
+            // .constraints.md output.
+            let _ = emittable; // (the loop above already counted skipped)
+            for (seam_name, props) in groups {
+                let kept: Vec<&Property> = props
+                    .into_iter()
+                    .filter(|p| is_emittable(p))
+                    .collect();
+                if !kept.is_empty() {
+                    by_group.insert(seam_name, kept);
+                }
+            }
+        }
     }
+    let mut by_surface = by_group;
 
     // Surface-level filter — three cuts. (1) Drop surfaces whose name
     // is a lowercase-first identifier not in the known-namespace
@@ -53,8 +114,14 @@ pub fn invert(report: &ClusterReport, out_dir: &Path) -> Result<InvertReport> {
     // properties — typically the long tail. A surface is emittable if
     // it contains any construction-style property, has total witnessing
     // >= 20 clauses, or has at least one property at cardinality >= 10.
-    by_surface.retain(|surface, props| {
-        if !is_emittable_surface_name(surface) {
+    by_surface.retain(|name, props| {
+        // Surface-level filter applies only to surface-shaped names.
+        // Seam names are signal-vector compositions (e.g. "cfg|sync|@js")
+        // and contain `|` or `@` separators that surface names never do;
+        // those are always emittable as a group (cardinality threshold
+        // below filters small noise clusters out).
+        let is_seam_name = name.contains('|') || name.contains('@');
+        if !is_seam_name && !is_emittable_surface_name(name) {
             return false;
         }
         let any_cs = props.iter().any(|p| p.construction_style);

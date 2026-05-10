@@ -59,6 +59,17 @@ enum Cmd {
         /// Print human-readable summary to stderr.
         #[arg(long)]
         summary: bool,
+        /// Group properties by architectural seam (signal-vector
+        /// agreement per Doc 705) instead of by namespace surface
+        /// (first-identifier-segment). Per Doc 704, seam grouping is
+        /// the right shape for the formalization-then-derivation frame.
+        #[arg(long)]
+        by_seams: bool,
+        /// Optional corpus root for test-fn-body context probing during
+        /// signal-vector extraction. Same role as in `seams` subcommand.
+        /// Only meaningful with --by-seams.
+        #[arg(long)]
+        corpus_root: Option<PathBuf>,
     },
     /// Detect architectural seams over a cluster catalog by extracting
     /// per-property architectural-hedging signal vectors and grouping
@@ -129,10 +140,17 @@ fn main() -> Result<()> {
             cluster: cluster_path,
             out,
             summary,
+            by_seams,
+            corpus_root,
         } => {
             let cluster_report: cluster::ClusterReport = read_json(&cluster_path)
                 .with_context(|| format!("loading cluster from {}", cluster_path.display()))?;
-            let report = invert::invert(&cluster_report, &out)?;
+            let grouping = if by_seams {
+                invert::InvertGrouping::BySeam { corpus_root }
+            } else {
+                invert::InvertGrouping::BySurface
+            };
+            let report = invert::invert(&cluster_report, &out, grouping)?;
             if summary {
                 print_invert_summary(&report);
             }

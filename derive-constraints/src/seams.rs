@@ -120,6 +120,28 @@ pub struct CrossNamespaceSeam {
     pub cardinality_total: u64,
 }
 
+/// Group a cluster's properties by architectural seam (signal-vector
+/// agreement). Used by `invert --by-seams` to emit .constraints.md
+/// files organized by seam decomposition instead of namespace
+/// decomposition. The seam-grouped output is the operational close
+/// between [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error)'s
+/// formalization-then-derivation frame and this apparatus's
+/// architectural-form discovery.
+pub fn group_properties_by_seam<'a>(
+    properties: &'a [Property],
+    corpus_root: Option<&Path>,
+) -> std::collections::BTreeMap<String, Vec<&'a Property>> {
+    let cache = ContextCache::new(corpus_root.map(|p| p.to_path_buf()));
+    let mut out: std::collections::BTreeMap<String, Vec<&'a Property>> =
+        std::collections::BTreeMap::new();
+    for prop in properties {
+        let v = signal_vector_of(prop, &cache);
+        let name = name_for_signal(&v);
+        out.entry(name).or_default().push(prop);
+    }
+    out
+}
+
 pub fn detect_seams(report: &ClusterReport, corpus_root: Option<&Path>) -> Result<SeamsReport> {
     let mut signal_groups: BTreeMap<SignalVector, Vec<&Property>> = BTreeMap::new();
     let context_cache = ContextCache::new(corpus_root.map(|p| p.to_path_buf()));

@@ -54,7 +54,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `e162e19` | **Resume vector resolution-increase pass #1** (3 patterns folded back: JS-side polymorphic decode, Vec<Vec<String>> pair-list, canonical-docs composition test) |
 | 2026-05-10 | `57a9b1f` | **Level-2 cybernetic loop closed: seed §IV.M7** (resolution-increase pass becomes a recurring self-triggering mode with five named trigger conditions) |
 | 2026-05-10 | corpus `bc5d287` / resolve `011ae5c` | **Doc 708 second amendment** (records M7 closure; sharpens keeper-mediation reading: dyad ascends rather than collapses) |
-| 2026-05-10 | (this) | **Tier-H continued: structuredClone wired** (17 pilot families; 120/120 host tests; introduced Pattern 4 — spec-formalization pilot, JS-side instantiation; folded back as seed §III.A8.2bis per M7) |
+| 2026-05-10 | `b7a2b8e` | **Tier-H continued: structuredClone wired** (17 pilot families; 120/120 host tests; introduced Pattern 4 — spec-formalization pilot, JS-side instantiation; folded back as seed §III.A8.2bis per M7) |
+| 2026-05-10 | (this) | **Tier-H continued: streams wired (ReadableStream/WritableStream/TransformStream)** (18 pilot families; 129/129 host tests; 720/720 workspace tests; introduced eval_string_async helper for microtask-driven tests; M7 fold-back: bug-catcher E.6 + HOST-INTEGRATION-PATTERN.md "Sync-or-async user callbacks" section) |
 
 **Pilot inventory (16 pilots):**
 
@@ -182,13 +183,13 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 ~~**H.1 — JS engine selection.**~~ — **DONE** 2026-05-10 (selected rquickjs 0.6; production-tested QuickJS Rust binding; ~150 LOC of FFI glue produces a 1.6 MB binary)
 
-**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 16 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn). Remaining wirings, **priority-ordered for next session**:
+**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 18 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn, structuredClone, streams). Remaining wirings, **priority-ordered for next session**:
 
   1. ~~**structuredClone**~~ — DONE 2026-05-10 (Pattern 4 — spec-formalization pilot, JS-side instantiation; 13 integration tests + canonical-docs composition test).
-  2. **streams (ReadableStream/WritableStream/TransformStream)** — stateful (Pattern 3), but the pilot is already shipped. Wiring blocks Response.body() and fetch() composition; high downstream leverage.
+  2. ~~**streams (ReadableStream/WritableStream/TransformStream)**~~ — DONE 2026-05-10 (Pattern 4; 9 integration tests including canonical-docs composition; eval_string_async helper added to host).
   3. **node-http data-layer** — last data-layer surface; Pattern 3 with method-keyed dispatch (same shape as Bun.serve route table). Use Bun.serve's `routes:` decoder as the template; the JS-side polymorphic-shape decode is the canonical move.
 
-  Pick #2 next unless the keeper specifies otherwise. Each wiring ships with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim, AND (b) a fold-back commit per M7 if any new patterns surfaced.
+  Pick #3 next unless the keeper specifies otherwise. Each wiring ships with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim, AND (b) a fold-back commit per M7 if any new patterns surfaced.
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

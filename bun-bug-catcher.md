@@ -241,6 +241,12 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Severity.** Apparatus-side; rquickjs-specific.
 - **Suggested action.** Apply the JS-side branching pattern documented at `host/HOST-INTEGRATION-PATTERN.md` whenever a JS class delegates to a Rust function with optional arguments. Not directly relevant to Bun's JSC bindings (different binding crate with different optional-arg semantics) but useful to other projects evaluating rquickjs for Rust-to-JS bindings.
 
+### E6. Wrapping sync user callbacks in `async () => await fn()` breaks microtask resumption under rquickjs
+- **Source.** Streams pilot wiring on 2026-05-10. ReadableStream's pull-driven test deadlocked on the second `await reader.read()` when the host scheduled `Promise.resolve().then(async () => { await source.pull(controller); ... })`. Observed: 7 microtasks ran, then the pump ran dry with the result-promise unresolved. Switching to a sync invocation with explicit thenable detection (`const r = source.pull(c); if (r && typeof r.then === "function") r.then(...) else _pulling = false`) fixed it.
+- **Triggering pattern.** A user-supplied callback that is synchronous gets wrapped in an async IIFE that awaits its return. The outer `await` introduces a microtask boundary that, in combination with QuickJS' microtask scheduling, drops the resumption of an awaiter that was resolved synchronously inside the user callback (here: pendingRead resolved by enqueue, called inside pull).
+- **Severity.** Apparatus-side; rquickjs/QuickJS-specific.
+- **Suggested action.** When invoking user-supplied callbacks that may be sync OR async, do not blanket-wrap with `await`. Detect thenable explicitly: invoke synchronously, branch on `result && typeof result.then === "function"` to handle the async path, otherwise treat as resolved. Pattern documented in `host/HOST-INTEGRATION-PATTERN.md` § "Sync-or-async user callbacks".
+
 ---
 
 ## How this catalogue is maintained

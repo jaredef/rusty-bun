@@ -59,6 +59,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_bun_spawn_static(&ctx, &global)?;
     install_bun_spawn_js(&ctx)?;
     install_structured_clone_js(&ctx)?;
+    install_streams_js(&ctx)?;
     Ok(())
 }
 
@@ -1469,6 +1470,353 @@ fn install_structured_clone_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     Ok(())
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// Streams — JS-side wiring (Pattern 4: spec-formalization pilot)
+// ════════════════════════════════════════════════════════════════════════
+//
+// The streams pilot's Rust crate models ReadableStream<T>/WritableStream<T>/
+// TransformStream<I,O> generically with Rc<RefCell> state machines. The
+// types are not naturally bindable to JS (genericity, internal mutability,
+// promises). Per seed §III.A8.2bis, this wires as a JS-side reimplementation
+// against the same WHATWG Streams Standard constraint set the pilot was
+// derived from. The Rust pilot remains the canonical algorithmic reference
+// and the ratio anchor; this is a sibling instantiation.
+//
+// Scope: minimal-yet-spec-shaped subset sufficient for canonical patterns:
+//   - new ReadableStream({start, pull, cancel}) with controller.enqueue/
+//     close/error; getReader().read() → Promise<{value, done}>; async
+//     iteration via Symbol.asyncIterator.
+//   - new WritableStream({start, write, close, abort}); getWriter().write/
+//     close.
+//   - new TransformStream({transform, flush}) with .readable / .writable.
+// Backpressure (highWaterMark, desiredSize, queuingStrategy) is API-stub
+// only — the spec algorithm here is queue + pull-loop, sufficient for the
+// pull-driven canonical patterns. BYOB / TeeStream / pipeTo are deferred.
+
+const STREAMS_JS: &str = r#"
+(function() {
+    // ─── ReadableStream ────────────────────────────────────────────────
+    class ReadableStreamDefaultController {
+        constructor(stream) {
+            this._stream = stream;
+        }
+        enqueue(chunk) {
+            const s = this._stream;
+            if (s._state !== "readable") {
+                throw new TypeError("Cannot enqueue on " + s._state + " stream");
+            }
+            // If a pending read exists, satisfy it directly.
+            if (s._pendingReads.length > 0) {
+                const p = s._pendingReads.shift();
+                p.resolve({ value: chunk, done: false });
+            } else {
+                s._queue.push(chunk);
+            }
+        }
+        close() {
+            const s = this._stream;
+            if (s._state !== "readable") return;
+            s._state = "closed";
+            while (s._pendingReads.length > 0) {
+                const p = s._pendingReads.shift();
+                p.resolve({ value: undefined, done: true });
+            }
+        }
+        error(e) {
+            const s = this._stream;
+            if (s._state === "errored") return;
+            s._state = "errored";
+            s._storedError = e;
+            while (s._pendingReads.length > 0) {
+                const p = s._pendingReads.shift();
+                p.reject(e);
+            }
+        }
+        get desiredSize() {
+            const s = this._stream;
+            if (s._state === "errored") return null;
+            if (s._state === "closed") return 0;
+            return 1;  // stub backpressure
+        }
+    }
+
+    class ReadableStreamDefaultReader {
+        constructor(stream) {
+            if (stream._reader) {
+                throw new TypeError("Stream already has a reader");
+            }
+            this._stream = stream;
+            stream._reader = this;
+        }
+        read() {
+            const s = this._stream;
+            if (!s) return Promise.reject(new TypeError("Reader released"));
+            if (s._state === "errored") return Promise.reject(s._storedError);
+            if (s._queue.length > 0) {
+                return Promise.resolve({ value: s._queue.shift(), done: false });
+            }
+            if (s._state === "closed") {
+                return Promise.resolve({ value: undefined, done: true });
+            }
+            return new Promise((resolve, reject) => {
+                s._pendingReads.push({ resolve, reject });
+                // Trigger pull if source is pull-driven.
+                if (s._source.pull && !s._pulling) {
+                    s._pulling = true;
+                    Promise.resolve().then(() => {
+                        try {
+                            const r = s._source.pull(s._controller);
+                            if (r && typeof r.then === "function") {
+                                r.then(
+                                    () => { s._pulling = false; },
+                                    (e) => { s._controller.error(e); s._pulling = false; }
+                                );
+                            } else {
+                                s._pulling = false;
+                            }
+                        } catch (e) {
+                            s._controller.error(e);
+                            s._pulling = false;
+                        }
+                    });
+                }
+            });
+        }
+        cancel(reason) {
+            const s = this._stream;
+            if (!s) return Promise.resolve();
+            if (s._state === "errored") return Promise.reject(s._storedError);
+            s._state = "closed";
+            s._queue = [];
+            const r = s._source.cancel ? s._source.cancel(reason) : undefined;
+            return Promise.resolve(r).then(() => undefined);
+        }
+        releaseLock() {
+            if (this._stream) {
+                this._stream._reader = null;
+                this._stream = null;
+            }
+        }
+        get closed() {
+            const s = this._stream;
+            if (!s) return Promise.resolve();
+            if (s._state === "closed") return Promise.resolve();
+            if (s._state === "errored") return Promise.reject(s._storedError);
+            return new Promise((resolve, reject) => {
+                s._closedPromises.push({ resolve, reject });
+            });
+        }
+    }
+
+    class ReadableStream {
+        constructor(source = {}) {
+            this._source = source;
+            this._state = "readable";
+            this._queue = [];
+            this._pendingReads = [];
+            this._closedPromises = [];
+            this._reader = null;
+            this._pulling = false;
+            this._controller = new ReadableStreamDefaultController(this);
+            // Run start() synchronously per spec.
+            if (source.start) {
+                try {
+                    const r = source.start(this._controller);
+                    if (r && typeof r.then === "function") {
+                        r.catch((e) => this._controller.error(e));
+                    }
+                } catch (e) {
+                    this._controller.error(e);
+                }
+            }
+        }
+        getReader() {
+            return new ReadableStreamDefaultReader(this);
+        }
+        cancel(reason) {
+            const r = new ReadableStreamDefaultReader(this);
+            const p = r.cancel(reason);
+            r.releaseLock();
+            return p;
+        }
+        get locked() {
+            return this._reader !== null;
+        }
+        [Symbol.asyncIterator]() {
+            const reader = this.getReader();
+            return {
+                next() { return reader.read(); },
+                return(value) {
+                    reader.releaseLock();
+                    return Promise.resolve({ value, done: true });
+                },
+                [Symbol.asyncIterator]() { return this; },
+            };
+        }
+    }
+
+    // ─── WritableStream ────────────────────────────────────────────────
+    class WritableStreamDefaultController {
+        constructor(stream) {
+            this._stream = stream;
+        }
+        error(e) {
+            const s = this._stream;
+            if (s._state !== "writable") return;
+            s._state = "errored";
+            s._storedError = e;
+        }
+    }
+
+    class WritableStreamDefaultWriter {
+        constructor(stream) {
+            if (stream._writer) {
+                throw new TypeError("Stream already has a writer");
+            }
+            this._stream = stream;
+            stream._writer = this;
+        }
+        write(chunk) {
+            const s = this._stream;
+            if (!s) return Promise.reject(new TypeError("Writer released"));
+            if (s._state === "errored") return Promise.reject(s._storedError);
+            if (s._state !== "writable") return Promise.reject(new TypeError("Stream is " + s._state));
+            if (!s._sink.write) return Promise.resolve();
+            try {
+                const r = s._sink.write(chunk, s._controller);
+                return Promise.resolve(r);
+            } catch (e) {
+                s._controller.error(e);
+                return Promise.reject(e);
+            }
+        }
+        close() {
+            const s = this._stream;
+            if (!s) return Promise.reject(new TypeError("Writer released"));
+            if (s._state === "errored") return Promise.reject(s._storedError);
+            s._state = "closed";
+            if (s._sink.close) {
+                try { return Promise.resolve(s._sink.close()); }
+                catch (e) { return Promise.reject(e); }
+            }
+            return Promise.resolve();
+        }
+        abort(reason) {
+            const s = this._stream;
+            if (!s) return Promise.resolve();
+            s._state = "errored";
+            s._storedError = reason;
+            if (s._sink.abort) {
+                try { return Promise.resolve(s._sink.abort(reason)); }
+                catch (e) { return Promise.reject(e); }
+            }
+            return Promise.resolve();
+        }
+        releaseLock() {
+            if (this._stream) {
+                this._stream._writer = null;
+                this._stream = null;
+            }
+        }
+        get desiredSize() {
+            const s = this._stream;
+            if (!s) return null;
+            if (s._state === "errored") return null;
+            if (s._state === "closed") return 0;
+            return 1;
+        }
+    }
+
+    class WritableStream {
+        constructor(sink = {}) {
+            this._sink = sink;
+            this._state = "writable";
+            this._writer = null;
+            this._controller = new WritableStreamDefaultController(this);
+            if (sink.start) {
+                try {
+                    const r = sink.start(this._controller);
+                    if (r && typeof r.then === "function") {
+                        r.catch((e) => this._controller.error(e));
+                    }
+                } catch (e) {
+                    this._controller.error(e);
+                }
+            }
+        }
+        getWriter() {
+            return new WritableStreamDefaultWriter(this);
+        }
+        abort(reason) {
+            const w = new WritableStreamDefaultWriter(this);
+            const p = w.abort(reason);
+            w.releaseLock();
+            return p;
+        }
+        close() {
+            const w = new WritableStreamDefaultWriter(this);
+            const p = w.close();
+            w.releaseLock();
+            return p;
+        }
+        get locked() {
+            return this._writer !== null;
+        }
+    }
+
+    // ─── TransformStream ───────────────────────────────────────────────
+    class TransformStreamDefaultController {
+        constructor() {
+            this._readableController = null;
+        }
+        enqueue(chunk) { this._readableController.enqueue(chunk); }
+        terminate() { this._readableController.close(); }
+        error(e) { this._readableController.error(e); }
+    }
+
+    class TransformStream {
+        constructor(transformer = {}) {
+            const tController = new TransformStreamDefaultController();
+            const transformFn = transformer.transform || ((chunk, controller) => controller.enqueue(chunk));
+            const flushFn = transformer.flush;
+
+            this.readable = new ReadableStream({
+                start(controller) {
+                    tController._readableController = controller;
+                },
+            });
+
+            this.writable = new WritableStream({
+                start() {
+                    if (transformer.start) return transformer.start(tController);
+                },
+                write(chunk) {
+                    return Promise.resolve(transformFn(chunk, tController));
+                },
+                close() {
+                    const r = flushFn ? flushFn(tController) : undefined;
+                    return Promise.resolve(r).then(() => {
+                        tController._readableController.close();
+                    });
+                },
+                abort(reason) {
+                    tController._readableController.error(reason);
+                },
+            });
+        }
+    }
+
+    globalThis.ReadableStream = ReadableStream;
+    globalThis.WritableStream = WritableStream;
+    globalThis.TransformStream = TransformStream;
+})();
+"#;
+
+fn install_streams_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(STREAMS_JS)?;
+    Ok(())
+}
+
 // ─────────────────── Eval helpers ────────────────────────────────────
 
 pub fn eval_string(source: &str) -> Result<String, String> {
@@ -1489,5 +1837,53 @@ pub fn eval_i64(source: &str) -> Result<i64, String> {
     let (_runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
     context.with(|ctx| {
         ctx.eval::<i64, _>(source).map_err(|e| format!("eval: {:?}", e))
+    })
+}
+
+/// Evaluate `source` whose top-level expression resolves to a Promise<string>.
+/// Drives the QuickJS microtask queue until the promise settles, then returns
+/// the resolved string. Used for streams / async-iteration tests.
+pub fn eval_string_async(source: &str) -> Result<String, String> {
+    let (runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
+    // Wrap source in a self-invoking async block that stores result on globalThis.
+    let wrapped = format!(
+        r#"
+        globalThis.__asyncResult = undefined;
+        globalThis.__asyncError = undefined;
+        Promise.resolve().then(async () => {{
+            try {{
+                globalThis.__asyncResult = await (async () => {{ {} }})();
+            }} catch (e) {{
+                globalThis.__asyncError = String(e && e.message ? e.message : e);
+            }}
+        }});
+        "#,
+        source
+    );
+    context.with(|ctx| -> Result<(), String> {
+        ctx.eval::<(), _>(wrapped.as_str()).map_err(|e| format!("eval: {:?}", e))
+    })?;
+    // Pump microtasks.
+    let mut iters = 0;
+    let mut executed = 0;
+    for _ in 0..100_000 {
+        iters += 1;
+        match runtime.execute_pending_job() {
+            Ok(true) => { executed += 1; continue; }
+            Ok(false) => break,
+            Err(_) => break,
+        }
+    }
+    if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
+        eprintln!("[host] pump iters={} executed={}", iters, executed);
+    }
+    context.with(|ctx| -> Result<String, String> {
+        let g = ctx.globals();
+        let err: Option<String> = g.get::<_, Option<String>>("__asyncError")
+            .map_err(|e| format!("read err: {:?}", e))?;
+        if let Some(e) = err { return Err(format!("js error: {}", e)); }
+        let res: Option<String> = g.get::<_, Option<String>>("__asyncResult")
+            .map_err(|e| format!("read result: {:?}", e))?;
+        res.ok_or_else(|| "promise did not settle".to_string())
     })
 }

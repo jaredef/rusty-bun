@@ -2,7 +2,7 @@
 // the rquickjs-embedded host with all pilots wired into globalThis,
 // validating that the integration layer works end-to-end.
 
-use rusty_bun_host::{eval_bool, eval_i64, eval_string};
+use rusty_bun_host::{eval_bool, eval_i64, eval_string, eval_string_async};
 
 // ════════════════════ atob / btoa ════════════════════
 
@@ -1191,4 +1191,182 @@ fn js_compose_structured_clone_canonical_pattern() {
             (copy.modified instanceof Date)
     "#).unwrap();
     assert_eq!(r, "37.7749|false|true|true");
+}
+
+// ════════════════════ Streams ════════════════════
+
+#[test]
+fn js_readable_stream_basic_read() {
+    let r = eval_string_async(r#"
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue("a");
+                controller.enqueue("b");
+                controller.close();
+            }
+        });
+        const reader = stream.getReader();
+        const r1 = await reader.read();
+        const r2 = await reader.read();
+        const r3 = await reader.read();
+        return r1.value + ":" + r2.value + ":" + (r3.done ? "done" : "not-done");
+    "#).unwrap();
+    assert_eq!(r, "a:b:done");
+}
+
+#[test]
+fn js_readable_stream_pull_driven() {
+    let r = eval_string_async(r#"
+        let i = 0;
+        const stream = new ReadableStream({
+            pull(controller) {
+                if (i < 3) {
+                    controller.enqueue(i++);
+                } else {
+                    controller.close();
+                }
+            }
+        });
+        const out = [];
+        const reader = stream.getReader();
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            out.push(value);
+        }
+        return out.join(",");
+    "#).unwrap();
+    assert_eq!(r, "0,1,2");
+}
+
+#[test]
+fn js_readable_stream_async_iteration() {
+    let r = eval_string_async(r#"
+        const stream = new ReadableStream({
+            start(c) { c.enqueue("x"); c.enqueue("y"); c.enqueue("z"); c.close(); }
+        });
+        const out = [];
+        for await (const chunk of stream) out.push(chunk);
+        return out.join("-");
+    "#).unwrap();
+    assert_eq!(r, "x-y-z");
+}
+
+#[test]
+fn js_readable_stream_error_propagates() {
+    let r = eval_string_async(r#"
+        const stream = new ReadableStream({
+            start(c) { c.error(new Error("boom")); }
+        });
+        const reader = stream.getReader();
+        try {
+            await reader.read();
+            return "no-throw";
+        } catch (e) {
+            return e.message;
+        }
+    "#).unwrap();
+    assert_eq!(r, "boom");
+}
+
+#[test]
+fn js_readable_stream_locked() {
+    let r = eval_string(r#"
+        const stream = new ReadableStream({start(c) { c.close(); }});
+        const before = stream.locked;
+        stream.getReader();
+        const after = stream.locked;
+        before + ":" + after
+    "#).unwrap();
+    assert_eq!(r, "false:true");
+}
+
+#[test]
+fn js_writable_stream_basic_write() {
+    let r = eval_string_async(r#"
+        const collected = [];
+        const stream = new WritableStream({
+            write(chunk) { collected.push(chunk); },
+        });
+        const writer = stream.getWriter();
+        await writer.write("a");
+        await writer.write("b");
+        await writer.close();
+        return collected.join(",");
+    "#).unwrap();
+    assert_eq!(r, "a,b");
+}
+
+#[test]
+fn js_writable_stream_close_runs_sink_close() {
+    let r = eval_string_async(r#"
+        let closed = false;
+        const stream = new WritableStream({
+            write() {},
+            close() { closed = true; },
+        });
+        const w = stream.getWriter();
+        await w.write("x");
+        await w.close();
+        return closed ? "closed" : "open";
+    "#).unwrap();
+    assert_eq!(r, "closed");
+}
+
+#[test]
+fn js_transform_stream_pipes() {
+    let r = eval_string_async(r#"
+        const t = new TransformStream({
+            transform(chunk, controller) {
+                controller.enqueue(chunk.toUpperCase());
+            }
+        });
+        const writer = t.writable.getWriter();
+        const reader = t.readable.getReader();
+        await writer.write("hello");
+        await writer.write("world");
+        await writer.close();
+        const out = [];
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            out.push(value);
+        }
+        return out.join(",");
+    "#).unwrap();
+    assert_eq!(r, "HELLO,WORLD");
+}
+
+// Canonical-docs composition test: the MDN ReadableStream + TransformStream
+// pipeline pattern.
+#[test]
+fn js_compose_streams_canonical_pattern() {
+    let r = eval_string_async(r#"
+        // Source: numbers 1..5
+        const source = new ReadableStream({
+            start(c) {
+                for (let i = 1; i <= 5; i++) c.enqueue(i);
+                c.close();
+            }
+        });
+        // Transform: square
+        const square = new TransformStream({
+            transform(n, c) { c.enqueue(n * n); }
+        });
+        // Manual piping (pipeTo deferred): drain source into square.writable.
+        const sourceReader = source.getReader();
+        const squareWriter = square.writable.getWriter();
+        (async () => {
+            while (true) {
+                const {value, done} = await sourceReader.read();
+                if (done) { await squareWriter.close(); break; }
+                await squareWriter.write(value);
+            }
+        })();
+        // Collect from square.readable
+        const out = [];
+        for await (const v of square.readable) out.push(v);
+        return out.join(",");
+    "#).unwrap();
+    assert_eq!(r, "1,4,9,16,25");
 }

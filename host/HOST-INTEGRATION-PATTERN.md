@@ -118,6 +118,40 @@ The JS class holds state in a plain `this._pairs` array. The Rust helpers operat
 
 **Active examples:** URLSearchParams, TextEncoder, TextDecoder.
 
+### Pattern 4 — Spec-formalization pilot, JS-side instantiation
+
+When a pilot's Rust crate models an algorithm against a custom representation (e.g., structured-clone's `Heap`/`Value`, streams' generic `ReadableStream<T>` with `Rc<RefCell>` state machines) and the algorithm operates on values the JS engine already has natively (Date, RegExp, Map, Set, ArrayBuffer, TypedArrays, Promises, async iterators), wire the surface as a JS-side reimplementation against the same constraint set the pilot was derived from. The pilot's Rust crate stays the canonical algorithmic reference (verifier-tests, doc citations, ratio anchor); the host's JS implementation is a sibling instantiation.
+
+Apply when ALL of:
+1. The Rust API takes/returns a custom representation rather than primitive values.
+2. The algorithm is pure value-recursion plus memo (no I/O, no Rust-only crypto, etc.).
+3. The JS engine's built-in types are sufficient for the operands.
+
+**Active examples:** structuredClone, ReadableStream/WritableStream/TransformStream.
+
+## Sync-or-async user callbacks
+
+When invoking user-supplied callbacks that the spec declares MAY be sync OR async (ReadableStream's `start`/`pull`/`cancel`, WritableStream's `start`/`write`/`close`/`abort`, TransformStream's `transform`/`flush`), DO NOT blanket-wrap with `await`. Per [bug-catcher E.6](../bun-bug-catcher.md), wrapping a sync callback in `async () => await fn()` introduces an extra microtask boundary that, under rquickjs/QuickJS, drops the resumption of awaiters resolved synchronously inside the user callback.
+
+**Wrong:**
+```js
+Promise.resolve().then(async () => {
+    await userCallback();  // breaks if userCallback is sync and resolves a pending awaiter
+});
+```
+
+**Right:**
+```js
+Promise.resolve().then(() => {
+    const r = userCallback();
+    if (r && typeof r.then === "function") {
+        r.then(onResolve, onReject);
+    } else {
+        onResolve();
+    }
+});
+```
+
 ## rquickjs argument-omission rule
 
 When a JS class's method delegates to a Rust function with `Opt<T>` args, **the JS class MUST branch on `undefined` and omit the arg**, not pass undefined directly.

@@ -1,0 +1,39 @@
+# Rust
+target/
+Cargo.lock.bak
+**/*.rs.bk
+*.pdb
+
+# Zig
+zig-cache/
+zig-out/
+
+# Build artifacts
+build/
+out/
+dist/
+*.o
+*.so
+*.dylib
+*.dll
+*.a
+*.exe
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+.env.local
+*.log
+.direnv/
+
+# Translation pipeline scratch
+phase-a-scratch/
+phase-b-scratch/
+*.translation.tmp

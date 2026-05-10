@@ -1,0 +1,1615 @@
+{
+  "baseline_source": "/tmp/deno-run/baseline",
+  "target_source": "/tmp/deno-run/target/deno",
+  "threshold_z": 3.0,
+  "aggregate": [
+    {
+      "metric": "unsafe_blocks",
+      "target_value": 4.37070819670873,
+      "baseline_mean": 3.388054149512146,
+      "baseline_std": 10.749056858668528,
+      "z": 0.09141769925648191,
+      "z_infinite": null
+    },
+    {
+      "metric": "unsafe_loc",
+      "target_value": 4.37070819670873,
+      "baseline_mean": 3.388054149512146,
+      "baseline_std": 10.749056858668528,
+      "z": 0.09141769925648191,
+      "z_infinite": null
+    },
+    {
+      "metric": "unsafe_fns",
+      "target_value": 0.8135119733996934,
+      "baseline_mean": 0.8418303678611422,
+      "baseline_std": 4.253411107150913,
+      "z": -0.006657807991764395,
+      "z_infinite": null
+    },
+    {
+      "metric": "raw_pointers",
+      "target_value": 4.547224945653946,
+      "baseline_mean": 1.619832468951128,
+      "baseline_std": 9.124548604506396,
+      "z": 0.3208260050537787,
+      "z_infinite": null
+    },
+    {
+      "metric": "transmutes",
+      "target_value": 0.08633971415798633,
+      "baseline_mean": 0.060135817635496726,
+      "baseline_std": 0.9434711653522072,
+      "z": 0.027773924084587606,
+      "z_infinite": null
+    },
+    {
+      "metric": "extern_blocks",
+      "target_value": 0.04221052692168221,
+      "baseline_mean": 0.031650638783596766,
+      "baseline_std": 0.581556381795864,
+      "z": 0.018157978260811416,
+      "z_infinite": null
+    }
+  ],
+  "anomalous_files": [
+    {
+      "path": "libs/serde_v8/magic/value.rs",
+      "loc": 57,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 35.08771929824562,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 37.126289352503925,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/llhttp/sys.rs",
+      "loc": 271,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 177.12177121771217,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 19.234040647455682,
+          "z_infinite": null
+        },
+        {
+          "metric": "extern_blocks",
+          "target_value": 3.690036900369004,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 6.290681997656354,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/function.rs",
+      "loc": 95,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 168.42105263157896,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 18.28049007051688,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 52.63157894736842,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.581194931362193,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 52.63157894736842,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.581194931362193,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/zlib/alloc.rs",
+      "loc": 110,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 163.63636363636363,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 17.756114651786326,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 36.36363636363637,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.067765167465015,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 36.36363636363637,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.067765167465015,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/value.rs",
+      "loc": 70,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 14.285714285714286,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 15.077915457827734,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/ops/op2/test_cases/sync/buffers.rs",
+      "loc": 31,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 129.03225806451613,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 13.963696300838274,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/util/lib/memory.rs",
+      "loc": 131,
+      "flagged_metrics": [
+        {
+          "metric": "extern_blocks",
+          "target_value": 7.633587786259542,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 13.071711334335168,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 30.53435114503817,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.1688711331765886,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/serde_v8/magic/external_pointer.rs",
+      "loc": 69,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 115.94202898550725,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 12.529079680730192,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "cli/lsp/logging.rs",
+      "loc": 191,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 10.471204188481675,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 11.034855916300975,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/ffi/repr.rs",
+      "loc": 451,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 101.99556541019956,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 11.00062450121371,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/tasks.rs",
+      "loc": 294,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 10.204081632653061,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 10.751728497426551,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/sqlite_extension/src/lib.rs",
+      "loc": 42,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 95.23809523809524,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 10.26004318974292,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 23.80952380952381,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 5.399829187225509,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/napi_sys/src/types.rs",
+      "loc": 299,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 93.64548494983278,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 10.085501921205438,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/ops/op2/test_cases/sync/result_external.rs",
+      "loc": 11,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 90.9090909090909,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.785608287081944,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/uv.rs",
+      "loc": 256,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 89.84375,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.66885282275522,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 31.25,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 7.1491254586268616,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/ffi/callback.rs",
+      "loc": 682,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 87.97653958944281,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.46421690140838,
+          "z_infinite": null
+        },
+        {
+          "metric": "transmutes",
+          "target_value": 2.932551319648094,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 3.0445185899669713,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat/tests.rs",
+      "loc": 2991,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 87.2617853560682,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.385883795371594,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 61.517886994316285,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.407900768328861,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 61.517886994316285,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.407900768328861,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 20.39451688398529,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.596942553531168,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/ffi/static.rs",
+      "loc": 154,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 84.41558441558442,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.073955933090481,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 84.41558441558442,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 7.538106024690714,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 84.41558441558442,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 7.538106024690714,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/arena/mod.rs",
+      "loc": 51,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 39.21568627450981,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 9.021901466833016,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 78.43137254901961,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 8.41811945000031,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 78.43137254901961,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 6.981386310091859,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 78.43137254901961,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 6.981386310091859,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/llhttp/tests.rs",
+      "loc": 298,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 83.89261744966443,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 9.016641649547545,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 33.557046979865774,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 7.6915247051956035,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 70.46979865771812,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 6.2407098027496435,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 70.46979865771812,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 6.2407098027496435,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/util.rs",
+      "loc": 290,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 82.75862068965517,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 8.892361884140936,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 37.93103448275862,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.2135824368060204,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 37.93103448275862,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.2135824368060204,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/js_native_api.rs",
+      "loc": 4135,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 79.08101571946796,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 8.489316744091933,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 48.367593712212816,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.1845103392887095,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 48.367593712212816,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.1845103392887095,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "runtime/subprocess_windows/src/process_stdio.rs",
+      "loc": 510,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 94.11764705882354,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 8.440702668359497,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 94.11764705882354,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 8.440702668359497,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 33.333333333333336,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 7.638928414619241,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 29.41176470588235,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.0458418757510324,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/crypto/ffi.rs",
+      "loc": 93,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 75.26881720430107,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 8.071520896822937,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 43.01075268817204,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.686155823681066,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 43.01075268817204,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.686155823681066,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/node_api.rs",
+      "loc": 1186,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 72.51264755480607,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 7.769459965487243,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 42.158516020236085,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.60687103812812,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 42.158516020236085,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.60687103812812,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat/stream.rs",
+      "loc": 902,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 72.06208425720621,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 7.720080723057943,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 17.738359201773836,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 3.9724654890532305,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat.rs",
+      "loc": 1530,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 62.091503267973856,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 6.627360258583884,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 24.836601307189543,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 5.641300672532677,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 47.712418300653596,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.123558441817737,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 47.712418300653596,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.123558441817737,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/instance_data.rs",
+      "loc": 50,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 60.0,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 6.398143082082582,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 20.0,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.504189496268017,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/finalizer.rs",
+      "loc": 270,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 55.55555555555556,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 5.911056582017314,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 18.51851851851852,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.15588517200677,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/napi/lib.rs",
+      "loc": 863,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 53.30243337195829,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 5.664126867326057,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/tsfn.rs",
+      "loc": 113,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 53.097345132743364,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 5.641650331981214,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 17.699115044247787,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 3.9632389749596197,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/io/winpipe.rs",
+      "loc": 178,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 61.79775280898876,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.433937081872665,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 61.79775280898876,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.433937081872665,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/llhttp/binding.rs",
+      "loc": 1211,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 60.28075970272502,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.292809062344109,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 60.28075970272502,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 5.292809062344109,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 43.76548307184145,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.618929925155486,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/runtime/op_driver/erased_future.rs",
+      "loc": 207,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 4.830917874396135,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 5.0566273055940805,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 14.492753623188406,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 3.2094060299925116,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/arena/shared_atomic_arena.rs",
+      "loc": 584,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 22.26027397260274,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 5.035592155372077,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 41.0958904109589,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.5080134710644355,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 41.0958904109589,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.5080134710644355,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/arena/shared_arena.rs",
+      "loc": 498,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 22.08835341365462,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.9951727003471245,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 44.17670682730924,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.7946261903809053,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 44.17670682730924,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.7946261903809053,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/zlib/stream.rs",
+      "loc": 141,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 56.737588652482266,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.963182835891935,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 56.737588652482266,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.963182835891935,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/exception.rs",
+      "loc": 143,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 55.94405594405595,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.889359362924967,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 55.94405594405595,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.889359362924967,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/object_wrap.rs",
+      "loc": 439,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 45.558086560364465,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.815389340982115,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/arena/unique_arena.rs",
+      "loc": 378,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 21.164021164021165,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.77785717961614,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 44.973544973544975,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.8687571729138637,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 44.973544973544975,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.8687571729138637,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/web/url.rs",
+      "loc": 221,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 4.524886877828054,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 4.732260215420385,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/uv.rs",
+      "loc": 290,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 20.689655172413794,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.666331164458597,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 41.37931034482759,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.3574186076712005,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "cli/util/windows.rs",
+      "loc": 91,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 43.956043956043956,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.639814342835982,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/async.rs",
+      "loc": 703,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 42.67425320056899,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.499337173933411,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_fns",
+          "target_value": 14.22475106685633,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 3.1463971767261283,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/os/sys_info.rs",
+      "loc": 429,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 51.282051282051285,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.455646459244027,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 51.282051282051285,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.455646459244027,
+          "z_infinite": null
+        },
+        {
+          "metric": "extern_blocks",
+          "target_value": 2.331002331002331,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 3.9537898030080347,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/os/cpus.rs",
+      "loc": 382,
+      "flagged_metrics": [
+        {
+          "metric": "extern_blocks",
+          "target_value": 2.6178010471204187,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 4.446947001683156,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 41.8848167539267,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.412819310874147,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat/tcp.rs",
+      "loc": 1543,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 42.12572909915748,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.439221969862866,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/reference.rs",
+      "loc": 214,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 42.05607476635514,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.431588240697574,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node_sqlite/database.rs",
+      "loc": 2849,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 4.212004212004212,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 4.400630932709831,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/arena/raw_arena.rs",
+      "loc": 512,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_fns",
+          "target_value": 19.53125,
+          "baseline_mean": 0.8418303678611422,
+          "baseline_std": 4.253411107150913,
+          "z": 4.393983831169732,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/buffer.rs",
+      "loc": 120,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 41.666666666666664,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 4.388911269313351,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/benches/infra/arena.rs",
+      "loc": 199,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 50.25125628140704,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.35975013883216,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 50.25125628140704,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.35975013883216,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/os/mod.rs",
+      "loc": 319,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 50.156739811912225,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.350957137665867,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 50.156739811912225,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.350957137665867,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/http2/session.rs",
+      "loc": 3418,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 49.44411936805149,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.284661047392046,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 49.44411936805149,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 4.284661047392046,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 34.52311293153891,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.606017337267253,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/os/lib.rs",
+      "loc": 800,
+      "flagged_metrics": [
+        {
+          "metric": "extern_blocks",
+          "target_value": 2.5,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 4.244385305503939,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/web_timeout.rs",
+      "loc": 260,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 3.8461538461538463,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 4.012860347570867,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/crypto/spki.rs",
+      "loc": 198,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 45.45454545454545,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.9135053296428497,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 45.45454545454545,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.9135053296428497,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat/pipe.rs",
+      "loc": 1824,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 37.280701754385966,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.908233802143679,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/runtime/op_driver/op_results.rs",
+      "loc": 269,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 3.717472118959108,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 3.876468551064081,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/stream_wrap_state.rs",
+      "loc": 192,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 36.458333333333336,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.818106777049366,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/uv_compat/tty.rs",
+      "loc": 3137,
+      "flagged_metrics": [
+        {
+          "metric": "extern_blocks",
+          "target_value": 2.2314313037934332,
+          "baseline_mean": 0.031650638783596766,
+          "baseline_std": 0.581556381795864,
+          "z": 3.782575058701697,
+          "z_infinite": null
+        },
+        {
+          "metric": "raw_pointers",
+          "target_value": 34.42779725852726,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.5955712673143148,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/ops_metrics.rs",
+      "loc": 138,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 43.47826086956522,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.729648772647668,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 43.47826086956522,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.729648772647668,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/runtime/setup.rs",
+      "loc": 285,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 3.508771929824561,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 3.655263922031633,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/napi/src/lib.rs",
+      "loc": 213,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 32.863849765258216,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.4241712823883055,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "tests/ffi/src/lib.rs",
+      "loc": 610,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 32.78688524590164,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.41573639725672,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node_sqlite/session.rs",
+      "loc": 218,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 32.11009174311926,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.3415635770858545,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/canvas/byow.rs",
+      "loc": 477,
+      "flagged_metrics": [
+        {
+          "metric": "raw_pointers",
+          "target_value": 31.446540880503143,
+          "baseline_mean": 1.619832468951128,
+          "baseline_std": 9.124548604506396,
+          "z": 3.268842076946285,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/dns.rs",
+      "loc": 416,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 38.46153846153846,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.262935974121438,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 38.46153846153846,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.262935974121438,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "cli/lib/util/text_encoding.rs",
+      "loc": 26,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 38.46153846153846,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.262935974121438,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 38.46153846153846,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.262935974121438,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/typescript_go_client/src/lib.rs",
+      "loc": 320,
+      "flagged_metrics": [
+        {
+          "metric": "transmutes",
+          "target_value": 3.125,
+          "baseline_mean": 0.060135817635496726,
+          "baseline_std": 0.9434711653522072,
+          "z": 3.248497987980755,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/stream_wrap.rs",
+      "loc": 1872,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 37.927350427350426,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.213239703907997,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 37.927350427350426,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.213239703907997,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "ext/node/ops/http2/stream.rs",
+      "loc": 770,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 37.66233766233766,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.188585190633277,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 37.66233766233766,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.188585190633277,
+          "z_infinite": null
+        }
+      ]
+    },
+    {
+      "path": "libs/core/external.rs",
+      "loc": 275,
+      "flagged_metrics": [
+        {
+          "metric": "unsafe_blocks",
+          "target_value": 36.36363636363637,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.067765167465015,
+          "z_infinite": null
+        },
+        {
+          "metric": "unsafe_loc",
+          "target_value": 36.36363636363637,
+          "baseline_mean": 3.388054149512146,
+          "baseline_std": 10.749056858668528,
+          "z": 3.067765167465015,
+          "z_infinite": null
+        }
+      ]
+    }
+  ]
+}

@@ -145,7 +145,13 @@ enum CallRole {
 fn classify_call<'tree>(node: &Node<'tree>, src: &[u8]) -> Option<ClassifiedCall<'tree>> {
     let func = node.child_by_field_name("function")?;
     let (head, suffix) = decompose_callee(&func, src);
-    let role = if TEST_NAMES.contains(&head.as_str()) {
+    // Special-case: Deno's `Deno.test(name, fn)` and `Deno.test({name, fn})`
+    // shape. The callee is a member_expression with object="Deno" and
+    // property="test"; the test API has no `it` / `describe` analogues
+    // (Deno uses subTest grouping inside the test body), so we treat
+    // `Deno.test` as a Test role with no Describe variant.
+    let is_deno_test = head == "Deno" && suffix.as_deref() == Some("test");
+    let role = if TEST_NAMES.contains(&head.as_str()) || is_deno_test {
         CallRole::Test
     } else if DESCRIBE_NAMES.contains(&head.as_str()) {
         CallRole::Describe
@@ -180,6 +186,17 @@ fn classify_call<'tree>(node: &Node<'tree>, src: &[u8]) -> Option<ClassifiedCall
             "arrow_function" | "function" | "function_expression" | "async_function" | "function_declaration" => {
                 if body.is_none() {
                     body = arg.child_by_field_name("body").or(Some(arg));
+                }
+            }
+            "object" => {
+                // Deno.test({name: "...", fn: () => {...}}) form.
+                // Walk the object's pair children for `name:` and `fn:`.
+                let (n, b) = extract_options_object(&arg, src);
+                if name.is_none() {
+                    name = n;
+                }
+                if body.is_none() {
+                    body = b;
                 }
             }
             _ => {}
@@ -220,6 +237,65 @@ fn text(node: &Node, src: &[u8]) -> String {
     src.get(node.byte_range())
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .unwrap_or_default()
+}
+
+/// Extract `(name, body)` from a Deno.test options object: walks the
+/// object's `pair` children, returning the value of any `name:` field
+/// (string literal) and the value of any `fn:` field (function/arrow).
+fn extract_options_object<'tree>(
+    obj: &Node<'tree>,
+    src: &[u8],
+) -> (Option<String>, Option<Node<'tree>>) {
+    let mut name = None;
+    let mut body = None;
+    let mut cursor = obj.walk();
+    for pair in obj.children(&mut cursor) {
+        if pair.kind() != "pair" {
+            continue;
+        }
+        let key = pair.child_by_field_name("key");
+        let value = pair.child_by_field_name("value");
+        let (Some(k), Some(v)) = (key, value) else {
+            continue;
+        };
+        let key_text = text(&k, src);
+        let unquoted = strip_string_quotes(&key_text);
+        match unquoted.as_str() {
+            "name" => {
+                if name.is_none() && matches!(v.kind(), "string" | "template_string") {
+                    name = Some(string_literal_text(&v, src));
+                }
+            }
+            "fn" => {
+                if body.is_none()
+                    && matches!(
+                        v.kind(),
+                        "arrow_function"
+                            | "function"
+                            | "function_expression"
+                            | "async_function"
+                            | "function_declaration"
+                    )
+                {
+                    body = v.child_by_field_name("body").or(Some(v));
+                }
+            }
+            _ => {}
+        }
+    }
+    (name, body)
+}
+
+fn strip_string_quotes(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 {
+        let first = s.chars().next().unwrap();
+        let last = s.chars().last().unwrap();
+        if (first == '"' || first == '\'' || first == '`') && first == last {
+            return s[1..s.len() - 1].to_string();
+        }
+    }
+    s.to_string()
 }
 
 fn string_literal_text(node: &Node, src: &[u8]) -> String {

@@ -99,12 +99,20 @@ pub fn scan_dir(root: &Path) -> Result<ScanReport> {
 /// an empty test list when there are none.
 fn classify_file(path: &Path) -> Option<Language> {
     let name = path.file_name()?.to_str()?;
+    // Bun / Jest / Vitest convention (`.test.ts`, `.spec.ts`).
     if name.ends_with(".test.ts") || name.ends_with(".test.tsx") || name.ends_with(".spec.ts") {
         return Some(Language::TypeScript);
     }
     if name.ends_with(".test.js") || name.ends_with(".test.jsx") || name.ends_with(".spec.js")
         || name.ends_with(".test.mjs") || name.ends_with(".test.cjs")
     {
+        return Some(Language::JavaScript);
+    }
+    // Deno / Go-style `_test` convention (`*_test.ts`, `*_test.js`).
+    if name.ends_with("_test.ts") || name.ends_with("_test.tsx") || name.ends_with("_test.mjs") {
+        return Some(Language::TypeScript);
+    }
+    if name.ends_with("_test.js") || name.ends_with("_test.jsx") || name.ends_with("_test.cjs") {
         return Some(Language::JavaScript);
     }
     let ext = path.extension()?.to_str()?;

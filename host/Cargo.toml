@@ -1,0 +1,21 @@
+[package]
+name = "rusty-bun-host"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rusty-bun-host"
+path = "src/main.rs"
+
+[dependencies]
+rquickjs = { version = "0.6", features = ["loader", "macro"] }
+
+# Re-export pilot crates to bridge into JS.
+rusty-textencoder = { path = "../pilots/textencoder/derived" }
+rusty-urlsearchparams = { path = "../pilots/urlsearchparams/derived" }
+rusty-buffer = { path = "../pilots/buffer/derived" }
+rusty-node-path = { path = "../pilots/node-path/derived" }
+rusty-web-crypto = { path = "../pilots/web-crypto/derived" }

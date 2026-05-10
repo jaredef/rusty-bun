@@ -44,6 +44,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `f2bc47a` | **Tier-D #9 + #10: Cargo workspace consolidation + pilot runner script** (`cargo test --workspace --release` runs 591 tests across 16 pilots in one command) |
 | 2026-05-10 | `ef2bfc9` | **Tier-D #12: AuthorityTier schema** (Spec / Ecosystem / Contingent on every constraint clause; Bun corpus breakdown 1.3% Spec / 9.1% Ecosystem / 89.7% Contingent) |
 | 2026-05-10 | corpus | **Doc 708 published — The rusty-bun Engagement: Completion Record** (anchors all four seed §VII completion criteria as met) |
+| 2026-05-10 | `3ee92f8` | **Resume Vector telos re-anchored to runtime-level completion against Bun** (5 sub-criteria; Doc 708 = Sub-criterion 1; Tiers F-J added to trajectory) |
+| 2026-05-10 | (this) | **Tier-H #1 + #2 (partial): JS host integration spike** (rquickjs embed; 9 pilot surfaces wired into globalThis; 15 JS-driven integration tests; CLI binary `rusty-bun-host <script.js>` runs example with exit 0; first instance of pilots running under real JS engine) |
 
 **Pilot inventory (16 pilots):**
 
@@ -169,9 +171,9 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 ### Tier-H — JS host integration (Sub-criterion 4)
 
-**H.1 — JS engine selection.** Decide between QuickJS, Boa, or building a minimal engine. QuickJS has Rust bindings (rquickjs); Boa is pure-Rust. Tradeoffs: QuickJS is smaller and faster; Boa has better ECMAScript spec coverage.
+~~**H.1 — JS engine selection.**~~ — **DONE** 2026-05-10 (selected rquickjs 0.6; production-tested QuickJS Rust binding; ~150 LOC of FFI glue produces a 1.6 MB binary)
 
-**H.2 — Pilots-to-JS FFI.** Expose every pilot's API to JS code as JS-host objects. Bridge between Rust types (Buffer, Blob, Headers, etc.) and JS-host values.
+**H.2 — Pilots-to-JS FFI.** PARTIAL: 9 surfaces wired (atob, btoa, path.basename / dirname / extname / normalize / isAbsolute / join, crypto.randomUUID, plus path.sep / path.delimiter constants) covering the pattern. Remaining: TextEncoder / TextDecoder, URLSearchParams, Buffer, Blob, File, structuredClone, AbortController, fetch-api (Headers / Request / Response), streams (Read / Write / Transform), node-fs sync subset, node-http data-layer, web-crypto subtle.digest, Bun.file, Bun.serve, Bun.spawn — incremental wiring tasks against the proven integration base.
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

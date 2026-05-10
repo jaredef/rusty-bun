@@ -231,6 +231,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_crypto(&ctx, &global)?;
     wire_text_encoding(&ctx, &global)?;
     wire_buffer(&ctx, &global)?;
+    install_buffer_class_js(&ctx)?;
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
@@ -436,6 +437,12 @@ fn wire_text_encoding<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> Js
             constructor(label) { this._label = label; }
             get encoding() { return "utf-8"; }
             decode(bytes) {
+                // Normalize Uint8Array / Buffer / typed-array views → plain
+                // JS array (rquickjs Vec<u8> binding doesn't accept typed
+                // arrays directly).
+                if (bytes && typeof bytes === "object" && !Array.isArray(bytes)) {
+                    bytes = Array.from(bytes);
+                }
                 if (this._label === undefined || this._label === null) {
                     return __td.decode(bytes);
                 }
@@ -504,7 +511,70 @@ fn wire_buffer<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             )
         })?,
     )?;
-    global.set("Buffer", buffer)?;
+    global.set("__bufferStatic", buffer)?;
+    Ok(())
+}
+
+const BUFFER_CLASS_JS: &str = r#"
+// Node-Buffer-shaped class wrapping the static helpers wired by wire_buffer.
+// Per M8 reconciliation 2026-05-10: makes Buffer Bun-portable for the
+// .toString(encoding) instance idiom used in the stream-processor fixture.
+//
+// Extends Uint8Array so indexed access + .length come for free.
+(function() {
+    const S = globalThis.__bufferStatic;
+    class Buffer extends Uint8Array {
+        static from(input, encoding) {
+            if (typeof input === "string") {
+                // Currently only utf8 string→bytes is wired in S.
+                const arr = S.from(input);
+                return new Buffer(arr);
+            }
+            if (Array.isArray(input) || input instanceof Uint8Array || ArrayBuffer.isView(input)) {
+                const buf = new Buffer(input.length || input.byteLength || 0);
+                buf.set(input);
+                return buf;
+            }
+            throw new TypeError("Buffer.from: unsupported input");
+        }
+        static alloc(size) { return new Buffer(size); }
+        static byteLength(s) { return S.byteLength(s); }
+        // Preserve the rusty-bun-only static-helper API alongside the
+        // Bun-portable instance-method API. Both shapes work.
+        static decodeUtf8(bytes) { return S.decodeUtf8(Array.from(bytes)); }
+        static encodeBase64(bytes) { return S.encodeBase64(Array.from(bytes)); }
+        static encodeHex(bytes) { return S.encodeHex(Array.from(bytes)); }
+        static concat(chunks, totalLength) {
+            let total = 0;
+            for (const c of chunks) total += c.length;
+            const out = new Buffer(totalLength !== undefined ? totalLength : total);
+            let off = 0;
+            for (const c of chunks) {
+                if (off >= out.length) break;
+                const slice = c.length > out.length - off ? c.subarray(0, out.length - off) : c;
+                out.set(slice, off);
+                off += slice.length;
+            }
+            return out;
+        }
+        toString(encoding, start, end) {
+            const view = (start !== undefined || end !== undefined)
+                ? this.subarray(start || 0, end !== undefined ? end : this.length)
+                : this;
+            const arr = Array.from(view);
+            const enc = (encoding || "utf8").toLowerCase();
+            if (enc === "utf8" || enc === "utf-8") return S.decodeUtf8(arr);
+            if (enc === "base64") return S.encodeBase64(arr);
+            if (enc === "hex") return S.encodeHex(arr);
+            throw new Error("Unsupported encoding: " + encoding);
+        }
+    }
+    globalThis.Buffer = Buffer;
+})();
+"#;
+
+fn install_buffer_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(BUFFER_CLASS_JS)?;
     Ok(())
 }
 
@@ -2363,6 +2433,10 @@ const COMMONJS_LOADER_JS: &str = r#"
     }
 
     function resolvePath(specifier, fromDir) {
+        // node:* and bare builtin names short-circuit to the builtin path.
+        if (Object.prototype.hasOwnProperty.call(NODE_BUILTINS, specifier)) {
+            return specifier;  // returned literally; loadModule recognizes it
+        }
         // Relative specifier.
         if (specifier.startsWith("./") || specifier.startsWith("../") || specifier === "." || specifier === "..") {
             const joined = normalizePath(joinPath(fromDir, specifier));
@@ -2422,7 +2496,25 @@ const COMMONJS_LOADER_JS: &str = r#"
 
     const moduleCache = Object.create(null);
 
+    // node: scheme builtins. Real Bun resolves these to native modules; we
+    // map to the wired host globals. Reachable via require("node:fs") etc.
+    const NODE_BUILTINS = {
+        "node:fs": () => globalThis.fs,
+        "fs": () => globalThis.fs,
+        "node:path": () => globalThis.path,
+        "path": () => globalThis.path,
+        "node:http": () => globalThis.nodeHttp,
+        "http": () => globalThis.nodeHttp,
+        "node:crypto": () => globalThis.crypto,
+        "crypto": () => globalThis.crypto,
+        "node:buffer": () => ({ Buffer: globalThis.Buffer }),
+        "buffer": () => ({ Buffer: globalThis.Buffer }),
+    };
+
     function loadModule(absPath) {
+        if (Object.prototype.hasOwnProperty.call(NODE_BUILTINS, absPath)) {
+            return NODE_BUILTINS[absPath]();
+        }
         if (moduleCache[absPath]) return moduleCache[absPath].exports;
 
         const moduleObj = {

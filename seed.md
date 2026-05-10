@@ -156,6 +156,11 @@ The trajectory's Deferred section lists items considered and explicitly *deferre
 
 This is a much larger commitment than the prior framing. The engagement's prior milestone — apparatus saturation at 16 pilots / 8 architectural classes (Doc 708) — is a **necessary** precondition for completion but not sufficient. Saturation establishes that the apparatus' methodology works; completion requires applying the methodology across Bun's full runtime API surface, integrating with a JS engine, and demonstrating differential equivalence against actual Bun-using applications.
 
+Two cybernetic compensation rules govern progress toward completion and prevent drift:
+  - **§IV.M7** closes the level-2 loop for primitive-discovery: every round must self-check for new patterns and fold them back before the next round begins.
+  - **§IV.M8** closes the level-2 loop for divergence-reconciliation: every divergence between rusty-bun and the comparator runtime must be reconciled in the round it is discovered, not deferred.
+Without M7 the substrate accumulates work without consolidating its primitives; without M8 fixtures inherit misalignment from prior fixtures and the differential count never converges. Both rules were instituted under keeper rung-2 intervention after observed drift; both are now self-triggering.
+
 The completion telos has five sub-criteria, in dependency order:
 
 **Sub-criterion 1 — Apparatus saturation.** ✓ MET (Doc 708, 2026-05-10).
@@ -169,9 +174,13 @@ Sixteen pilots × eight architectural classes × five cybernetic modes × ~3% ag
 
 **Sub-criterion 3 — Transport-layer pilots.** The data-layer-only pilots (fetch-api, Bun.serve, Bun.spawn, node-http) lift to wire-format pilots. Includes HTTP/1.1 + HTTP/2 wire parsing, socket binding, TLS handshake, WebSocket upgrade, IPC channels, streaming stdio. Required for any of these surfaces to function as runtime API.
 
-**Sub-criterion 4 — JS host integration.** Embed a JS engine (QuickJS or Boa) and expose all pilots to JS code via FFI. Includes module loader / resolver, console + global setup, the `globalThis` shape Bun provides. Without this, no JS code can execute against the derived runtime; with it, rusty-bun becomes a runtime in the operational sense.
+**Sub-criterion 4 — JS host integration.** Embed a JS engine (QuickJS or Boa) and expose all pilots to JS code via FFI. Includes module loader / resolver, console + global setup, the `globalThis` shape Bun provides. Without this, no JS code can execute against the derived runtime; with it, rusty-bun becomes a runtime in the operational sense. SUBSTANTIALLY MET 2026-05-10: rquickjs embedded; 19 pilot families wired; CommonJS + ESM module loaders both honor relative + bare-specifier resolution with node_modules walk-up + `node:*` builtin scheme; timers + queueMicrotask + performance + URL globals wired; Buffer wrapped as Bun-portable Uint8Array subclass.
 
 **Sub-criterion 5 — Differential testing against Bun-using applications.** The operational form of plug-and-play. For a representative basket of Bun-using applications (frameworks like Hono / Elysia, real-world apps): run `npm test` under Bun → record P_bun. Run under integrated rusty-bun → record P_drv. Diff. **Zero regressions across the basket** = real plug-and-play.
+
+Closure of this sub-criterion is **per-fixture differential**: a fixture counts toward sub-criterion 5 only when it produces byte-identical output under Bun and rusty-bun-host (the J.1.a category in the trajectory's Tier-J basket). Fixtures that exercise the apparatus but depend on rusty-bun-only shapes (J.1.b) are host-internal regression tests, not sub-criterion-5 evidence — they must either be reconciled per §IV.M8 to enter J.1.a, or remain explicitly out of the differential count with a re-open condition.
+
+This is what makes the criterion non-deferrable. Each fixture not yet in J.1.a is a permanent ratchet against the eventual count; new fixtures cannot be built atop unreconciled divergences without inheriting the misalignment (the plank metaphor in §IV.M8). M8 enforces the rule at the round level; sub-criterion 5 enforces it at the telos level.
 
 A complementary signal: run Web Platform Tests against the integrated runtime via `wpt run` adapter. WPT pass-rate per surface is a published number for browser engines and Bun itself; rusty-bun's WPT pass-rate becomes an operational comparison.
 

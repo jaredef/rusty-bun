@@ -2,6 +2,11 @@
 
 The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)](https://jaredfoy.com/resolve/doc/581-the-resume-vector). This file changes session to session; the [seed](seed.md) does not. Read order on session resume: ENTRACE first; then the seed; then this file from the top; then run the live-state spot-check at §IV.
 
+**Cybernetic compensation rules carried by the resume vector** (full text in seed §IV):
+- **M7** — every round must self-check for new primitives and fold them back before next round.
+- **M8** — every Bun↔rusty-bun divergence surfaced by a differential must be reconciled in the round it is discovered.
+- **Telos lens (seed §VII):** sub-criterion 5 is a *per-fixture differential* count. Fixtures in J.1.a are differentially verified; J.1.b are host-internal regressions with explicit re-open conditions, NOT sub-criterion-5 evidence.
+
 ---
 
 ## I. Done — append-only
@@ -294,6 +299,7 @@ Per Doc 581 §III Move 3, this is the four-to-six-step procedure a session readi
 4. **Run §IV (Live-state spot-check).** Confirms apparatus is in a runnable state before queued work begins.
 5. **Pick the topmost queued item from §II that hasn't been blocked by re-prioritization.** Advance the work; commit; update §I (append-only) and revise §II as items move.
 6. **Don't re-prioritize §II without a stated reason.** If priorities change, record the change as part of the session's commit message AND the §II edit.
+7. **Apply §IV.M7 and §IV.M8 every round.** Before the round closes: (a) classify the round's M7 fold-back per §III.A8.9 taxonomy (primitive / vacuous / compositionally vacuous / compositional finding / author-side / scope-limit verified); fold back if primitive or compositional. (b) If the round attempted a Bun differential and surfaced a divergence, reconcile per M8 before commit — either align the apparatus with Bun, or record an explicit scope-limit + remove the dependent fixture from the J.1.a (differentially verified) set. "Noted, will deal with later" is forbidden.
 
 Discipline against decoration: if a session skips this protocol and re-derives state from the seed alone or from `git log`, the protocol is failing per [Doc 581 F3](https://jaredfoy.com/resolve/doc/581-the-resume-vector). Note the failure and adjust.
 

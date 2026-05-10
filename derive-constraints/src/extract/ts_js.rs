@@ -14,7 +14,18 @@
 
 use super::{ConstraintClause, ConstraintKind, Language, TestCase, TestFile, TestKind};
 use anyhow::Result;
+use std::collections::HashMap;
 use tree_sitter::{Node, Parser};
+
+/// Per-test scope for `const|let|var X = expr` bindings. Used to substitute
+/// the initializer expression for the variable name when canonicalizing
+/// expect-subjects: `const server = Bun.serve(opts); expect(server.port).toBe(3000)`
+/// canonicalizes the subject `server.port` to `Bun.serve(opts).port` so the
+/// architectural surface (Bun.serve) is visible to the cluster phase.
+///
+/// Single flat scope per test body — does not honor nested block scoping.
+/// Most test bodies are flat enough that the loss of fidelity is small.
+type BindingMap = HashMap<String, String>;
 
 const TEST_NAMES: &[&str] = &["test", "it"];
 const DESCRIBE_NAMES: &[&str] = &["describe"];
@@ -82,7 +93,8 @@ fn walk(node: &Node, src: &[u8], scope: Vec<String>, out: &mut Vec<TestCase>) {
                     let line_end = node.end_position().row as u32 + 1;
                     let mut constraints = Vec::new();
                     if let Some(body) = call.body {
-                        collect_constraints(&body, src, &mut constraints);
+                        let mut bindings: BindingMap = HashMap::new();
+                        walk_test_body(&body, src, &mut bindings, &mut constraints);
                     }
                     out.push(TestCase {
                         name,
@@ -224,19 +236,134 @@ fn string_literal_text(node: &Node, src: &[u8]) -> String {
     raw
 }
 
-fn collect_constraints(node: &Node, src: &[u8], out: &mut Vec<ConstraintClause>) {
-    if node.kind() == "call_expression" {
-        if let Some(c) = classify_constraint(node, src) {
-            out.push(c);
+/// Walk a test body in source order. Captures `const|let|var` bindings
+/// into `bindings` before they are referenced (preorder traversal) so
+/// that subject substitution operates on identifiers introduced earlier
+/// in the same scope.
+fn walk_test_body(
+    node: &Node,
+    src: &[u8],
+    bindings: &mut BindingMap,
+    out: &mut Vec<ConstraintClause>,
+) {
+    match node.kind() {
+        "lexical_declaration" | "variable_declaration" => {
+            capture_bindings(node, src, bindings);
         }
+        "call_expression" => {
+            if let Some(c) = classify_constraint(node, src, bindings) {
+                out.push(c);
+            }
+        }
+        _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_constraints(&child, src, out);
+        walk_test_body(&child, src, bindings, out);
     }
 }
 
-fn classify_constraint(node: &Node, src: &[u8]) -> Option<ConstraintClause> {
+/// Extract `name = value` pairs from a `const|let|var` declaration node.
+/// Multi-binding declarations (`const a = 1, b = 2`) are handled because
+/// each `variable_declarator` is captured independently.
+fn capture_bindings(node: &Node, src: &[u8], bindings: &mut BindingMap) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        let name_node = child.child_by_field_name("name");
+        let value_node = child.child_by_field_name("value");
+        if let (Some(name), Some(value)) = (name_node, value_node) {
+            if name.kind() == "identifier" {
+                let name_text = text(&name, src);
+                let value_text = collapse(&text(&value, src));
+                // Don't overwrite an existing binding with later one in
+                // the same scope — first definition wins. This matches
+                // the common test pattern where setup-time bindings
+                // dominate and rebindings are uncommon.
+                bindings.entry(name_text).or_insert(value_text);
+            }
+        }
+    }
+}
+
+/// If the leading identifier of `s` is bound, splice the binding's value
+/// in for that identifier. Operates on the textual prefix only; preserves
+/// trailing `.member`/`[...]`/etc. text. First strips common prefix
+/// keywords (`await `, `new `, `typeof `) so `await server.exited` resolves
+/// the underlying binding rather than treating `await` as the head.
+fn resolve_binding(s: &str, bindings: &BindingMap) -> String {
+    if bindings.is_empty() {
+        return s.to_string();
+    }
+    let mut work: &str = s;
+    loop {
+        let trimmed = work.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("await ") {
+            work = rest;
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("new ") {
+            work = rest;
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("typeof ") {
+            work = rest;
+            continue;
+        }
+        break;
+    }
+    let trimmed = work.trim_start();
+    let leading = take_identifier_prefix(trimmed);
+    if leading.is_empty() {
+        return s.to_string();
+    }
+    let head = leading.split('.').next().unwrap_or("");
+    if let Some(replacement) = bindings.get(head) {
+        let prefix_len = head.len();
+        let rest = &trimmed[prefix_len..];
+        return format!("{}{}", replacement, rest);
+    }
+    work.to_string()
+}
+
+/// Return the longest leading prefix that looks like an identifier-path
+/// `[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*`. Used to find
+/// the head identifier of a possibly-substitutable subject text.
+fn take_identifier_prefix(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut end = 0;
+    let mut state = 0u8; // 0 start, 1 in_ident, 2 after_dot
+    let mut last_id_end = 0;
+    while end < bytes.len() {
+        let c = bytes[end];
+        match state {
+            0 | 2 => {
+                if matches!(c, b'_' | b'$' | b'A'..=b'Z' | b'a'..=b'z') {
+                    state = 1;
+                    last_id_end = end + 1;
+                } else {
+                    break;
+                }
+            }
+            1 => {
+                if matches!(c, b'_' | b'$' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z') {
+                    last_id_end = end + 1;
+                } else if c == b'.' {
+                    state = 2;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+        end += 1;
+    }
+    s[..last_id_end].to_string()
+}
+
+fn classify_constraint(node: &Node, src: &[u8], bindings: &BindingMap) -> Option<ConstraintClause> {
     let func = node.child_by_field_name("function")?;
     // Detect `expect(x).toY(z)` — a member_expression whose deepest object
     // is itself a call to `expect`.
@@ -245,7 +372,7 @@ fn classify_constraint(node: &Node, src: &[u8]) -> Option<ConstraintClause> {
             if let Some(inner_func) = object.child_by_field_name("function") {
                 if text(&inner_func, src) == "expect" {
                     let raw = collapse(&text(node, src));
-                    let subject = expect_subject(&object, src);
+                    let subject = expect_subject(&object, src, bindings);
                     return Some(ConstraintClause {
                         line: node.start_position().row as u32 + 1,
                         raw,
@@ -254,14 +381,19 @@ fn classify_constraint(node: &Node, src: &[u8]) -> Option<ConstraintClause> {
                     });
                 }
             }
-            // `assert.equal(x, y)` style.
+            // `assert.equal(x, y)` style. Subject is the first argument
+            // of the call — the value being asserted on — rather than
+            // the assert.* function itself, which is just the test
+            // framework. With first-arg extraction the architectural
+            // surface becomes visible upstream.
             if text(&object, src) == "assert" {
                 let raw = collapse(&text(node, src));
+                let subject = first_call_arg_subject(node, src, bindings);
                 return Some(ConstraintClause {
                     line: node.start_position().row as u32 + 1,
                     raw,
                     kind: ConstraintKind::AssertCall,
-                    subject: None,
+                    subject,
                 });
             }
         }
@@ -270,26 +402,50 @@ fn classify_constraint(node: &Node, src: &[u8]) -> Option<ConstraintClause> {
         let head = text(&func, src);
         if ASSERT_NAMES.contains(&head.as_str()) {
             let raw = collapse(&text(node, src));
+            let subject = first_call_arg_subject(node, src, bindings);
             return Some(ConstraintClause {
                 line: node.start_position().row as u32 + 1,
                 raw,
                 kind: ConstraintKind::AssertCall,
-                subject: None,
+                subject,
             });
         }
     }
     None
 }
 
-fn expect_subject(object: &Node, src: &[u8]) -> Option<String> {
+/// For `assert(x, ...)`, `assert.equal(a, b, ...)`, etc., return the
+/// first call argument as the subject (the value being asserted on),
+/// resolved through the binding map.
+fn first_call_arg_subject(node: &Node, src: &[u8], bindings: &BindingMap) -> Option<String> {
+    let args = node.child_by_field_name("arguments")?;
+    let mut cursor = args.walk();
+    for arg in args.children(&mut cursor) {
+        match arg.kind() {
+            "(" | ")" | "," => continue,
+            _ => {
+                let raw = collapse(&text(&arg, src));
+                return Some(resolve_binding(&raw, bindings));
+            }
+        }
+    }
+    None
+}
+
+fn expect_subject(object: &Node, src: &[u8], bindings: &BindingMap) -> Option<String> {
     // object is the `expect(x)` call_expression. Subject is the first
-    // argument of that call.
+    // argument of that call. We resolve any leading binding so the
+    // architectural surface (e.g. Bun.serve) becomes visible upstream
+    // instead of the local variable name.
     let args = object.child_by_field_name("arguments")?;
     let mut cursor = args.walk();
     for arg in args.children(&mut cursor) {
         match arg.kind() {
             "(" | ")" | "," => continue,
-            _ => return Some(collapse(&text(&arg, src))),
+            _ => {
+                let raw = collapse(&text(&arg, src));
+                return Some(resolve_binding(&raw, bindings));
+            }
         }
     }
     None

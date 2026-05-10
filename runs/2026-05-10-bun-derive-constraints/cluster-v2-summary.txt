@@ -1,0 +1,49 @@
+
+=== derive-constraints cluster ===
+scan source:        /home/jaredef/rusty-bun/runs/2026-05-10-bun-derive-constraints/bun-scan-v2.json
+constraints in:     42680
+properties out:     4838
+antichain size:     9133
+reduction ratio:    0.2140 (antichain / constraints_in)
+construction-style: 303 (6.3% of properties)
+behavioral:         4535 (93.7% of properties)
+
+property cardinality buckets:
+         1  2275 properties
+   101-500  52 properties
+       2-5  1646 properties
+    21-100  226 properties
+      501+  8 properties
+      6-20  631 properties
+
+verb-class distribution:
+  containment        493 properties
+  equivalence        2778 properties
+  error              9 properties
+  existence          506 properties
+  genericassertion   291 properties
+  ordering           283 properties
+  other              222 properties
+  typeinstance       256 properties
+
+top 20 construction-style properties (by cardinality):
+  n=  806  equivalence       fetch
+  n=  333  equivalence       Buffer.from
+  n=  247  equivalence       Bun.file
+  n=  219  equivalence       URL
+  n=  182  equivalence       Bun.build
+  n=  180  equivalence       Bun.JSONL.parseChunk
+  n=  166  equivalence       structuredClone
+  n=  158  equivalence       Response
+  n=  116  equivalence       Bun.inspect
+  n=   83  equivalence       Bun.spawn
+  n=   77  equivalence       Bun.Cookie
+  n=   76  equivalence       fs.existsSync
+  n=   74  equivalence       Headers
+  n=   69  equivalence       Bun.CookieMap
+  n=   68  equivalence       URLSearchParams
+  n=   61  equivalence       Bun.Cookie.parse
+  n=   53  equivalence       Buffer
+  n=   53  equivalence       Bun.stripANSI
+  n=   47  equivalence       Buffer.isBuffer
+  n=   42  equivalence       Bun.Image

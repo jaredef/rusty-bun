@@ -1,0 +1,12 @@
+
+=== derive-constraints scan ===
+root:               /tmp/welch-corpus/target/bun
+files scanned:      4470
+parse failures:     0
+tests extracted:    17775
+constraints found:  43094
+by language:
+  rust        files= 1429  tests=   133  constraints=    427
+  typescript  files= 1548  tests= 15093  constraints=  34604
+  javascript  files=  195  tests=  2417  constraints=   7583
+  zig         files= 1298  tests=   132  constraints=    480

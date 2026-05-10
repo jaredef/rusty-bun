@@ -454,10 +454,14 @@ fn strip_prefixes(s: &str) -> &str {
             s = rest;
             continue;
         }
+        if let Some(rest) = trimmed.strip_prefix("typeof ") {
+            // `expect(typeof X).toBe('function')` — strip the operator so
+            // the architectural subject (`X`) is what canonicalizes; the
+            // structural value-side classifier still sees the matcher arg.
+            s = rest;
+            continue;
+        }
         if let Some(rest) = trimmed.strip_prefix("(") {
-            // Surrounding parens — only strip if there's a balancing close
-            // at the very end. Otherwise this is a call and we want to
-            // preserve the head.
             if rest.trim_end().ends_with(')') {
                 s = &rest[..rest.trim_end().len() - 1];
                 continue;
@@ -520,23 +524,161 @@ fn is_ident_cont(c: u8) -> bool {
 // ────────────────────── Construction-style classification ────────────────────
 
 /// Classify a property as construction-style if its subject names a public
-/// API surface and its verb-class is structural (TypeInstance, Existence,
-/// Error). Otherwise behavioral.
-///
-/// Public-API-surface heuristic: subject's first identifier matches one of
-/// the well-known runtime / web-platform / Node-compat namespaces, or is a
-/// known top-level built-in.
-fn classify_construction_style(subject: &str, verb: VerbClass, _entries: &[Entry]) -> bool {
+/// API surface and its verb-class is structural — either intrinsically
+/// (TypeInstance, Existence, Error) or via a structural value side
+/// (Equivalence verb where the value compared against is a type-name
+/// string, primitive constant, or class reference). Otherwise behavioral.
+fn classify_construction_style(subject: &str, verb: VerbClass, entries: &[Entry]) -> bool {
     if !is_public_surface(subject) {
         return false;
     }
-    // Equivalence matchers (toBe, toEqual) are usually behavioral — they
-    // pin specific values rather than structural properties. TypeInstance,
-    // Existence, and Error matchers are structural.
-    matches!(
+    if matches!(
         verb,
         VerbClass::TypeInstance | VerbClass::Existence | VerbClass::Error
-    )
+    ) {
+        return true;
+    }
+    // Refinement: Equivalence with structural value side.
+    // Examples:  expect(typeof Bun.serve).toBe("function")
+    //            expect(Bun.foo).toBe(undefined)
+    //            expect(server).toBeInstanceOf(Server)  // already TypeInstance
+    //            expect(URL.canParse).toEqual(URL.canParse)
+    // We sample the entries' raw text — if any representative reads as
+    // structural-equivalence, the property is promoted.
+    if matches!(verb, VerbClass::Equivalence) {
+        let sample_count = entries.len().min(8);
+        for e in entries.iter().take(sample_count) {
+            if has_structural_equivalence_value(&e.raw) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Returns true when the equivalence-clause `raw` compares its subject
+/// against a structural value: a type-name string literal (`"function"`,
+/// `"object"`, `"number"`, …), a primitive constant (`null`, `undefined`,
+/// `NaN`, `true`, `false`), or a capitalized identifier that likely names
+/// a class/constructor.
+fn has_structural_equivalence_value(raw: &str) -> bool {
+    // Find the first `.toBe(`, `.toEqual(`, `.toStrictEqual(` and read its
+    // first argument. The opening paren is just past the matcher name; we
+    // collect text until a balancing `)` or top-level `,`.
+    let matchers = ["toBe", "toEqual", "toStrictEqual"];
+    for m in matchers {
+        let needle = format!(".{}(", m);
+        if let Some(idx) = raw.find(&needle) {
+            let after = &raw[idx + needle.len()..];
+            let arg = first_call_arg(after);
+            if is_structural_value(arg.trim()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Take the first comma-separated argument of a call, accounting for
+/// nested `()`, `[]`, `{}`. `s` is the text immediately after the opening
+/// `(`. Returns the substring up to (but not including) the terminating
+/// `,` or balancing `)`.
+fn first_call_arg(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut depth: i32 = 0;
+    let mut in_str: Option<u8> = None;
+    let mut prev_backslash = false;
+    let mut end = 0;
+    for (i, &c) in bytes.iter().enumerate() {
+        if let Some(q) = in_str {
+            if c == b'\\' && !prev_backslash {
+                prev_backslash = true;
+                continue;
+            }
+            if c == q && !prev_backslash {
+                in_str = None;
+            }
+            prev_backslash = false;
+            continue;
+        }
+        match c {
+            b'"' | b'\'' | b'`' => {
+                in_str = Some(c);
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+                depth -= 1;
+            }
+            b',' if depth == 0 => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if end == 0 && !s.is_empty() {
+        // Reached end of string with no terminator (truncated raw); return all.
+        s
+    } else {
+        &s[..end]
+    }
+}
+
+fn is_structural_value(arg: &str) -> bool {
+    if arg.is_empty() {
+        return false;
+    }
+    // Type-name string literal.
+    let unquoted = strip_quotes(arg);
+    if matches!(
+        unquoted,
+        "function"
+            | "object"
+            | "string"
+            | "number"
+            | "boolean"
+            | "undefined"
+            | "symbol"
+            | "bigint"
+    ) {
+        return true;
+    }
+    // Primitive constants.
+    if matches!(arg, "null" | "undefined" | "NaN" | "true" | "false") {
+        return true;
+    }
+    // Capitalized identifier (likely class/constructor reference). Use a
+    // conservative test: starts with ASCII uppercase, followed only by
+    // identifier characters and dots. Excludes calls like `Foo()`.
+    let bytes = arg.as_bytes();
+    if !bytes.is_empty() && (bytes[0] as char).is_ascii_uppercase() {
+        if arg
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn strip_quotes(s: &str) -> &str {
+    let s = s.trim();
+    if s.len() < 2 {
+        return s;
+    }
+    let bytes = s.as_bytes();
+    let first = bytes[0];
+    let last = bytes[s.len() - 1];
+    if (first == b'"' || first == b'\'' || first == b'`') && first == last {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
 }
 
 fn is_public_surface(subject: &str) -> bool {

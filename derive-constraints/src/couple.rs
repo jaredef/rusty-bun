@@ -339,21 +339,25 @@ fn welch_summary_for_surface(
     surface: &str,
     welch_index: &[(String, &WelchAnomalousFile)],
 ) -> Option<WelchSummary> {
+    // Surfaces shorter than 4 chars are too noisy for substring matching
+    // ("URL" matches "URL.rs", "URLSearchParams.rs", "JSURL.rs", etc. cleanly,
+    // but "C" or "S3" would match "config", "Class", "S3Client.rs", and
+    // arbitrary short matches across the codebase). At 4+ chars the
+    // substring matcher's false-positive rate is operationally acceptable.
     let needle = surface.to_lowercase();
-    let matched: Vec<&WelchAnomalousFile> = welch_index
-        .iter()
-        .filter(|(p, _)| {
-            // Match the surface name as a *path component*, not just any
-            // substring. Paths like `src/buffer/lib.rs` match needle
-            // "buffer" via the segment scan; `src/zbuffer.rs` does not
-            // (segments are not prefix-matched).
-            p.split('/').any(|seg| {
-                seg == needle || seg.starts_with(&format!("{}_", needle))
-                    || seg.starts_with(&format!("{}.", needle))
-            })
-        })
-        .map(|(_, f)| *f)
-        .collect();
+    let matched: Vec<&WelchAnomalousFile> = if needle.len() < 4 {
+        welch_index
+            .iter()
+            .filter(|(p, _)| match_strict(p, &needle))
+            .map(|(_, f)| *f)
+            .collect()
+    } else {
+        welch_index
+            .iter()
+            .filter(|(p, _)| match_substring_in_components(p, &needle))
+            .map(|(_, f)| *f)
+            .collect()
+    };
 
     if matched.is_empty() {
         return None;
@@ -383,6 +387,29 @@ fn welch_summary_for_surface(
         any_unbounded_upward: any_unbounded,
         example_files,
     })
+}
+
+/// Strict matcher (used for short surface names). The needle must appear
+/// as a complete path component, or as a prefix of a component followed
+/// by `_` or `.`.
+fn match_strict(path_lower: &str, needle: &str) -> bool {
+    path_lower.split('/').any(|seg| {
+        seg == needle
+            || seg.starts_with(&format!("{}_", needle))
+            || seg.starts_with(&format!("{}.", needle))
+    })
+}
+
+/// Permissive matcher (used for surface names ≥ 4 chars). The needle may
+/// appear *inside* a path component case-insensitively. This catches:
+/// - `src/jsc/array_buffer.rs` for "Buffer"
+/// - `src/jsc/JSUint8Array.rs` for "Uint8Array"
+/// - `src/runtime/webcore/FileReader.rs` for "File"
+/// - `src/jsc/FetchHeaders.rs` for "Headers"
+/// while remaining bounded enough at 4+ chars to keep false-positives
+/// operationally low.
+fn match_substring_in_components(path_lower: &str, needle: &str) -> bool {
+    path_lower.split('/').any(|seg| seg.contains(needle))
 }
 
 fn classify_mismatch(

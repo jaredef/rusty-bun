@@ -33,9 +33,11 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `37c009b` | **node-path pilot — first Tier-2 ecosystem-compat anchor (303 LOC vs 3,656; 8.3% naive ratio); largest reference target** |
 | 2026-05-10 | `7f2e73a` | Resume Vector for rusty-bun (seed.md + trajectory.md per Doc 581) |
 | 2026-05-10 | `d660263` | **streams pilot — first Tier-A substrate from queue (453 LOC across 3 composed surfaces; 11.2% naive ratio); first pilot where spec-extract layer dominates over test-corpus layer** |
-| 2026-05-10 | (this) | **buffer pilot — Tier-A #2 from queue (261 LOC; 11.1% naive ratio against Bun's 2,359 LOC); 11 cited consumer dependencies across Node ecosystem** |
+| 2026-05-10 | `417f002` | **buffer pilot — Tier-A #2 from queue (261 LOC; 11.1% naive ratio against Bun's 2,359 LOC); 11 cited consumer dependencies across Node ecosystem** |
+| 2026-05-10 | `1bc2163` | Bun bug catcher published (35 entries across 5 categories) |
+| 2026-05-10 | (this) | **Bun.file pilot — first Tier-B Bun-namespace, first pilot with real I/O (95 LOC; 3.0% naive paired with rusty-blob)** |
 
-**Pilot inventory (10 pilots):**
+**Pilot inventory (11 pilots):**
 
 | # | Pilot | Class | LOC (code-only) | Verifier | Consumer | Aggregate ratio anchor |
 |---:|---|---|---:|---:|---:|---|
@@ -49,9 +51,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 8 | node-path | Tier-2 Node-compat pure-function | 303 | 51 | 11 | 8.3% naive / ~12–15% adj |
 | 9 | streams (Readable + Writable + Transform) | substrate / async-state-machine | 453 | 29 | 9 | 11.2% naive / ~12–15% adj |
 | 10 | buffer | Tier-2 Node-compat binary type | 261 | 44 | 11 | 11.1% naive / ~17% adj |
-|   | **Aggregate** | | **2,324** | **298 (1 skip)** | **107** | **~6.0% across ~39,000+ LOC upstream** |
+| 11 | Bun.file | Tier-2 Bun-namespace + first I/O | 95 | 24 | 8 | 3.0% naive (with Blob) / ~20-30% adj |
+|   | **Aggregate** | | **2,419** | **322 (1 skip)** | **115** | **~6.0% across ~40,000+ LOC upstream** |
 
-Total tests: **405 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
+Total tests: **437 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
 
 Doc-tier corpus output:
 - [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error) — port-as-translation is a category error
@@ -73,7 +76,7 @@ Doc-tier corpus output:
 
 ### Tier-B — flagship Bun-namespace pilots (Tier 2 ecosystem-only; tests apparatus on no-spec target)
 
-3. **Bun.file pilot** — Bun's file abstraction (`Bun.file(path)` returns Blob-like with lazy I/O). Composes with Blob (already piloted). Tier 2: Bun's tests are the spec. Estimated: 100–180 LOC.
+3. ~~Bun.file pilot~~ — **DONE** 2026-05-10 (95 LOC paired with rusty-blob; 32/32 tests; first Tier-B Bun-namespace; first pilot with real I/O)
 
 4. **Bun.serve pilot — data-layer scope** — flagship Bun API. Routing + handler dispatch + response generation, no transport. Composes with fetch-api system pilot. Largest cross-corroborated cardinality on Bun-namespace surfaces. Estimated: 250–400 LOC, Tier-2 ecosystem-only.
 

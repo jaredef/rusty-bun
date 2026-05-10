@@ -45,7 +45,12 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `ef2bfc9` | **Tier-D #12: AuthorityTier schema** (Spec / Ecosystem / Contingent on every constraint clause; Bun corpus breakdown 1.3% Spec / 9.1% Ecosystem / 89.7% Contingent) |
 | 2026-05-10 | corpus | **Doc 708 published — The rusty-bun Engagement: Completion Record** (anchors all four seed §VII completion criteria as met) |
 | 2026-05-10 | `3ee92f8` | **Resume Vector telos re-anchored to runtime-level completion against Bun** (5 sub-criteria; Doc 708 = Sub-criterion 1; Tiers F-J added to trajectory) |
-| 2026-05-10 | (this) | **Tier-H #1 + #2 (partial): JS host integration spike** (rquickjs embed; 9 pilot surfaces wired into globalThis; 15 JS-driven integration tests; CLI binary `rusty-bun-host <script.js>` runs example with exit 0; first instance of pilots running under real JS engine) |
+| 2026-05-10 | `1c890da` | **Tier-H #1 + #2 (partial): JS host integration spike** (rquickjs embed; 9 pilot surfaces wired into globalThis; 15 JS-driven integration tests; CLI binary `rusty-bun-host <script.js>` runs example with exit 0; first instance of pilots running under real JS engine) |
+| 2026-05-10 | `474cf29` | **Tier-H continued: 8 pilot families wired** (33/33 host tests; 624 workspace tests) |
+| 2026-05-10 | `11ad07f` | **Apparatus self-iteration: host-integration learnings formalized** (seed §III.A8 + §IV.M6; bug-catcher E.4/E.5; HOST-INTEGRATION-PATTERN.md; 6th Pin-Art class) |
+| 2026-05-10 | `c00f52c` | **Tier-H continued: Blob + File + AbortController/AbortSignal wired** (650 workspace tests) |
+| 2026-05-10 | `1e48dd7` | **Tier-H continued: Headers + Request + Response + Bun.file wired** (680 workspace tests) |
+| 2026-05-10 | (this) | **Tier-H continued: Bun.serve + Bun.spawn wired** (16 pilot families now wired into JS host; 107/107 host integration tests; 698/698 workspace tests; flagship Bun API + subprocess management both runnable from JS) |
 
 **Pilot inventory (16 pilots):**
 
@@ -173,7 +178,7 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
 ~~**H.1 — JS engine selection.**~~ — **DONE** 2026-05-10 (selected rquickjs 0.6; production-tested QuickJS Rust binding; ~150 LOC of FFI glue produces a 1.6 MB binary)
 
-**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 14 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file). Remaining: structuredClone, streams, node-http data-layer, Bun.serve, Bun.spawn — each is incremental against the formalized integration base (seed §III.A8 + host/HOST-INTEGRATION-PATTERN.md).
+**H.2 — Pilots-to-JS FFI.** SUBSTANTIALLY DONE: 16 pilot families wired (atob/btoa, path.*, crypto + crypto.subtle, TextEncoder/TextDecoder, Buffer, URLSearchParams, fs sync subset, Blob, File, AbortController/AbortSignal, Headers, Request, Response, Bun.file, Bun.serve, Bun.spawn). Remaining: structuredClone, streams, node-http data-layer — each is incremental against the formalized integration base (seed §III.A8 + host/HOST-INTEGRATION-PATTERN.md).
 
 **H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
 

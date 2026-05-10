@@ -819,3 +819,219 @@ fn js_compose_bun_file_to_response() {
     let r = eval_string(&script).unwrap();
     assert_eq!(r, "static file content");
 }
+
+// ════════════════════ Bun.serve (data-layer) ════════════════════
+
+#[test]
+fn js_bun_serve_construction() {
+    let r = eval_i64(r#"
+        const server = Bun.serve({port: 8080});
+        server.port
+    "#).unwrap();
+    assert_eq!(r, 8080);
+}
+
+#[test]
+fn js_bun_serve_url() {
+    let r = eval_string(r#"
+        const server = Bun.serve({port: 3000, hostname: "localhost"});
+        server.url
+    "#).unwrap();
+    assert_eq!(r, "http://localhost:3000/");
+}
+
+#[test]
+fn js_bun_serve_default_port() {
+    let r = eval_i64(r#"Bun.serve({}).port"#).unwrap();
+    assert_eq!(r, 3000);
+}
+
+#[test]
+fn js_bun_serve_fetch_handler_invoked() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            fetch(req) { return new Response("hello"); }
+        });
+        server.fetch(new Request("/")).text()
+    "#).unwrap();
+    assert_eq!(r, "hello");
+}
+
+#[test]
+fn js_bun_serve_no_handler_404() {
+    let r = eval_i64(r#"
+        const server = Bun.serve({});
+        server.fetch(new Request("/")).status
+    "#).unwrap();
+    assert_eq!(r, 404);
+}
+
+#[test]
+fn js_bun_serve_routes_static_path() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            routes: {
+                "/health": (req) => new Response("ok"),
+            }
+        });
+        server.fetch(new Request("/health")).text()
+    "#).unwrap();
+    assert_eq!(r, "ok");
+}
+
+#[test]
+fn js_bun_serve_routes_with_param() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            routes: {
+                "/users/:id": (req, params) => new Response("user-" + params.id),
+            }
+        });
+        server.fetch(new Request("/users/42")).text()
+    "#).unwrap();
+    assert_eq!(r, "user-42");
+}
+
+#[test]
+fn js_bun_serve_routes_method_keyed() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            routes: {
+                "/api/items": {
+                    GET: () => new Response("list"),
+                    POST: () => new Response("created", {status: 201}),
+                }
+            }
+        });
+        const get = server.fetch(new Request("/api/items"));
+        const post = server.fetch(new Request("/api/items", {method: "POST"}));
+        get.text() + "|" + post.status + ":" + post.text()
+    "#).unwrap();
+    assert_eq!(r, "list|201:created");
+}
+
+#[test]
+fn js_bun_serve_method_not_allowed() {
+    let r = eval_i64(r#"
+        const server = Bun.serve({
+            routes: {
+                "/api/items": { GET: () => new Response("list") }
+            }
+        });
+        server.fetch(new Request("/api/items", {method: "DELETE"})).status
+    "#).unwrap();
+    assert_eq!(r, 405);
+}
+
+#[test]
+fn js_bun_serve_routes_fall_through_to_fetch() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            routes: { "/specific": () => new Response("specific") },
+            fetch(req) { return new Response("catch-all"); }
+        });
+        server.fetch(new Request("/anything")).text()
+    "#).unwrap();
+    assert_eq!(r, "catch-all");
+}
+
+#[test]
+fn js_bun_serve_stop_then_fetch_returns_error() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            fetch() { return new Response("ok"); }
+        });
+        server.stop();
+        const r = server.fetch(new Request("/"));
+        r.type
+    "#).unwrap();
+    assert_eq!(r, "error");
+}
+
+// ════════════════════ Bun.spawn ════════════════════
+
+#[test]
+fn js_bun_spawn_sync_echo() {
+    let r = eval_string(r#"
+        const result = Bun.spawnSync(["sh", "-c", "echo hello"]);
+        result.stdout
+    "#).unwrap();
+    assert_eq!(r.trim(), "hello");
+}
+
+#[test]
+fn js_bun_spawn_sync_exit_code() {
+    let r = eval_i64(r#"
+        const result = Bun.spawnSync(["sh", "-c", "exit 42"]);
+        result.exitCode
+    "#).unwrap();
+    assert_eq!(r, 42);
+}
+
+#[test]
+fn js_bun_spawn_sync_success_false_on_nonzero() {
+    let r = eval_bool(r#"
+        const result = Bun.spawnSync(["sh", "-c", "exit 1"]);
+        result.success
+    "#).unwrap();
+    assert!(!r);
+}
+
+#[test]
+fn js_bun_spawn_sync_stderr() {
+    let r = eval_string(r#"
+        const result = Bun.spawnSync(["sh", "-c", "echo error >&2"]);
+        result.stderr
+    "#).unwrap();
+    assert_eq!(r.trim(), "error");
+}
+
+#[test]
+fn js_bun_spawn_sync_stdin_text() {
+    let r = eval_string(r#"
+        const result = Bun.spawnSync(["cat"], {stdin: "piped data"});
+        result.stdout
+    "#).unwrap();
+    assert_eq!(r, "piped data");
+}
+
+// ════════════════════ Cross-pilot composition (Bun.serve canonical) ════
+
+#[test]
+fn js_compose_bun_serve_canonical_pattern() {
+    // The canonical Bun docs example, running through rusty-bun-host.
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            routes: {
+                "/health": () => Response.json({status: "ok"}),
+                "/users/:id": (req, params) =>
+                    Response.json({id: params.id, name: "User " + params.id}),
+            },
+            fetch(req) {
+                return new Response("Not Found", {status: 404});
+            }
+        });
+        const h = server.fetch(new Request("/health")).text();
+        const u = server.fetch(new Request("/users/42")).text();
+        const nf = server.fetch(new Request("/missing")).status;
+        h + "|" + u + "|" + nf
+    "#).unwrap();
+    assert_eq!(r, r#"{"status":"ok"}|{"id":"42","name":"User 42"}|404"#);
+}
+
+#[test]
+fn js_compose_bun_serve_with_url_search_params() {
+    let r = eval_string(r#"
+        const server = Bun.serve({
+            fetch(req) {
+                // Real consumers parse query strings here.
+                const queryStart = req.url.indexOf("?");
+                const query = queryStart >= 0 ? req.url.substring(queryStart + 1) : "";
+                const params = new URLSearchParams(query);
+                return new Response("user=" + (params.get("user") || "guest"));
+            }
+        });
+        server.fetch(new Request("/?user=alice")).text()
+    "#).unwrap();
+    assert_eq!(r, "user=alice");
+}

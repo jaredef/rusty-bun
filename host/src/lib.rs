@@ -54,6 +54,10 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_fetch_api_classes_js(&ctx)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
+    wire_bun_serve_static(&ctx, &global)?;
+    install_bun_serve_js(&ctx)?;
+    wire_bun_spawn_static(&ctx, &global)?;
+    install_bun_spawn_js(&ctx)?;
     Ok(())
 }
 
@@ -1063,6 +1067,251 @@ globalThis.Bun = {
 
 fn install_bun_namespace_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(BUN_NAMESPACE_JS)?;
+    Ok(())
+}
+
+// ─────────────────── Bun.serve (data-layer) ──────────────────────────
+//
+// The pilot's data-layer dispatch + route matching exposed as Rust helpers;
+// JS-side class holds options and returns a server handle. No socket
+// binding (data-layer scope per pilot AUDIT). User calls
+// server.fetch(request) to invoke the routing pipeline programmatically.
+
+fn wire_bun_serve_static<'js>(
+    ctx: &rquickjs::Ctx<'js>, global: &Object<'js>,
+) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    // Route pattern matching: returns an object {matched, params} with
+    // params as Vec<Vec<String>> (JS-side reads as array of [name, value]).
+    ns.set(
+        "matchPattern",
+        Function::new(ctx.clone(), |pattern: String, url: String| -> JsResult<Object<'js>> {
+            // We need a Ctx to construct an object; can't access it here
+            // without changing signature. Return a serialized form instead:
+            // a Vec<Vec<String>> where empty = no match, else the param pairs.
+            let _ = (pattern, url);
+            // This branch isn't taken; see matchPatternPairs below.
+            unreachable!("use matchPatternPairs")
+        })?,
+    )?;
+    ns.set(
+        "matchPatternPairs",
+        Function::new(ctx.clone(), |pattern: String, url: String| -> Vec<Vec<String>> {
+            // Return pair-list of captures, OR a single pair ["__nomatch__",
+            // ""] sentinel when the pattern doesn't match.
+            match rusty_bun_serve::match_pattern(&pattern, &url) {
+                Some(params) => params
+                    .captures
+                    .into_iter()
+                    .map(|(k, v)| vec![k, v])
+                    .collect(),
+                None => vec![vec!["__nomatch__".to_string(), String::new()]],
+            }
+        })?,
+    )?;
+    global.set("__serve", ns)?;
+    Ok(())
+}
+
+const BUN_SERVE_JS: &str = r#"
+// Extends globalThis.Bun (already installed by install_bun_namespace_js).
+(function() {
+    function matchRoute(pattern, urlOrPath) {
+        const result = __serve.matchPatternPairs(pattern, urlOrPath);
+        if (result.length === 1 && result[0][0] === "__nomatch__") return null;
+        const params = {};
+        for (const [k, v] of result) params[k] = v;
+        return params;
+    }
+
+    function dispatch(server, request) {
+        if (server._stopped) return Response.error();
+        const method = (request && request.method) || "GET";
+        const url = (request && request.url) || "/";
+
+        // Route matching pass.
+        if (Array.isArray(server._routes)) {
+            for (const route of server._routes) {
+                const params = matchRoute(route.pattern, url);
+                if (params === null) continue;
+                // Method-keyed dispatch.
+                if (route.methods && route.methods[method]) {
+                    return route.methods[method](request, params);
+                }
+                if (route.methods && route.methods[""]) {
+                    return route.methods[""](request, params);
+                }
+                // Pattern matched, no handler for this method → 405.
+                return new Response(null, {status: 405});
+            }
+        }
+        // Fall through to fetch handler.
+        if (typeof server._fetch === "function") {
+            return server._fetch(request);
+        }
+        // Error handler.
+        if (typeof server._error === "function") {
+            return server._error(new Error("no route matched"));
+        }
+        return new Response(null, {status: 404});
+    }
+
+    Bun.serve = function serve(options) {
+        const opts = options || {};
+        const port = (typeof opts.port === "number") ? opts.port : 3000;
+        const hostname = (typeof opts.hostname === "string") ? opts.hostname : "localhost";
+
+        // Routes: convert object form ({"/path": handler-or-method-map}) to
+        // array of {pattern, methods}.
+        let routes = [];
+        if (opts.routes && typeof opts.routes === "object") {
+            for (const [pattern, handler] of Object.entries(opts.routes)) {
+                if (typeof handler === "function") {
+                    routes.push({pattern, methods: {"": handler}});
+                } else if (handler && typeof handler === "object") {
+                    routes.push({pattern, methods: handler});
+                }
+            }
+        }
+
+        const server = {
+            _port: port,
+            _hostname: hostname,
+            _development: !!opts.development,
+            _routes: routes,
+            _fetch: opts.fetch || null,
+            _error: opts.error || null,
+            _stopped: false,
+            _pendingRequests: 0,
+            get port() { return this._port; },
+            get hostname() { return this._hostname; },
+            get development() { return this._development; },
+            get url() { return "http://" + this._hostname + ":" + this._port + "/"; },
+            get pendingRequests() { return this._pendingRequests; },
+            get listening() { return !this._stopped; },
+            fetch(request) {
+                this._pendingRequests++;
+                try {
+                    return dispatch(this, request);
+                } finally {
+                    this._pendingRequests--;
+                }
+            },
+            stop() { this._stopped = true; },
+            reload(newOptions) {
+                // Per spec: port + hostname preserved across reload.
+                const port = this._port;
+                const hostname = this._hostname;
+                Object.assign(this, Bun.serve(newOptions));
+                this._port = port;
+                this._hostname = hostname;
+            },
+        };
+        return server;
+    };
+})();
+"#;
+
+fn install_bun_serve_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(BUN_SERVE_JS)?;
+    Ok(())
+}
+
+// ─────────────────── Bun.spawn ───────────────────────────────────────
+//
+// The pilot wraps std::process::Command. JS-side exposes spawnSync
+// returning {stdout, stderr, exitCode, success} for the most common
+// shell-out pattern. spawn (async-shaped) returns a handle the JS user
+// can call .wait() on; per the host's synchronous-poll model.
+
+fn wire_bun_spawn_static<'js>(
+    ctx: &rquickjs::Ctx<'js>, global: &Object<'js>,
+) -> JsResult<()> {
+    use rusty_bun_spawn::{SpawnOptions, StdinInput, StdioMode};
+    use std::path::PathBuf;
+
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "spawnSync",
+        Function::new(ctx.clone(), |args: Vec<String>, stdin_text: Opt<String>, cwd: Opt<String>|
+                -> JsResult<Object<'js>> {
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let opts = SpawnOptions {
+                cwd: cwd.0.map(PathBuf::from),
+                env: None,
+                stdin: match stdin_text.0 {
+                    Some(s) => StdinInput::Text(s),
+                    None => StdinInput::Null,
+                },
+                stdout: StdioMode::Pipe,
+                stderr: StdioMode::Pipe,
+            };
+            let _ = (args_refs.clone(), opts.clone());
+            // We need a Ctx<'js> to build an Object; we don't have it here.
+            // Fall through to spawnSyncResult below which returns a flat
+            // pair-list the JS side rebuilds into an object.
+            unreachable!("use spawnSyncResult")
+        })?,
+    )?;
+    ns.set(
+        "spawnSyncResult",
+        Function::new(ctx.clone(), |args: Vec<String>, stdin_text: Opt<String>, cwd: Opt<String>|
+                -> JsResult<Vec<Vec<String>>> {
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let opts = SpawnOptions {
+                cwd: cwd.0.map(PathBuf::from),
+                env: None,
+                stdin: match stdin_text.0 {
+                    Some(s) => StdinInput::Text(s),
+                    None => StdinInput::Null,
+                },
+                stdout: StdioMode::Pipe,
+                stderr: StdioMode::Pipe,
+            };
+            match rusty_bun_spawn::spawn_sync(&args_refs, opts) {
+                Ok(r) => Ok(vec![
+                    vec!["stdout".into(), String::from_utf8_lossy(&r.stdout).into_owned()],
+                    vec!["stderr".into(), String::from_utf8_lossy(&r.stderr).into_owned()],
+                    vec!["exitCode".into(), r.exit_code.to_string()],
+                    vec!["success".into(), if r.success { "1".into() } else { "0".into() }],
+                ]),
+                Err(e) => Err(rquickjs::Error::new_from_js_message(
+                    "spawnSync", "object", format!("{:?}", e))),
+            }
+        })?,
+    )?;
+    global.set("__spawn", ns)?;
+    Ok(())
+}
+
+const BUN_SPAWN_JS: &str = r#"
+(function() {
+    Bun.spawnSync = function spawnSync(args, options) {
+        const stdinOpt = (options && options.stdin && typeof options.stdin === "string")
+            ? options.stdin : undefined;
+        const cwd = (options && typeof options.cwd === "string") ? options.cwd : undefined;
+        const pairs = (stdinOpt !== undefined && cwd !== undefined)
+            ? __spawn.spawnSyncResult(args, stdinOpt, cwd)
+            : (stdinOpt !== undefined)
+                ? __spawn.spawnSyncResult(args, stdinOpt)
+                : (cwd !== undefined)
+                    ? __spawn.spawnSyncResult(args, undefined, cwd)
+                    : __spawn.spawnSyncResult(args);
+        const result = {};
+        for (const [k, v] of pairs) result[k] = v;
+        // Convert string fields back to expected types.
+        return {
+            stdout: result.stdout || "",
+            stderr: result.stderr || "",
+            exitCode: parseInt(result.exitCode || "0", 10),
+            success: result.success === "1",
+        };
+    };
+})();
+"#;
+
+fn install_bun_spawn_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(BUN_SPAWN_JS)?;
     Ok(())
 }
 

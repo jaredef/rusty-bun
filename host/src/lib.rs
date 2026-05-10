@@ -251,6 +251,8 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_streams_js(&ctx)?;
     install_node_http_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
+    install_timers_js(&ctx)?;
+    wire_performance(&ctx, &global)?;
     Ok(())
 }
 
@@ -2476,6 +2478,119 @@ const COMMONJS_LOADER_JS: &str = r#"
 
 fn install_commonjs_loader_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(COMMONJS_LOADER_JS)?;
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Tier-H.4: timers, queueMicrotask, performance
+// ════════════════════════════════════════════════════════════════════════
+//
+// Real consumer code uses setTimeout/setImmediate/queueMicrotask
+// pervasively, often with ms=0 for "next tick" semantics or with large
+// ms for retry/timeout logic that doesn't fire during synchronous tests.
+//
+// Pilot scope: timers are scheduled as Promise.resolve().then() — i.e.,
+// they run on the microtask queue rather than after a real wall-clock
+// delay. This is sufficient for the dominant consumer pattern
+// (setTimeout(fn, 0) or setImmediate(fn) for deferred work) and enough
+// to validate that consumer code's "delay-then-do-X" paths execute
+// without throwing. Real wall-clock delays for ms>0 are deferred to a
+// follow-up round; they require the host pump to track timer expirations
+// (currently the pump is microtask-only).
+//
+// performance.now() / .timeOrigin: backed by std::time::Instant via a
+// Rust closure. timeOrigin is captured at runtime construction.
+
+const TIMERS_AND_PERF_JS: &str = r#"
+(function() {
+    const timers = new Map();  // id → { cleared, fn, args }
+    let nextId = 1;
+
+    function setTimeoutImpl(fn, _ms, ...args) {
+        if (typeof fn !== "function") {
+            // Per WHATWG: string fn is allowed but pilot rejects.
+            throw new TypeError("setTimeout requires a function");
+        }
+        const id = nextId++;
+        const entry = { cleared: false, fn, args };
+        timers.set(id, entry);
+        // Pilot scope: schedule on microtask queue regardless of _ms.
+        Promise.resolve().then(() => {
+            if (entry.cleared) return;
+            timers.delete(id);
+            try { fn.apply(undefined, args); }
+            catch (e) {
+                // Per spec, exceptions in timer callbacks become
+                // unhandled errors. Pilot logs to console.error.
+                if (typeof console !== "undefined" && console.error) {
+                    console.error("uncaught in setTimeout:", e);
+                }
+            }
+        });
+        return id;
+    }
+
+    function clearTimeoutImpl(id) {
+        const entry = timers.get(id);
+        if (entry) {
+            entry.cleared = true;
+            timers.delete(id);
+        }
+    }
+
+    function setIntervalImpl(_fn, _ms, ..._args) {
+        // setInterval requires real-time scheduling beyond the microtask
+        // pump. Deferred to a follow-up round; throwing is preferable
+        // to silently no-op'ing.
+        throw new Error("setInterval is not yet supported in rusty-bun-host");
+    }
+
+    globalThis.setTimeout = setTimeoutImpl;
+    globalThis.clearTimeout = clearTimeoutImpl;
+    globalThis.setImmediate = function setImmediate(fn, ...args) {
+        return setTimeoutImpl(fn, 0, ...args);
+    };
+    globalThis.clearImmediate = clearTimeoutImpl;
+    globalThis.setInterval = setIntervalImpl;
+    globalThis.clearInterval = clearTimeoutImpl;
+
+    globalThis.queueMicrotask = function queueMicrotask(fn) {
+        if (typeof fn !== "function") {
+            throw new TypeError("queueMicrotask requires a function");
+        }
+        Promise.resolve().then(() => {
+            try { fn(); }
+            catch (e) {
+                if (typeof console !== "undefined" && console.error) {
+                    console.error("uncaught in queueMicrotask:", e);
+                }
+            }
+        });
+    };
+})();
+"#;
+
+fn install_timers_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(TIMERS_AND_PERF_JS)?;
+    Ok(())
+}
+
+fn wire_performance<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let time_origin_ms: f64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    let start = std::time::Instant::now();
+
+    let perf = Object::new(ctx.clone())?;
+    perf.set(
+        "now",
+        Function::new(ctx.clone(), move || -> f64 {
+            start.elapsed().as_secs_f64() * 1000.0
+        })?,
+    )?;
+    perf.set("timeOrigin", time_origin_ms)?;
+    global.set("performance", perf)?;
     Ok(())
 }
 

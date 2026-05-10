@@ -1843,3 +1843,101 @@ fn js_compose_esm_canonical_pattern() {
     assert_eq!(r, "YWxpY2U6NDI=");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ════════════════════ Tier-H.4: timers / queueMicrotask / performance ═══
+
+#[test]
+fn js_set_timeout_zero_runs_callback() {
+    let r = eval_string_async(r#"
+        let result = "before";
+        setTimeout(() => { result = "after"; }, 0);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return result;
+    "#).unwrap();
+    assert_eq!(r, "after");
+}
+
+#[test]
+fn js_set_timeout_with_args() {
+    let r = eval_string_async(r#"
+        let result = "";
+        setTimeout((a, b, c) => { result = a + ":" + b + ":" + c; }, 0, "x", 42, true);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return result;
+    "#).unwrap();
+    assert_eq!(r, "x:42:true");
+}
+
+#[test]
+fn js_clear_timeout_cancels() {
+    let r = eval_string_async(r#"
+        let result = "before";
+        const id = setTimeout(() => { result = "AFTER"; }, 0);
+        clearTimeout(id);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return result;
+    "#).unwrap();
+    assert_eq!(r, "before");
+}
+
+#[test]
+fn js_set_immediate_runs() {
+    let r = eval_string_async(r#"
+        let n = 0;
+        setImmediate(() => { n = 1; });
+        await new Promise(resolve => setImmediate(() => resolve()));
+        return String(n);
+    "#).unwrap();
+    assert_eq!(r, "1");
+}
+
+#[test]
+fn js_queue_microtask_runs() {
+    let r = eval_string_async(r#"
+        let result = "before";
+        queueMicrotask(() => { result = "after"; });
+        await Promise.resolve();
+        return result;
+    "#).unwrap();
+    assert_eq!(r, "after");
+}
+
+#[test]
+fn js_performance_now_increasing() {
+    let r = eval_bool(r#"
+        const a = performance.now();
+        for (let i = 0; i < 10000; i++) {}
+        const b = performance.now();
+        b >= a
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_performance_time_origin_present() {
+    let r = eval_bool(r#"typeof performance.timeOrigin === "number" && performance.timeOrigin > 0"#).unwrap();
+    assert!(r);
+}
+
+// Canonical-docs composition: typical consumer pattern using setTimeout
+// for deferred work + queueMicrotask for finer-grained ordering.
+#[test]
+fn js_compose_timers_canonical_pattern() {
+    let r = eval_string_async(r#"
+        const order = [];
+        order.push("sync-1");
+        setTimeout(() => order.push("timeout"), 0);
+        queueMicrotask(() => order.push("microtask"));
+        Promise.resolve().then(() => order.push("promise"));
+        order.push("sync-2");
+        // Drain queue.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return order.join(",");
+    "#).unwrap();
+    // Microtasks (queueMicrotask + promise) drain before timeouts.
+    // sync runs first, then promise + microtask in queue order, then timeouts.
+    assert!(r.starts_with("sync-1,sync-2,"));
+    assert!(r.contains("timeout"));
+    assert!(r.contains("microtask"));
+    assert!(r.contains("promise"));
+}

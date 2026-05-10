@@ -42,7 +42,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `7253d6d` | **node-http pilot — Tier-C #7; data-layer (208 LOC; 6.3% naive against 3,316-LOC TS core)** |
 | 2026-05-10 | `074659f` | **web-crypto pilot — Tier-C #8; SHA-256 + UUID v4 + getRandomValues + timing-safe (101 LOC; real crypto from scratch); completes Tier-C** |
 | 2026-05-10 | `f2bc47a` | **Tier-D #9 + #10: Cargo workspace consolidation + pilot runner script** (`cargo test --workspace --release` runs 591 tests across 16 pilots in one command) |
-| 2026-05-10 | (this) | **Tier-D #12: AuthorityTier schema** (Spec / Ecosystem / Contingent on every constraint clause; Bun corpus breakdown 1.3% Spec / 9.1% Ecosystem / 89.7% Contingent) |
+| 2026-05-10 | `ef2bfc9` | **Tier-D #12: AuthorityTier schema** (Spec / Ecosystem / Contingent on every constraint clause; Bun corpus breakdown 1.3% Spec / 9.1% Ecosystem / 89.7% Contingent) |
+| 2026-05-10 | corpus | **Doc 708 published — The rusty-bun Engagement: Completion Record** (anchors all four seed §VII completion criteria as met) |
 
 **Pilot inventory (16 pilots):**
 
@@ -114,7 +115,7 @@ Doc-tier corpus output:
 
 ### Tier-E — completion-criterion-anchoring docs
 
-13. **Doc 708/709 — completion criterion** when ~12+ pilots are done across all classes. Records the closed engagement against the seed §VII criteria. Don't write before the data supports it.
+13. ~~Doc 708 — completion criterion~~ — **DONE** 2026-05-10 (records all 4 seed §VII criteria met: coverage / aggregate-ratio / consumer-corpus / doc-tier; numerical summary at §VII; 5 cybernetic modes named at §II; full provenance at §VIII)
 
 14. **Cumulative apparatus paper** — academic-style writeup of the apparatus + the eight-plus pilots + the bidirectional reading. Audience: external. Defer until pilot library is broader.
 

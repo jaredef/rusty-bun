@@ -2319,3 +2319,27 @@ fn js_differential_consumer_log_aggregator_matches_bun() {
     assert_eq!(rb.trim(), bs, "log-aggregator mismatch:\nrb={}\nbun={}", rb, bs);
     assert!(rb.starts_with("9/9"), "rb did not pass: {}", rb);
 }
+
+#[test]
+fn js_consumer_job_queue_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-job-queue/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    assert!(r.starts_with("8/8"), "job-queue failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_job_queue_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-job-queue/src/main.js");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun").arg(fixture.to_str().unwrap()).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "job-queue mismatch:\nrb={}\nbun={}", rb, bs);
+}

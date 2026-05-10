@@ -1,0 +1,8 @@
+{
+  "name": "consumer-job-queue",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #5: priority job queue with async-generator drain. Exercises class inheritance, AsyncGenerator (function*), node:crypto.randomUUID via ESM import, custom Error subclasses, Symbol-keyed internal metadata, JSON.stringify with replacer. Spec-first M9 authoring.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

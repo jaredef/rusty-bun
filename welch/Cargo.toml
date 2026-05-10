@@ -1,0 +1,21 @@
+[package]
+name = "welch"
+version = "0.1.0"
+edition = "2021"
+description = "Welch-bound packing diagnostic for AI-assisted cross-language code translation. Scans Rust source for unsafe-density and other idiomaticity markers, fits distributions on a baseline corpus, and flags anomalous regions in a target crate. Companion tool to RESOLVE Doc 702."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jaredef/rusty-bun"
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+walkdir = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+rayon = "1"
+
+[[bin]]
+name = "welch"
+path = "src/main.rs"

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-task-pipeline",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #8: task pipeline with WeakMap caching, Symbol.asyncIterator user-class, generator delegation (yield*), Function.prototype.bind partial application, async iteration composition.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

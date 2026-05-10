@@ -256,6 +256,13 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Re-open condition.** Either (i) the embedded engine is upgraded to a QuickJS build with WeakRef support (mainline QuickJS-NG has discussed it; rquickjs would need to expose it), OR (ii) rquickjs is replaced with a different engine binding that exposes WeakRef + FinalizationRegistry.
 - **Per M8(b):** scope-limit recorded; no Tier-J fixture depending on WeakRef has been built, so no fixture removal needed. Future fixture-author attempts on this axis must check this entry first.
 
+### E8. crypto.subtle.importKey / sign / verify absent from rusty-bun-host (basin boundary)
+- **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `crypto.subtle.importKey`, `crypto.subtle.sign`, `crypto.subtle.verify` as functions (full WebCrypto via JavaScriptCore). rusty-bun-host has `crypto.subtle.digest` (added in the consumer-request-signer round) and `crypto.subtle.digestSha256Hex`/`digestSha256Bytes` but no key-handle APIs.
+- **Severity.** Apparatus-side scope-limit; web-crypto pilot scope-bounded.
+- **What it means.** Consumer code performing HMAC / signature verification / asymmetric crypto operations on rusty-bun-host will fail. Real Bun supports the full surface. The rusty-bun web-crypto pilot covered SHA-256 + UUID v4 + getRandomValues + timing-safe — the constructive crypto primitives — but did not extend to the key-management surface.
+- **Re-open condition.** Either (i) extend the rusty-bun web-crypto pilot with importKey/sign/verify for HMAC-SHA-256 minimum (the most-used variant; spec'd in WebCrypto), OR (ii) wire a different web-crypto pilot covering the full surface.
+- **Per M8(b):** scope-limit recorded; no Tier-J fixture has been built against this surface (consumer-request-signer used `digest`, which IS supported); future fixture-author attempts on this axis must check this entry first.
+
 ## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)
 
 Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixture authoring. NOT Bun bugs — these are cases where the author wrote spec-violating JS and the runtime (Bun and rusty-bun-host alike) correctly threw. The category is kept as a trace of what spec-strictness Bun enforces and what the author should remember when authoring future fixtures. Each entry implicitly attests Bun's spec compliance on the surface where the author tripped.

@@ -263,9 +263,30 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Re-open condition.** Either (i) extend the rusty-bun web-crypto pilot with importKey/sign/verify for HMAC-SHA-256 minimum (the most-used variant; spec'd in WebCrypto), OR (ii) wire a different web-crypto pilot covering the full surface.
 - **Per M8(b):** scope-limit recorded; no Tier-J fixture has been built against this surface (consumer-request-signer used `digest`, which IS supported); future fixture-author attempts on this axis must check this entry first.
 
+### E9. Bun's host-integration globals absent from rusty-bun-host (compound basin boundary)
+- **Source.** Direct probe 2026-05-10. Compound finding: five Bun-platform globals/namespaces absent from rusty-bun-host while present in Bun 1.3.11:
+  - `Intl` (+ `Intl.NumberFormat`, `Intl.DateTimeFormat`, `Intl.Collator`): internationalization namespace. QuickJS can be built with Intl support via ICU but rquickjs default does not link it.
+  - `Bun.password` (and `Bun.sql`): Bun extension APIs for password hashing / SQLite. Not part of the rusty-bun Bun-namespace wiring (which covers `Bun.serve`, `Bun.spawn`, `Bun.file` data-layer).
+  - `WebSocket`: transport-tier global. Requires socket binding (Tier-G).
+  - `BroadcastChannel`: messaging-between-contexts. Requires shared-state infrastructure.
+  - `Worker`: threading global. Requires actual thread spawning.
+- **Severity.** Apparatus-side scope-limits at several distinct surfaces.
+- **Re-open conditions.** Per-surface:
+  - Intl: link an ICU-equipped QuickJS build, or wire a minimal Intl pilot covering NumberFormat/DateTimeFormat with limited locales.
+  - Bun.password: wire a `Bun.password.hash`/`verify` pilot over Argon2/bcrypt.
+  - WebSocket / BroadcastChannel / Worker: each requires substantial transport-or-threading infrastructure; deferred to engagement scope beyond current Tier-G.
+- **In-basin counterparts confirmed in same probe:** `Atomics`, `SharedArrayBuffer`, `WeakMap`, `WeakSet`, `Symbol.asyncIterator` — these were also probed and are PRESENT in rusty-bun-host's QuickJS. Lock-free primitives are available even though threading globals are not.
+- **Per M8(b):** scope-limits recorded; no Tier-J fixture has been built against these surfaces; future fixture-author attempts must check this entry first.
+
 ## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)
 
 Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixture authoring. NOT Bun bugs — these are cases where the author wrote spec-violating JS and the runtime (Bun and rusty-bun-host alike) correctly threw. The category is kept as a trace of what spec-strictness Bun enforces and what the author should remember when authoring future fixtures. Each entry implicitly attests Bun's spec compliance on the surface where the author tripped.
+
+### F2. Symbol.toPrimitive hint semantics ("default" vs "number")
+- **Source.** consumer-sequence-id fixture initial Bun run, 2026-05-10. Author wrote `Symbol.toPrimitive(hint)` returning numeric for `"number"` only and string for `"default"`. `id + 8` produced `"id-428"` (string concatenation), not `50`.
+- **Spec.** ECMAScript spec: arithmetic `+` on non-Date uses hint `"default"`, not `"number"`. `String()` / template-literal coercion uses hint `"string"`. The `"number"` hint is rare in practice — chiefly used by explicit `Number(x)` and certain comparison contexts.
+- **What it attests.** Bun is spec-correct on the toPrimitive hint protocol — the failure was the author's misunderstanding of which hint `+` uses.
+- **Author rule.** When writing `Symbol.toPrimitive(hint)`, `"default"` should typically return the same as `"number"` (most consumer code wants numeric coercion for `+`); reserve `"string"` for the template-literal/String-conversion path. The branch order matters: handle `"string"` first, then numeric for the rest.
 
 ### F1. BigInt-arithmetic operand-type strictness
 - **Source.** consumer-batch-loader fixture initial Bun run, 2026-05-10. Author wrote `id % 2 === 0n` (mixing Number `2` with BigInt `id`). Bun threw `TypeError: Invalid mix of BigInt and other type in remainder.`

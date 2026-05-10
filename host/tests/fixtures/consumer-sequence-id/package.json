@@ -1,0 +1,8 @@
+{
+  "name": "consumer-sequence-id",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #9: sequence-id generator. Exercises Atomics + SharedArrayBuffer + sync generators (function*) + Array.from + spread + String.raw + Object.defineProperty (accessor descriptors) + Symbol.toPrimitive.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

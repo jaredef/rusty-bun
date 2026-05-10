@@ -39,9 +39,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `5159d09` | **Bun.serve pilot — flagship Bun API, data-layer system (175 LOC; 0.5% naive against 32,344-LOC upstream / ~20-30% adj)** |
 | 2026-05-10 | `71bf953` | **Bun.spawn pilot — Tier-B #5; subprocess management (179 LOC; 2.8% naive / ~15-20% adj); completes Tier-B Bun-namespace** |
 | 2026-05-10 | `ac33127` | **node-fs pilot — Tier-C #6; sync subset (95 LOC; 0.4% naive against 21,540-LOC reference / ~8% adj)** |
-| 2026-05-10 | (this) | **node-http pilot — Tier-C #7; data-layer (208 LOC; 6.3% naive against 3,316-LOC TS core)** |
+| 2026-05-10 | `7253d6d` | **node-http pilot — Tier-C #7; data-layer (208 LOC; 6.3% naive against 3,316-LOC TS core)** |
+| 2026-05-10 | (this) | **web-crypto pilot — Tier-C #8; SHA-256 + UUID v4 + getRandomValues + timing-safe (101 LOC; real crypto from scratch); completes Tier-C** |
 
-**Pilot inventory (15 pilots):**
+**Pilot inventory (16 pilots):**
 
 | # | Pilot | Class | LOC (code-only) | Verifier | Consumer | Aggregate ratio anchor |
 |---:|---|---|---:|---:|---:|---|
@@ -60,9 +61,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 13 | Bun.spawn | Tier-2 Bun-namespace subprocess | 179 | 19 | 8 | 2.8% naive / ~15-20% adj |
 | 14 | node-fs | Tier-2 Node-compat fs sync subset | 95 | 28 | 8 | 0.4% naive / ~8% adj |
 | 15 | node-http | Tier-2 Node-compat http data-layer | 208 | 21 | 8 | 6.3% naive / ~10-15% adj |
-|   | **Aggregate** | | **3,076** | **414 (1 skip)** | **147** | **~3.0% naive across ~102,000+ LOC upstream** |
+| 16 | web-crypto | Tier-2 Web Crypto subset (real primitives) | 101 | 22 | 8 | N/A (real impl, not delegation) |
+|   | **Aggregate** | | **3,177** | **436 (1 skip)** | **155** | **~3.1% naive across ~102,000+ LOC upstream** |
 
-Total tests: **561 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
+Total tests: **591 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
 
 Doc-tier corpus output:
 - [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error) — port-as-translation is a category error
@@ -96,7 +98,7 @@ Doc-tier corpus output:
 
 7. ~~Node http/https data-layer~~ — **DONE** 2026-05-10 (208 LOC; 29/29 tests; 6.3% naive vs 3,316-LOC TS core)
 
-8. **Node `crypto.subtle` pilot** — Web Crypto. Cross-corroboration is high. Could ship a subset (digest + hmac + random) first.
+8. ~~Node crypto.subtle subset~~ — **DONE** 2026-05-10 (101 LOC; 30/30 tests; SHA-256 + UUID v4 + getRandomValues + timing-safe; first real cryptographic primitives from scratch in apparatus); **completes Tier-C**
 
 ### Tier-D — apparatus refinements / methodology
 

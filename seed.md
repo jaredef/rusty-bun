@@ -1,0 +1,136 @@
+# rusty-bun — Seed
+
+The stable kernel of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)](https://jaredfoy.com/resolve/doc/581-the-resume-vector), this document holds the constraints, architecture decisions, deferred-list discipline, and future-move discipline that do not change session to session. The companion [trajectory.md](trajectory.md) holds what does change. Together with the resume protocol at the trajectory's tail, the pair makes this engagement resumable.
+
+## I. Frame (what this engagement is)
+
+The engagement applies the RESOLVE corpus's Pin-Art apparatus ([Doc 270](https://jaredfoy.com/resolve/doc/270-pin-art), [Doc 619](https://jaredfoy.com/resolve/doc/619-pin-art-canonical-formalization)) to AI-assisted cross-language code translation, specifically to the Bun runtime's Zig→Rust port. The work is not translation per se: it is **formalization-then-derivation** ([Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error)). Constraints are extracted from Bun's test corpus + curated spec extracts; derivations are produced from the constraints; verifiers close the loop on each derivation; consumer regression suites close the loop on real-world dependencies.
+
+The apparatus is bidirectional ([Doc 707](https://jaredfoy.com/resolve/doc/707-pin-art-at-the-behavioral-surface-bidirectional-probes)): each constraint is a pin that constrains a future derivation AND surfaces an invariant of the original implementation that was otherwise implicit. Two outputs per pilot: a derivation, and a dependency-surface map.
+
+## II. Binding constraints
+
+**C1. Plug-and-play interoperability with no regressions, NOT 100% behavior parity.** The target is "any consumer that worked with Bun continues to work with the derivation." Bun has implementation accidents and contingent inefficiencies; deliberate divergence on Tier-3 (implementation-contingent) details is permitted with recorded reason. Spec conformance + consumer-corpus matching is the criterion, not byte-for-byte Bun matching. Per Doc 707's three-tier framing.
+
+**C2. Cite-source discipline.** Every consumer-regression test must cite a real production codepath at file-and-function granularity. Without cites, a consumer test is indistinguishable from a spec test. With cites, the test is anchored to a real downstream dependency and the regression claim is falsifiable.
+
+**C3. Simulated derivation, not wired rederive.** Derivation is performed by an LLM (the substrate) reading the constraint corpus + spec material, with input bundle declared in source-code comments at the head of each module. A wired rederive engine is the eventual goal; the simulation establishes that there is something there to wire. Per [Doc 706's framing](https://jaredfoy.com/resolve/doc/706-three-pilot-evidence-chain-derivation-from-constraints).
+
+**C4. Two test categories per pilot.** Verifier (prescriptive: does it conform to constraints + spec?) AND consumer regression (descriptive: would it break real consumers?). Both required for pilot to count.
+
+**C5. Honest LOC accounting.** Naive ratios reported alongside scope-honest adjusted ratios. Bun's reference targets often include transport / FFI / runtime-integration that pilot scope omits. Pilot-versus-target comparison must say which scope is being measured.
+
+**C6. Em-dash restraint in writing.** Per keeper memory: target 0–1 per 1000 words. Use commas, parens, periods.
+
+**C7. No commits without explicit keeper request.** Every commit is keeper-authorized. No co-author lines.
+
+## III. Architecture decisions
+
+### A1. Pipeline shape (`derive-constraints` binary)
+
+Eight phases: scan → cluster → invert → seams → couple → (derivation by LLM) → verifier → consumer regression. Phases 1-5 are tooled; phase 6 is simulated; phases 7-8 are Rust test scaffolding.
+
+### A2. Five pin classes for the constraint corpus
+
+- **Spec invariant** (normative authority; from `specs/*.spec.md`)
+- **Test rep** (observational; from Bun/Deno test corpora)
+- **Consumer expectation** (dependency-survey; from cited consumer source)
+- **WPT entry** (conformance-suite; subset of consumer corpus)
+- **Implementation-source probe** (architectural-witness; from welch/seams analysis)
+
+Each carries different bidirectional information per Doc 707.
+
+### A3. Three-tier authority taxonomy
+
+**Tier 1 — Spec-mandated.** WHATWG / W3C / RFC says it. Must conform.
+**Tier 2 — Ecosystem-compat.** Bun-extension or Node-API. Bun's tests are the spec.
+**Tier 3 — Implementation-contingent.** Performance / allocation / lazy I/O. Optional divergence with recorded reason.
+
+### A4. Cross-corroboration as tier-1 signal
+
+A property witnessed by BOTH a spec source AND a test source is the strongest constraint. The cluster phase tracks this via per-property `source_files`. Cross-corroborated cardinality is the apparatus' clearest pilot-readiness indicator.
+
+### A5. Per-pilot crate convention
+
+Each pilot lives at `pilots/<surface>/derived/`. Cargo crate per pilot. `src/lib.rs` for the derivation, `tests/verifier.rs` for prescriptive tests, `tests/consumer_regression.rs` for descriptive tests. Path-dependencies between pilots when one is a substrate for another (File depends on Blob; multi-surface system pilots compose locally).
+
+### A6. Run-notes per artifact run
+
+Every pipeline run lands at `runs/<date>-<corpus>-<version>/RUN-NOTES.md`. Every pilot lands at `pilots/<surface>/RUN-NOTES.md` (run notes for the pilot's verifier closure). Cross-cutting summaries land alongside (e.g., `pilots/CONSUMER-REGRESSION-SUMMARY.md`).
+
+### A7. Spec corpus is part of the apparatus
+
+`specs/*.spec.md` is curated content but is read by the same `derive-constraints scan` pass that reads test corpora. Spec material flows through cluster / invert / seams identically to test-derived clauses, distinguishable by their `language: spec` tag.
+
+## IV. Future-move discipline
+
+**M1. Pilot prioritization.** The next pilot is chosen from the trajectory's queue. Selection criteria, in order:
+1. **Dependency unblocking** — the pilot is a substrate other queued pilots need.
+2. **Class diversity** — the pilot anchors a class the apparatus has not yet validated.
+3. **LOC leverage** — the pilot's reference target is large enough to anchor the value claim materially.
+4. **Cross-corroboration density** — the pilot's constraint corpus is rich enough to drive a clean derivation.
+
+**M2. Apparatus-vs-pilot triage.** When a pilot surfaces an apparatus refinement (e.g., the cluster-phase leakage fix from the TextEncoder pilot), prioritize the refinement over the next pilot. The hardening floor compounds — see [Doc 706](https://jaredfoy.com/resolve/doc/706-three-pilot-evidence-chain-derivation-from-constraints) on the v0.12-v0.13 chain.
+
+**M3. Doc-tier writing trigger.** A corpus-tier doc is written when (a) a structural insight crystallizes that wasn't articulable in the prior doc, OR (b) the keeper directs explicitly. Don't auto-write docs after every pilot; let understanding mature.
+
+**M4. Bigger pilots are run only after the hardening floor is firm.** A pilot like Bun.serve or Buffer (Tier-2, large) is attempted only when smaller pilots have validated the apparatus class structure for that pattern. Don't scale to 6,000-LOC reference targets until 300-LOC reference targets are clean.
+
+**M5. Deferred items have explicit re-open conditions.** Per Doc 581 D4. "Reopen when X obtains" — not "someday."
+
+## V. Deferred-list discipline
+
+The trajectory's Deferred section lists items considered and explicitly *deferred*, with re-open conditions. The seed names the discipline; the trajectory holds the items.
+
+**Examples of permanent deferrals (re-open conditions are negation-of-pilot-goal):**
+- Bun's transpiler / bundler (Bun.build internals): different problem class — compiler, not runtime surface.
+- HTTP/2 / HTTP/3 transport-layer details: scope is the runtime API surface, not the wire protocol.
+- Inspector / debugger / DevTools protocol: tooling, not runtime API.
+
+**Examples of conditional deferrals:**
+- Bun.serve full (with sockets): re-open when streams pilot lands AND the apparatus is ready to model HTTP transport at data-layer fidelity.
+- Wired rederive integration: re-open when the LLM-simulated derivation has saturated the apparatus' useful pilot space.
+- WPT suite execution against pilots: re-open when a JS-host shim (Boa or QuickJS) is on the table.
+
+## VI. Operational interfaces
+
+**Apparatus binary.** `derive-constraints` at `derive-constraints/`. Version state recorded in commit messages and `runs/<run>/RUN-NOTES.md`.
+
+**Pilot crates.** Cargo workspace not yet established; each pilot is its own crate. A future workspace consolidation is queued (see trajectory).
+
+**Constraint corpus.** Re-extracted at `runs/2026-05-10-bun-v0.13b-spec-batch/cluster.json`. Older runs preserved for diff. Per the pipeline driver, re-running takes ~10s on Bun's full test corpus.
+
+**Spec corpus.** `specs/*.spec.md` — 15 surfaces curated as of v0.13b. Format documented at `specs/README.md`.
+
+**Test runner.** `cargo test --release` per pilot crate. Single-shot; no orchestrator yet. A workspace-level runner is queued.
+
+## VII. What completion looks like
+
+The engagement does NOT terminate at "100% Bun parity" — see C1. Completion is defined by:
+
+**Coverage criterion:** every load-bearing Bun runtime surface has a pilot anchor, with both verifier and consumer-regression closure, producing a derivation + dependency-surface map per Doc 707.
+
+**Aggregate-ratio criterion:** the apparatus' aggregate LOC ratio (sum of pilot derivations vs sum of equivalent-scope reference targets) holds in the 3–10% range across the full pilot library, validating the htmx-9.4% existence proof at scale.
+
+**Consumer-corpus criterion:** representative downstream consumers (the dependency-surface map) have been encoded as regression tests with cited sources for every piloted surface. Zero regressions across the consumer corpus is the operational form of plug-and-play (C1).
+
+**Doc-tier criterion:** the corpus has at least one doc per major insight class generated by the engagement. Currently: 704 (category-error reframe), 705 (Pin-Art for architectural seams), 706 (forward evidence chain), 707 (bidirectional Pin-Art). A completion doc would be ~709 or later, recording the closed engagement against the four criteria above.
+
+A list of which surfaces are "load-bearing" lives in the trajectory and is updated as new ones surface. The seed names the criterion; the trajectory holds the list.
+
+## VIII. Hypostatic boundary
+
+This seed describes the structural shape of an apparatus and an engagement. It does not assert that "Bun is a constraint corpus" or "the apparatus is the truth of Bun." Bun is what Bun is; the apparatus produces a *reading* of Bun useful for derivation and for dependency-surface mapping. Per Doc 372's discipline — and Doc 581 §VIII — a Resume Vector is functional, not ontological.
+
+A different keeper with a different apparatus could produce a different reading of Bun, and both could be true under their respective accountings. This engagement's reading is one operational instance of Pin-Art on a runtime; other readings are possible.
+
+## IX. Update protocol
+
+**This file changes only when the architecture itself moves.** Examples that warrant update:
+- A new pin class is added to the apparatus (currently five; another would justify update).
+- The three-tier authority taxonomy is revised.
+- The pipeline shape changes (e.g., a new phase is inserted).
+- The completion criterion is revised (e.g., a new criterion is added).
+- A binding constraint is added, removed, or revised.
+
+Trivial trajectory updates DO NOT propagate here. Per Doc 581 D5: if this seed is changing more than once per few sessions, the architecture has not stabilized yet and the seed should be reconsidered.

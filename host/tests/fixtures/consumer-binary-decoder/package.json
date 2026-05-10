@@ -1,0 +1,8 @@
+{
+  "name": "consumer-binary-decoder",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #14: binary protocol decoder. DataView + TypedArrays + ArrayBuffer + Number predicates + Math + toFixed/toExponential + Array.findLast/findLastIndex (ES2023) + hex literals.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

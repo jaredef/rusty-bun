@@ -766,8 +766,11 @@ globalThis.Blob = class Blob {
                     for (const b of encoded) collected.push(b);
                 } else if (Array.isArray(part)) {
                     for (const b of part) collected.push(b);
-                } else if (part && typeof part.bytes === "function") {
-                    for (const b of part.bytes()) collected.push(b);
+                } else if (part && Array.isArray(part._bytes)) {
+                    // Internal access path: another Blob/File. Sync read of
+                    // the private byte array avoids awaiting bytes() (which
+                    // is async per WHATWG post-M8 reconciliation).
+                    for (const b of part._bytes) collected.push(b);
                 }
             }
         }
@@ -777,9 +780,9 @@ globalThis.Blob = class Blob {
     }
     get size() { return this._bytes.length; }
     get type() { return this._type; }
-    bytes() { return this._bytes; }
-    arrayBuffer() { return this._bytes; }
-    text() { return __blob.decodeText(this._bytes); }
+    async bytes() { return this._bytes; }
+    async arrayBuffer() { return this._bytes; }
+    async text() { return __blob.decodeText(this._bytes); }
     slice(start, end, contentType) {
         const startN = (typeof start === "number") ? start : 0;
         const sliced = (end === undefined)
@@ -1074,7 +1077,7 @@ globalThis.Request = class Request {
     get cache() { return this._cache; }
     get redirect() { return this._redirect; }
     get signal() { return this._signal; }
-    text() {
+    async text() {
         if (this._bodyUsed) throw new TypeError("Body already used");
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return "";
@@ -1084,7 +1087,7 @@ globalThis.Request = class Request {
         }
         return String(this._body);
     }
-    arrayBuffer() {
+    async arrayBuffer() {
         if (this._bodyUsed) throw new TypeError("Body already used");
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return [];
@@ -1092,10 +1095,9 @@ globalThis.Request = class Request {
         if (Array.isArray(this._body)) return this._body;
         return [];
     }
-    bytes() { return this.arrayBuffer(); }
-    json() {
-        const t = this.text();
-        return JSON.parse(t);
+    async bytes() { return this.arrayBuffer(); }
+    async json() {
+        return JSON.parse(await this.text());
     }
     clone() {
         if (this._bodyUsed) throw new TypeError("Body already used");
@@ -1154,7 +1156,7 @@ globalThis.Response = class Response {
     get type() { return this._type; }
     get url() { return this._url; }
     get redirected() { return this._redirected; }
-    text() {
+    async text() {
         if (this._bodyUsed) throw new TypeError("Body already used");
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return "";
@@ -1162,7 +1164,7 @@ globalThis.Response = class Response {
         if (Array.isArray(this._body)) return new TextDecoder().decode(this._body);
         return String(this._body);
     }
-    arrayBuffer() {
+    async arrayBuffer() {
         if (this._bodyUsed) throw new TypeError("Body already used");
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return [];
@@ -1170,10 +1172,9 @@ globalThis.Response = class Response {
         if (Array.isArray(this._body)) return this._body;
         return [];
     }
-    bytes() { return this.arrayBuffer(); }
-    json() {
-        const t = this.text();
-        return JSON.parse(t);
+    async bytes() { return this.arrayBuffer(); }
+    async json() {
+        return JSON.parse(await this.text());
     }
     clone() {
         if (this._bodyUsed) throw new TypeError("Body already used");

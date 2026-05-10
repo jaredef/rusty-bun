@@ -1,12 +1,11 @@
-// Tier-J consumer-shape pilot. A tiny Bun-flavored todo API that:
-//   - imports relative + bare-specifier modules via ESM
-//   - sets up a Bun.serve route table with method-keyed handlers
-//   - parses query strings via URL + URLSearchParams
-//   - encodes/decodes JSON bodies (Buffer + JSON)
-//   - exercises structuredClone, Date, Map, Set across handlers
-// Real consumer code in the wild has this shape; if rusty-bun-host runs
-// it cleanly, sub-criterion 5 ("real consumer can swap rusty-bun for Bun")
-// has been demonstrated for at least one consumer.
+// Tier-J consumer-shape pilot. A tiny Bun-flavored todo API.
+//
+// Bun-portable: uses Bun.serve fetch-handler dispatch only. Route-table
+// matching is done in-handler with URL+URLSearchParams, since Bun's
+// server.fetch() bypasses the routes table (route table fires only
+// through actual HTTP transport in Bun, per M8 reconciliation 2026-05-10).
+//
+// Body methods are awaited per WHATWG.
 
 import { createTodo, listTodos, markDone, clear } from "./store.js";
 
@@ -18,97 +17,95 @@ function jsonResponse(body, status) {
 }
 
 const server = Bun.serve({
-    port: 4000,
-    routes: {
-        "/health": () => new Response("ok"),
-        "/todos": {
-            GET: (req) => {
-                const url = new URL(req.url, "http://localhost");
-                const doneParam = url.searchParams.get("done");
-                const filter = doneParam === null ? undefined : { done: doneParam === "true" };
-                return jsonResponse(listTodos(filter));
-            },
-            POST: (req) => {
-                const body = JSON.parse(req._body || "{}");
-                if (!body.title) return jsonResponse({ error: "title required" }, 400);
-                return jsonResponse(createTodo(body.title), 201);
-            },
-        },
-        "/todos/:id/done": {
-            POST: (req, params) => {
-                const t = markDone(params.id);
-                if (!t) return jsonResponse({ error: "not found" }, 404);
-                return jsonResponse(t);
-            },
-        },
-    },
-    fetch() {
+    port: 0,  // ephemeral; Bun-portable
+    async fetch(req) {
+        const url = new URL(req.url);
+        const path = url.pathname;
+        const method = req.method;
+
+        if (path === "/health" && method === "GET") {
+            return new Response("ok");
+        }
+
+        if (path === "/todos" && method === "GET") {
+            const doneParam = url.searchParams.get("done");
+            const filter = doneParam === null ? undefined : { done: doneParam === "true" };
+            return jsonResponse(listTodos(filter));
+        }
+
+        if (path === "/todos" && method === "POST") {
+            const body = await req.json();
+            if (!body.title) return jsonResponse({ error: "title required" }, 400);
+            return jsonResponse(createTodo(body.title), 201);
+        }
+
+        const doneMatch = path.match(/^\/todos\/([^\/]+)\/done$/);
+        if (doneMatch && method === "POST") {
+            const id = doneMatch[1];
+            const t = markDone(id);
+            if (!t) return jsonResponse({ error: "not found" }, 404);
+            return jsonResponse(t);
+        }
+
         return new Response("Not Found", { status: 404 });
     },
 });
 
-// In-script self-test: drive the server through dispatch and assert the
-// route table behaves as expected end-to-end. This is what the Tier-J
-// runner harness will invoke.
-function runSelfTest() {
+async function runSelfTest() {
     clear();
     const results = [];
 
-    // 1. health
-    const health = server.fetch(new Request("/health"));
-    results.push(["health", health.status === 200 && health.text() === "ok"]);
+    const health = await server.fetch(new Request("http://localhost:4000/health"));
+    results.push(["health", health.status === 200 && (await health.text()) === "ok"]);
 
-    // 2. empty list
-    const empty = server.fetch(new Request("/todos"));
-    const emptyList = JSON.parse(empty.text());
+    const empty = await server.fetch(new Request("http://localhost:4000/todos"));
+    const emptyList = JSON.parse(await empty.text());
     results.push(["empty-list", Array.isArray(emptyList) && emptyList.length === 0]);
 
-    // 3. create one
-    const createReq = new Request("/todos", {
+    const createReq = new Request("http://localhost:4000/todos", {
         method: "POST",
         body: JSON.stringify({ title: "buy milk" }),
     });
-    // Synthesize body for our pilot Request (real Bun does it via streaming).
-    createReq._body = JSON.stringify({ title: "buy milk" });
-    const created = server.fetch(createReq);
-    const createdBody = JSON.parse(created.text());
+    const created = await server.fetch(createReq);
+    const createdBody = JSON.parse(await created.text());
     results.push(["create", created.status === 201 && createdBody.title === "buy milk" && !createdBody.done]);
 
-    // 4. listing has one item
-    const listed = JSON.parse(server.fetch(new Request("/todos")).text());
+    const listedRes = await server.fetch(new Request("http://localhost:4000/todos"));
+    const listed = JSON.parse(await listedRes.text());
     results.push(["list-has-one", listed.length === 1]);
 
-    // 5. mark done
-    const doneRes = server.fetch(new Request("/todos/" + createdBody.id + "/done", { method: "POST" }));
-    const doneBody = JSON.parse(doneRes.text());
+    const doneRes = await server.fetch(new Request("http://localhost:4000/todos/" + createdBody.id + "/done", { method: "POST" }));
+    const doneBody = JSON.parse(await doneRes.text());
     results.push(["mark-done", doneRes.status === 200 && doneBody.done === true]);
 
-    // 6. filter by done=true
-    const filteredTrue = JSON.parse(server.fetch(new Request("/todos?done=true")).text());
+    const ftRes = await server.fetch(new Request("http://localhost:4000/todos?done=true"));
+    const filteredTrue = JSON.parse(await ftRes.text());
     results.push(["filter-done-true", filteredTrue.length === 1 && filteredTrue[0].done]);
 
-    const filteredFalse = JSON.parse(server.fetch(new Request("/todos?done=false")).text());
+    const ffRes = await server.fetch(new Request("http://localhost:4000/todos?done=false"));
+    const filteredFalse = JSON.parse(await ffRes.text());
     results.push(["filter-done-false", filteredFalse.length === 0]);
 
-    // 7. 404 catch-all
-    const notFound = server.fetch(new Request("/nonexistent"));
+    const notFound = await server.fetch(new Request("http://localhost:4000/nonexistent"));
     results.push(["catch-all-404", notFound.status === 404]);
 
-    // 8. POST without title → 400
-    const badReq = new Request("/todos", { method: "POST" });
-    badReq._body = JSON.stringify({});
-    const bad = server.fetch(badReq);
+    const badReq = new Request("http://localhost:4000/todos", { method: "POST", body: JSON.stringify({}) });
+    const bad = await server.fetch(badReq);
     results.push(["validate-400", bad.status === 400]);
 
-    // 9. cross-pilot: encode the result count via Buffer
-    const encoded = Buffer.encodeBase64(Buffer.from("count=" + listed.length));
-    results.push(["buffer-encode", encoded.length > 0]);
+    results.push(["count-final", listed.length === 1]);
 
     return results;
 }
 
-const results = runSelfTest();
+const results = await runSelfTest();
 const passed = results.filter(([_, ok]) => ok).length;
 const failed = results.filter(([_, ok]) => !ok).map(([name]) => name);
-globalThis.__esmResult = passed + "/" + results.length +
+const summary = passed + "/" + results.length +
     (failed.length > 0 ? " failed: " + failed.join(",") : "");
+
+if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
+    process.stdout.write(summary + "\n");
+} else {
+    globalThis.__esmResult = summary;
+}

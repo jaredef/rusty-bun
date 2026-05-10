@@ -116,6 +116,12 @@ Concrete trigger conditions (any one fires the pass):
 
 The pass updates seed §III/§IV, bug-catcher, or HOST-INTEGRATION-PATTERN.md, then is committed as `Sharpen resume vector: integrate <round-name> patterns`. Only after that commit lands may the next implementation round begin.
 
+**M8. Divergence reconciliation is non-deferrable.** When a Tier-J differential surfaces a divergence between rusty-bun and the comparator runtime (Bun), the divergence must be reconciled in the round it is discovered, before the next round begins. There are exactly two acceptable reconciliations: (a) bring the apparatus into alignment with the comparator (preferred, if feasible within the current round); (b) explicitly record the divergence as an intentional scope-limit with a re-open condition per Doc 581 D4 (the deferred-list discipline) AND remove from the Tier-J fixture set every fixture that depends on the divergent shape, so subsequent fixtures cannot be built on the misaligned plank.
+
+What is forbidden: "noted, will deal with later." That phrasing is the drift mechanism. Each Tier-J fixture built atop an unreconciled divergence inherits the misalignment; the cumulative error grows monotonically with rounds. M7 closes the level-2 loop for primitive-discovery; M8 closes it for divergence-reconciliation. Both are needed because both are mechanisms by which substrate work can drift out of plumb.
+
+This rule was instituted after the first body-async asymmetry was nearly deferred under a "vacuous-with-asymmetry-noted" classification (the rusty-bun host's sync .text()/.json() body methods diverge from Bun's spec-async API). The classification was wrong — it normalized deferral. The keeper named the drift risk explicitly: *"each plank must be plumb or else it will drift out of plumb over subsequent planks."* M8 is the cybernetic compensation.
+
 **M6. Host-wirability is a pilot design constraint.** New pilots' Rust APIs are designed to wire cleanly through the JS host pattern (A8). Concretely: prefer pure-value APIs; avoid `Rc<RefCell<...>>` in public interfaces; stateful types should provide stateless algorithm helpers alongside their owned-state types so the host can wire the helpers without adapting the type's storage. A pilot is "host-wirable" when its public API can be exposed via `host/` with no apparatus refinements — verifying this is a pilot-completion check.
 
 ## V. Deferred-list discipline

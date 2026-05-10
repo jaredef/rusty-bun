@@ -325,13 +325,13 @@ fn js_blob_type_lowercased() {
 
 #[test]
 fn js_blob_text() {
-    let r = eval_string(r#"new Blob(["héllo"]).text()"#).unwrap();
+    let r = eval_string_async(r#"return await new Blob(["héllo"]).text();"#).unwrap();
     assert_eq!(r, "héllo");
 }
 
 #[test]
 fn js_blob_slice() {
-    let r = eval_string(r#"new Blob(["hello world"]).slice(6).text()"#).unwrap();
+    let r = eval_string_async(r#"return await new Blob(["hello world"]).slice(6).text();"#).unwrap();
     assert_eq!(r, "world");
 }
 
@@ -343,13 +343,13 @@ fn js_blob_slice_with_content_type_override() {
 
 #[test]
 fn js_blob_concatenate_parts() {
-    let r = eval_string(r#"new Blob(["hello ", "world"]).text()"#).unwrap();
+    let r = eval_string_async(r#"return await new Blob(["hello ", "world"]).text();"#).unwrap();
     assert_eq!(r, "hello world");
 }
 
 #[test]
 fn js_blob_byte_part() {
-    let r = eval_string(r#"new Blob([[104, 105]]).text()"#).unwrap();
+    let r = eval_string_async(r#"return await new Blob([[104, 105]]).text();"#).unwrap();
     assert_eq!(r, "hi");
 }
 
@@ -504,20 +504,20 @@ fn js_abort_signal_throw_if_aborted() {
 
 #[test]
 fn js_compose_blob_text_through_text_decoder() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const blob = new Blob(["hello, world!"]);
         const dec = new TextDecoder();
-        dec.decode(blob.bytes())
+        return dec.decode(await blob.bytes());
     "#).unwrap();
     assert_eq!(r, "hello, world!");
 }
 
 #[test]
 fn js_compose_file_in_blob_part() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const inner = new File(["inner content"], "inner.txt");
         const wrapper = new Blob([inner]);
-        wrapper.text()
+        return await wrapper.text();
     "#).unwrap();
     assert_eq!(r, "inner content");
 }
@@ -647,19 +647,19 @@ fn js_request_with_headers_init() {
 
 #[test]
 fn js_request_text_body() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const req = new Request("/", {method: "POST", body: "payload"});
-        req.text()
+        return await req.text();
     "#).unwrap();
     assert_eq!(r, "payload");
 }
 
 #[test]
 fn js_request_clone_preserves_state() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const orig = new Request("/users", {method: "POST", body: "data"});
         const clone = orig.clone();
-        clone.method + "|" + clone.text()
+        return clone.method + "|" + (await clone.text());
     "#).unwrap();
     assert_eq!(r, "POST|data");
 }
@@ -686,7 +686,7 @@ fn js_response_ok_false_for_404() {
 
 #[test]
 fn js_response_text() {
-    let r = eval_string(r#"new Response("hello").text()"#).unwrap();
+    let r = eval_string_async(r#"return await new Response("hello").text();"#).unwrap();
     assert_eq!(r, "hello");
 }
 
@@ -786,20 +786,20 @@ fn js_bun_file_explicit_type_override() {
 
 #[test]
 fn js_compose_response_with_blob_body() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const blob = new Blob(["payload"]);
-        const resp = new Response(blob.bytes());
-        resp.text()
+        const resp = new Response(await blob.bytes());
+        return await resp.text();
     "#).unwrap();
     assert_eq!(r, "payload");
 }
 
 #[test]
 fn js_compose_request_response_roundtrip() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const req = new Request("/users", {method: "POST", body: "input"});
-        const resp = new Response(req.text(), {status: 201});
-        resp.status + ":" + resp.text()
+        const resp = new Response(await req.text(), {status: 201});
+        return resp.status + ":" + (await resp.text());
     "#).unwrap();
     assert_eq!(r, "201:input");
 }
@@ -812,11 +812,11 @@ fn js_compose_bun_file_to_response() {
         fs.writeFileSync(path, "static file content");
         const file = Bun.file(path);
         const resp = new Response(file.text());
-        const result = resp.text();
+        const result = await resp.text();
         fs.unlinkSync(path);
-        result
+        return result;
     "#, tmp);
-    let r = eval_string(&script).unwrap();
+    let r = eval_string_async(&script).unwrap();
     assert_eq!(r, "static file content");
 }
 
@@ -848,11 +848,11 @@ fn js_bun_serve_default_port() {
 
 #[test]
 fn js_bun_serve_fetch_handler_invoked() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             fetch(req) { return new Response("hello"); }
         });
-        server.fetch(new Request("/")).text()
+        return await server.fetch(new Request("/")).text();
     "#).unwrap();
     assert_eq!(r, "hello");
 }
@@ -868,33 +868,33 @@ fn js_bun_serve_no_handler_404() {
 
 #[test]
 fn js_bun_serve_routes_static_path() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             routes: {
                 "/health": (req) => new Response("ok"),
             }
         });
-        server.fetch(new Request("/health")).text()
+        return await server.fetch(new Request("/health")).text();
     "#).unwrap();
     assert_eq!(r, "ok");
 }
 
 #[test]
 fn js_bun_serve_routes_with_param() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             routes: {
                 "/users/:id": (req, params) => new Response("user-" + params.id),
             }
         });
-        server.fetch(new Request("/users/42")).text()
+        return await server.fetch(new Request("/users/42")).text();
     "#).unwrap();
     assert_eq!(r, "user-42");
 }
 
 #[test]
 fn js_bun_serve_routes_method_keyed() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             routes: {
                 "/api/items": {
@@ -905,7 +905,7 @@ fn js_bun_serve_routes_method_keyed() {
         });
         const get = server.fetch(new Request("/api/items"));
         const post = server.fetch(new Request("/api/items", {method: "POST"}));
-        get.text() + "|" + post.status + ":" + post.text()
+        return (await get.text()) + "|" + post.status + ":" + (await post.text());
     "#).unwrap();
     assert_eq!(r, "list|201:created");
 }
@@ -925,12 +925,12 @@ fn js_bun_serve_method_not_allowed() {
 
 #[test]
 fn js_bun_serve_routes_fall_through_to_fetch() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             routes: { "/specific": () => new Response("specific") },
             fetch(req) { return new Response("catch-all"); }
         });
-        server.fetch(new Request("/anything")).text()
+        return await server.fetch(new Request("/anything")).text();
     "#).unwrap();
     assert_eq!(r, "catch-all");
 }
@@ -1000,7 +1000,7 @@ fn js_bun_spawn_sync_stdin_text() {
 #[test]
 fn js_compose_bun_serve_canonical_pattern() {
     // The canonical Bun docs example, running through rusty-bun-host.
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             routes: {
                 "/health": () => Response.json({status: "ok"}),
@@ -1011,17 +1011,17 @@ fn js_compose_bun_serve_canonical_pattern() {
                 return new Response("Not Found", {status: 404});
             }
         });
-        const h = server.fetch(new Request("/health")).text();
-        const u = server.fetch(new Request("/users/42")).text();
+        const h = await server.fetch(new Request("/health")).text();
+        const u = await server.fetch(new Request("/users/42")).text();
         const nf = server.fetch(new Request("/missing")).status;
-        h + "|" + u + "|" + nf
+        return h + "|" + u + "|" + nf;
     "#).unwrap();
     assert_eq!(r, r#"{"status":"ok"}|{"id":"42","name":"User 42"}|404"#);
 }
 
 #[test]
 fn js_compose_bun_serve_with_url_search_params() {
-    let r = eval_string(r#"
+    let r = eval_string_async(r#"
         const server = Bun.serve({
             fetch(req) {
                 // Real consumers parse query strings here.
@@ -1031,7 +1031,7 @@ fn js_compose_bun_serve_with_url_search_params() {
                 return new Response("user=" + (params.get("user") || "guest"));
             }
         });
-        server.fetch(new Request("/?user=alice")).text()
+        return await server.fetch(new Request("/?user=alice")).text();
     "#).unwrap();
     assert_eq!(r, "user=alice");
 }
@@ -2199,4 +2199,38 @@ fn js_differential_portable_matches_bun() {
         panic!("differential mismatches ({}):\n{}",
             mismatches.len(), mismatches.join("\n"));
     }
+}
+
+// Tier-J differential: consumer-todo-api runs identically on Bun and
+// rusty-bun-host. Both should print "10/10". Per M8: divergences are
+// reconciled in-round, not deferred.
+#[test]
+fn js_differential_consumer_todo_api_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-todo-api/src/main.js");
+
+    // rusty-bun side.
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+
+    // Bun side. Bun's Bun.serve keeps the process alive on listening, so
+    // we kill after a short wait; the self-test prints to stdout before
+    // the listener goes idle. Skip cleanly if `bun` not on PATH.
+    let mut bun_cmd = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn() {
+        Ok(c) => c,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let _ = bun_cmd.kill();
+    let bun_out = bun_cmd.wait_with_output().expect("wait");
+    let bun_stdout = String::from_utf8_lossy(&bun_out.stdout).trim().to_string();
+
+    assert_eq!(rb.trim(), bun_stdout.trim(),
+        "consumer-todo-api differential mismatch:\nrb={}\nbun={}",
+        rb, bun_stdout);
+    assert!(rb.starts_with("10/10"), "rusty-bun side did not pass: {}", rb);
+    assert!(bun_stdout.starts_with("10/10"), "Bun side did not pass: {}", bun_stdout);
 }

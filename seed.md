@@ -97,6 +97,19 @@ For Sub-criterion 4 of the completion telos (JS host integration), pilots wire i
 
 **M5. Deferred items have explicit re-open conditions.** Per Doc 581 D4. "Reopen when X obtains" — not "someday."
 
+**M7. Resolution-increase pass is a recurring mode, not a keeper-triggered event.** Between any two implementation rounds (e.g., consecutive Tier-H wirings), the apparatus must self-check: *did the just-completed round expose patterns, type-translation idioms, JS-side decoding shapes, or verification disciplines that are not yet captured in seed §III/§IV, bug-catcher, or HOST-INTEGRATION-PATTERN.md?* If yes, fold them back BEFORE picking the next implementation item.
+
+This mode exists because the level-2 cybernetic loop (apparatus self-iteration, per Doc 708) was empirically observed to be keeper-mediated: in the 2026-05-10 session, three rounds of host wirings landed without their patterns being formalized; only a keeper rung-2 prompt ("have we increased resolution against context?") triggered the fold-back. The loop is not self-closing without this rule. M7 closes it: the fold-back trigger fires automatically between rounds, not on keeper prompt.
+
+Concrete trigger conditions (any one fires the pass):
+  - A new cross-boundary type translation was used (e.g., `Vec<Vec<String>>` for tuple-list).
+  - A new JS-side decoding shape was discovered (e.g., method-keyed dispatch, polymorphic shape discrimination).
+  - A new verification discipline emerged (e.g., canonical-docs composition test).
+  - An author-side bug recurred (Mode 5 of the operational modes) suggesting a bug-catcher entry.
+  - rquickjs / QuickJS interaction surprised the integration in a way not yet in HOST-INTEGRATION-PATTERN.md.
+
+The pass updates seed §III/§IV, bug-catcher, or HOST-INTEGRATION-PATTERN.md, then is committed as `Sharpen resume vector: integrate <round-name> patterns`. Only after that commit lands may the next implementation round begin.
+
 **M6. Host-wirability is a pilot design constraint.** New pilots' Rust APIs are designed to wire cleanly through the JS host pattern (A8). Concretely: prefer pure-value APIs; avoid `Rc<RefCell<...>>` in public interfaces; stateful types should provide stateless algorithm helpers alongside their owned-state types so the host can wire the helpers without adapting the type's storage. A pilot is "host-wirable" when its public API can be exposed via `host/` with no apparatus refinements — verifying this is a pilot-completion check.
 
 ## V. Deferred-list discipline

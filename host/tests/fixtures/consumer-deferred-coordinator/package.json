@@ -1,0 +1,8 @@
+{
+  "name": "consumer-deferred-coordinator",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #13: deferred coordination. Promise.allSettled with mixed outcomes, async generator with .return() early-exit, WeakMap source-tracking, top-level await for module setup, Object.hasOwn (ES2022), Array.at/.String.at negative indexing.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

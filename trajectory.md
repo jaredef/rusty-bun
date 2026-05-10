@@ -31,6 +31,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `c64ee93` | Bidirectional rerun: consumer-regression suites for all 6 prior pilots (60 descriptive pins, 0 regressions) |
 | 2026-05-10 | `bf5948a` | **fetch-api system pilot — Headers + Request + Response (405 LOC, 50/50; 6.5% naive LOC ratio)** |
 | 2026-05-10 | `37c009b` | **node-path pilot — first Tier-2 ecosystem-compat anchor (303 LOC vs 3,656; 8.3% naive ratio); largest reference target** |
+| 2026-05-10 | `7f2e73a` | Resume Vector for rusty-bun (seed.md + trajectory.md per Doc 581) |
+| 2026-05-10 | (this) | **streams pilot — first Tier-A substrate from queue (453 LOC across 3 composed surfaces; 11.2% naive ratio); first pilot where spec-extract layer dominates over test-corpus layer** |
 
 **Pilot inventory (8 pilots):**
 
@@ -44,9 +46,10 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 6 | AbortController + AbortSignal | event/observable | 126 | 22 | 10 | 25–35% adj |
 | 7 | fetch-api (Headers + Request + Response) | system / multi-surface | 405 | 34 | 16 | 6.5% naive / ~20% adj |
 | 8 | node-path | Tier-2 Node-compat pure-function | 303 | 51 | 11 | 8.3% naive / ~12–15% adj |
-|   | **Aggregate** | | **1,610** | **225 (1 skip)** | **87** | **~4.9% across ~33,000+ LOC upstream** |
+| 9 | streams (Readable + Writable + Transform) | substrate / async-state-machine | 453 | 29 | 9 | 11.2% naive / ~12–15% adj |
+|   | **Aggregate** | | **2,063** | **254 (1 skip)** | **96** | **~5.6% across ~37,000+ LOC upstream** |
 
-Total tests: **312 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
+Total tests: **350 verifier + consumer-regression pins. 1 documented skip. 0 regressions.**
 
 Doc-tier corpus output:
 - [Doc 704](https://jaredfoy.com/resolve/doc/704-the-port-as-translation-is-a-category-error) — port-as-translation is a category error
@@ -62,7 +65,7 @@ Doc-tier corpus output:
 
 ### Tier-A — substrate pilots (unblock other queued items)
 
-1. **Streams pilot — `ReadableStream` + `WritableStream` + `TransformStream`** (web-platform-spec'd, WHATWG Streams Standard). Substrate for full fetch body, Worker postMessage, Blob.stream(), Response/Request body. Required before fetch-api pilot can pivot from `Body::{Empty,Bytes,Text}` to full streaming bodies. Cross-corroborated cardinality on Bun: ReadableStream is widely tested. Estimated: 250–400 LOC, system-pilot.
+1. ~~Streams pilot~~ — **DONE** 2026-05-10 (453 LOC, 38/38 tests, 11.2% naive ratio, first pilot where spec-extract layer dominated)
 
 2. **Buffer pilot — Node-compat binary type (Tier 2)** — used by 70%+ of npm packages; substrate for many Node-compat surfaces. Bun's `Buffer.rs` is large; clause cardinality on Bun's tests: 457 clauses. Estimated: 300–500 LOC, Tier-2 ecosystem.
 

@@ -11,6 +11,13 @@ use crate::cluster::{ClusterReport, Property, RepresentativeConstraint, VerbClas
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// How many lines above and below the cited line to scan for setup-context
+/// patterns. The Bun test pattern places `process.platform === "darwin"`
+/// guards in `beforeEach` / `describe` scope ~5-30 lines above the
+/// expect; ±40 captures the typical case without significant I/O cost.
+const CONTEXT_LINES: u32 = 40;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -113,11 +120,12 @@ pub struct CrossNamespaceSeam {
     pub cardinality_total: u64,
 }
 
-pub fn detect_seams(report: &ClusterReport) -> Result<SeamsReport> {
+pub fn detect_seams(report: &ClusterReport, corpus_root: Option<&Path>) -> Result<SeamsReport> {
     let mut signal_groups: BTreeMap<SignalVector, Vec<&Property>> = BTreeMap::new();
+    let context_cache = ContextCache::new(corpus_root.map(|p| p.to_path_buf()));
 
     for prop in &report.properties {
-        let v = signal_vector_of(prop);
+        let v = signal_vector_of(prop, &context_cache);
         signal_groups.entry(v).or_default().push(prop);
     }
 
@@ -294,14 +302,61 @@ fn name_for_signal(v: &SignalVector) -> String {
     }
 }
 
+// ───────────────────────── Test-fn-body context cache ──────────────────────
+
+/// Lazy file cache keyed on relative path. The corpus_root + file gives an
+/// absolute path; we read the file once and split into lines. Subsequent
+/// queries return slices around a target line. With a moderate antichain-
+/// representative count (a few thousand) the cache keeps file I/O bounded
+/// even though many representatives may share files.
+struct ContextCache {
+    corpus_root: Option<PathBuf>,
+    files: std::cell::RefCell<std::collections::HashMap<String, Option<Vec<String>>>>,
+}
+
+impl ContextCache {
+    fn new(corpus_root: Option<PathBuf>) -> Self {
+        ContextCache {
+            corpus_root,
+            files: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Returns lines [line - CONTEXT_LINES, line + CONTEXT_LINES] joined
+    /// for pattern scanning. None when no corpus_root configured or when
+    /// the file can't be read.
+    fn context_around(&self, file: &str, line: u32) -> Option<String> {
+        let root = self.corpus_root.as_ref()?;
+        let mut cache = self.files.borrow_mut();
+        let entry = cache.entry(file.to_string()).or_insert_with(|| {
+            let path = root.join(file);
+            std::fs::read_to_string(&path)
+                .ok()
+                .map(|s| s.lines().map(String::from).collect::<Vec<_>>())
+        });
+        let lines = entry.as_ref()?;
+        let start = (line as i64 - CONTEXT_LINES as i64).max(0) as usize;
+        let end = ((line as usize + CONTEXT_LINES as usize)).min(lines.len());
+        if start >= lines.len() {
+            return None;
+        }
+        Some(lines[start..end].join("\n"))
+    }
+}
+
 // ─────────────────────────── Signal extractors ──────────────────────────────
 
-fn signal_vector_of(prop: &Property) -> SignalVector {
+fn signal_vector_of(prop: &Property, ctx: &ContextCache) -> SignalVector {
     let mut v = SignalVector::default();
     let antichain = &prop.antichain;
     let path_components = collect_path_components(antichain);
 
-    v.cfg = signal_cfg(antichain, &path_components);
+    // Build a per-property concatenated context string. When corpus_root
+    // isn't configured, context will be empty and signals fall back to
+    // antichain-text-only detection (the v0.2 behaviour).
+    let test_body_ctx = build_context(antichain, ctx);
+
+    v.cfg = signal_cfg(antichain, &path_components, &test_body_ctx);
     v.path_top = signal_path_top(&path_components);
     v.sync_async = signal_sync_async(prop, antichain);
     v.throw_return = signal_throw_return(prop, antichain);
@@ -450,6 +505,17 @@ fn signal_threaded(prop: &Property, antichain: &[RepresentativeConstraint]) -> b
     false
 }
 
+fn build_context(antichain: &[RepresentativeConstraint], ctx: &ContextCache) -> String {
+    let mut buf = String::new();
+    for r in antichain {
+        if let Some(ctx_lines) = ctx.context_around(&r.file, r.line) {
+            buf.push_str(&ctx_lines);
+            buf.push('\n');
+        }
+    }
+    buf
+}
+
 fn collect_path_components(antichain: &[RepresentativeConstraint]) -> Vec<Vec<String>> {
     antichain
         .iter()
@@ -462,10 +528,17 @@ fn collect_path_components(antichain: &[RepresentativeConstraint]) -> Vec<Vec<St
         .collect()
 }
 
-/// S1 — conditional compilation. Look at antichain text and source-file
-/// paths for platform-conditional patterns, including Zig idioms and
-/// JS-side `process.platform` style guards.
-fn signal_cfg(antichain: &[RepresentativeConstraint], paths: &[Vec<String>]) -> bool {
+/// S1 — conditional compilation. Probes antichain raw text, file paths,
+/// test names, AND (when corpus_root is configured) the surrounding
+/// test-fn-body context. The body context is the dominant source for
+/// platform-cfg patterns in JS test corpora — Bun's tests typically
+/// place `process.platform === "darwin"` guards in `beforeEach` or
+/// `describe`-scope, not in `expect` clauses.
+fn signal_cfg(
+    antichain: &[RepresentativeConstraint],
+    paths: &[Vec<String>],
+    test_body_ctx: &str,
+) -> bool {
     const CFG_RAW_PATTERNS: &[&str] = &[
         "process.platform",
         "isWindows",
@@ -481,9 +554,26 @@ fn signal_cfg(antichain: &[RepresentativeConstraint], paths: &[Vec<String>]) -> 
         "platform === \"darwin\"",
         "platform === \"linux\"",
         "platform === \"win32\"",
+        // Bun-specific: tests often guard on bun-runtime feature flags
+        // and target predicates set via `it.if` / `test.if` patterns.
+        "test.if(",
+        "it.if(",
+        "describe.if(",
+        ".skipIf(",
+        ".runIf(",
+        // Common Node/Bun cross-platform guard expressions:
+        "platform !== \"win32\"",
+        "platform === \"darwin\"",
+        "os.platform()",
+        "isBroken",
+        "isWindows()",
+        "isCI",
     ];
     const CFG_PATH_NAMES: &[&str] = &["darwin", "linux", "windows", "posix", "win32"];
-    const CFG_TEST_NAME_HINTS: &[&str] = &["on Windows", "on macOS", "on Linux", "Windows-only", "POSIX"];
+    const CFG_TEST_NAME_HINTS: &[&str] = &[
+        "on Windows", "on macOS", "on Linux", "Windows-only",
+        "POSIX", "Linux-only", "macOS-only", "Darwin-only",
+    ];
 
     for r in antichain {
         for pat in CFG_RAW_PATTERNS {
@@ -503,6 +593,15 @@ fn signal_cfg(antichain: &[RepresentativeConstraint], paths: &[Vec<String>]) -> 
                 if c.eq_ignore_ascii_case(n) {
                     return true;
                 }
+            }
+        }
+    }
+    // Test-fn-body context — the dominant location of cfg-style guards
+    // in Bun's test corpus. Empty when corpus_root not configured.
+    if !test_body_ctx.is_empty() {
+        for pat in CFG_RAW_PATTERNS {
+            if test_body_ctx.contains(pat) {
+                return true;
             }
         }
     }

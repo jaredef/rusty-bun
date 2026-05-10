@@ -1,0 +1,51 @@
+
+=== derive-constraints seams ===
+cluster source:        /home/jaredef/rusty-bun/runs/2026-05-10-bun-derive-constraints/bun-cluster-v2.json
+properties in:         4838
+distinct signal vecs:  93
+clusters emitted:      93
+cross-namespace seams: 50
+
+top 20 clusters by total cardinality:
+  SC0001  card=12283 props=2691 cs=148  surfaces=[$, $$, ANY, AbortController, AbortSignal (and 944 more)]  signal=@js
+  SC0002  card= 5544 props= 277 cs=  8  surfaces=[$, <anonymous>, Adler32, Array, Buffer (and 153 more)]  signal=slack
+  SC0003  card= 3998 props= 216 cs= 14  surfaces=[$, <anonymous>, Array, Bun, JSON (and 138 more)]  signal=@regression
+  SC0004  card= 2214 props=  27 cs=  1  surfaces=[<anonymous>, Buffer, String, buildExitCode, buildStderr (and 17 more)]  signal=cfg|@regression
+  SC0005  card= 2055 props= 425 cs= 78  surfaces=[AbortController, AbortSignal, Buffer, Bun, CloseEvent (and 149 more)]  signal=cfg|@js
+  SC0006  card= 1932 props=   1 cs=  0  surfaces=[<anonymous>]  signal=cfg|throw|p-throw
+  SC0007  card= 1861 props= 121 cs=  9  surfaces=[A, Agent, Array, ArrayBuffer, Blob (and 69 more)]  signal=ctor|@js
+  SC0008  card= 1556 props=   1 cs=  0  surfaces=[<anonymous>]  signal=cfg|throw|p-throw|@regression
+  SC0009  card= 1236 props=  15 cs=  1  surfaces=[<anonymous>, Array, Promise, Response, fetch (and 9 more)]  signal=async
+  SC0010  card= 1149 props= 332 cs=  1  surfaces=[Array, Bun, CJS, CJSArrayLike, Object (and 256 more)]  signal=@cli
+  SC0011  card=  948 props=   7 cs=  2  surfaces=[Bun, Response, bunProcess, execFileAsync, exited (and 1 more)]  signal=async|@regression
+  SC0012  card=  814 props=  39 cs=  2  surfaces=[Array, Bun, JSON, Number, Object (and 22 more)]  signal=cfg
+  SC0013  card=  802 props= 106 cs=  5  surfaces=[$$, Array, Bun, FormData, Promise (and 68 more)]  signal=async|@js
+  SC0014  card=  480 props= 127 cs=  0  surfaces=[A, A_2, B, Bun, C (and 60 more)]  signal=@bundler
+  SC0015  card=  364 props=   4 cs=  0  surfaces=[Promise, serialize, server, util]  signal=cfg|thr|@js
+  SC0016  card=  343 props=  72 cs=  1  surfaces=[Buffer, Bun, EventEmitterAsyncResource, HTMLRewriter, Promise (and 40 more)]  signal=sync+async|@js
+  SC0017  card=  337 props=  35 cs=  0  surfaces=[addExited, check, checkLockfiles, checkScripts, childTarExited (and 29 more)]  signal=async|@cli
+  SC0018  card=  332 props=   3 cs=  0  surfaces=[exists, file, stdout]  signal=cfg|async
+  SC0019  card=  301 props=  24 cs=  3  surfaces=[Blob, Bun, File, RedisClient, S3 (and 16 more)]  signal=cfg|async|@js
+  SC0020  card=  279 props=   1 cs=  0  surfaces=[stderr]  signal=cfg|sync+async
+
+top 20 cross-namespace seams (by cardinality):
+  SC0001  card=12283  action=meta-seam (crosscuts most surfaces)  surfaces=[$, $$, ANY, AbortController, AbortSignal, Agent (+943)]  seam=@js
+  SC0003  card= 3998  action=meta-seam (crosscuts most surfaces)  surfaces=[$, <anonymous>, Array, Bun, JSON, MapClass (+137)]  seam=@regression
+  SC0004  card= 2214  action=meta-seam (crosscuts most surfaces)  surfaces=[<anonymous>, Buffer, String, buildExitCode, buildStderr, cert (+16)]  seam=platform-cfg/@regression
+  SC0005  card= 2055  action=meta-seam (crosscuts most surfaces)  surfaces=[AbortController, AbortSignal, Buffer, Bun, CloseEvent, CustomEvent (+148)]  seam=platform-cfg/@js
+  SC0006  card= 1932  action=split <anonymous>  surfaces=[<anonymous>]  seam=platform-cfg/throws/plain-throw
+  SC0007  card= 1861  action=meta-seam (crosscuts most surfaces)  surfaces=[A, Agent, Array, ArrayBuffer, Blob, Boolean (+68)]  seam=constructor+handle/@js
+  SC0008  card= 1556  action=split <anonymous>  surfaces=[<anonymous>]  seam=platform-cfg/throws/plain-throw/@regression
+  SC0009  card= 1236  action=meta-seam (crosscuts most surfaces)  surfaces=[<anonymous>, Array, Promise, Response, fetch, file (+8)]  seam=async
+  SC0010  card= 1149  action=meta-seam (crosscuts most surfaces)  surfaces=[Array, Bun, CJS, CJSArrayLike, Object, Uint8Array (+255)]  seam=@cli
+  SC0011  card=  948  action=merge across [Bun, Response, bunProcess, execFileAsync, exited, mkdir]  surfaces=[Bun, Response, bunProcess, execFileAsync, exited, mkdir]  seam=async/@regression
+  SC0012  card=  814  action=meta-seam (crosscuts most surfaces)  surfaces=[Array, Bun, JSON, Number, Object, Proxy (+21)]  seam=platform-cfg
+  SC0013  card=  802  action=meta-seam (crosscuts most surfaces)  surfaces=[$$, Array, Bun, FormData, Promise, ReadableStream (+67)]  seam=async/@js
+  SC0014  card=  480  action=meta-seam (crosscuts most surfaces)  surfaces=[A, A_2, B, Bun, C, Function (+59)]  seam=@bundler
+  SC0015  card=  364  action=merge across [Promise, serialize, server, util]  surfaces=[Promise, serialize, server, util]  seam=platform-cfg/threaded/@js
+  SC0016  card=  343  action=meta-seam (crosscuts most surfaces)  surfaces=[Buffer, Bun, EventEmitterAsyncResource, HTMLRewriter, Promise, String (+39)]  seam=sync+async/@js
+  SC0017  card=  337  action=meta-seam (crosscuts most surfaces)  surfaces=[addExited, check, checkLockfiles, checkScripts, childTarExited, devExited (+28)]  seam=async/@cli
+  SC0018  card=  332  action=merge across [exists, file, stdout]  surfaces=[exists, file, stdout]  seam=platform-cfg/async
+  SC0019  card=  301  action=meta-seam (crosscuts most surfaces)  surfaces=[Blob, Bun, File, RedisClient, S3, bucket (+15)]  seam=platform-cfg/async/@js
+  SC0020  card=  279  action=split stderr  surfaces=[stderr]  seam=platform-cfg/sync+async
+  SC0021  card=  276  action=merge across [Bun, stderrIterator, stdoutIterator, tty]  surfaces=[Bun, stderrIterator, stdoutIterator, tty]  seam=sync+async/@regression

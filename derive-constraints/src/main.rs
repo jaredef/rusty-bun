@@ -73,6 +73,15 @@ enum Cmd {
         /// Print human-readable summary to stderr.
         #[arg(long)]
         summary: bool,
+        /// Optional path to the test corpus root (the directory the scan
+        /// originally ran on). When provided, the seams pipeline opens
+        /// antichain representative source files and probes their
+        /// surrounding test-fn-body context for setup-conditional
+        /// patterns S1's antichain-text-only detection cannot see.
+        /// Without this flag, S1 falls back to v0.2 antichain-only
+        /// detection.
+        #[arg(long)]
+        corpus_root: Option<PathBuf>,
     },
 }
 
@@ -113,10 +122,12 @@ fn main() -> Result<()> {
             cluster: cluster_path,
             out,
             summary,
+            corpus_root,
         } => {
             let cluster_report: cluster::ClusterReport = read_json(&cluster_path)
                 .with_context(|| format!("loading cluster from {}", cluster_path.display()))?;
-            let mut report = seams::detect_seams(&cluster_report)?;
+            let mut report =
+                seams::detect_seams(&cluster_report, corpus_root.as_deref())?;
             report.cluster_source = Some(cluster_path.to_string_lossy().into_owned());
             write_json(&out, &report)?;
             if summary {

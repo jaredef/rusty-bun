@@ -96,13 +96,13 @@ The trajectory's Deferred section lists items considered and explicitly *deferre
 
 **Apparatus binary.** `derive-constraints` at `derive-constraints/`. Version state recorded in commit messages and `runs/<run>/RUN-NOTES.md`.
 
-**Pilot crates.** Cargo workspace not yet established; each pilot is its own crate. A future workspace consolidation is queued (see trajectory).
+**Pilot crates.** Single Cargo workspace at the repo root `Cargo.toml` registers all 16 pilots + `derive-constraints` + `welch`. `cargo test --workspace --release` runs every test in one shot. Wrapper script at `bin/run-pilots.sh` emits a structured summary.
 
 **Constraint corpus.** Re-extracted at `runs/2026-05-10-bun-v0.13b-spec-batch/cluster.json`. Older runs preserved for diff. Per the pipeline driver, re-running takes ~10s on Bun's full test corpus.
 
 **Spec corpus.** `specs/*.spec.md` — 15 surfaces curated as of v0.13b. Format documented at `specs/README.md`.
 
-**Test runner.** `cargo test --release` per pilot crate. Single-shot; no orchestrator yet. A workspace-level runner is queued.
+**Test runner.** `bin/run-pilots.sh` from the repo root runs the entire workspace and emits a structured summary. Equivalent: `cargo test --workspace --release`.
 
 ## VII. What completion looks like
 

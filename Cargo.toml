@@ -1,0 +1,32 @@
+# rusty-bun workspace — registers all per-pilot crates plus the apparatus
+# binaries (derive-constraints, welch).
+#
+# Per Doc 581 trajectory §II Tier-D #9: workspace consolidation lets
+# `cargo test --workspace --release` run every pilot's verifier and consumer-
+# regression suite in a single command, dramatically simplifying the live-
+# state spot-check from the trajectory's resume protocol.
+
+[workspace]
+resolver = "2"
+members = [
+    # Apparatus binaries
+    "derive-constraints",
+    "welch",
+    # Pilots — alphabetical by surface
+    "pilots/abort-controller/derived",
+    "pilots/blob/derived",
+    "pilots/buffer/derived",
+    "pilots/bun-file/derived",
+    "pilots/bun-serve/derived",
+    "pilots/bun-spawn/derived",
+    "pilots/fetch-api/derived",
+    "pilots/file/derived",
+    "pilots/node-fs/derived",
+    "pilots/node-http/derived",
+    "pilots/node-path/derived",
+    "pilots/streams/derived",
+    "pilots/structured-clone/derived",
+    "pilots/textencoder/derived",
+    "pilots/urlsearchparams/derived",
+    "pilots/web-crypto/derived",
+]

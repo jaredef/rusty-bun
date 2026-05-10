@@ -8,6 +8,14 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 - **M9** — Tier-J fixtures are authored spec-first against Bun, not against rusty-bun's current surface; divergences surface during authoring, reconciliations land in the same commit; fixtures ship J.1.a directly. J.1.b becomes a transient never-occupied state under this discipline.
 - **Telos lens (seed §VII):** sub-criterion 5 is a *per-fixture differential* count. Fixtures in J.1.a are differentially verified; J.1.b are host-internal regressions with explicit re-open conditions, NOT sub-criterion-5 evidence.
 
+**Phase-2 persistence tracker** (seed §III.A8.10):
+- **`N_persist` = 2** (rounds without M8(a) reconciliation across orthogonal axes).
+- Current run started at `f7284b2` (consumer-job-queue: class hierarchy + async generators + Symbol-keyed + Error subclassing).
+- Extended at `f102c59` (consumer-batch-loader: Promise combinators + Proxy/Reflect + BigInt + tagged templates).
+- Axes-set covered by the run: {class-hierarchy, async-generators, Symbol-keyed state, custom-Error-subclasses, JSON-replacer, Promise.all, Promise.allSettled, Promise.race, Proxy/Reflect, BigInt, tagged-templates, Object.fromEntries, spread-aggregation}.
+- Next round predicts: J.1.a from inception if the new axis stays within the basin's generalization radius; reset to 0 if M8(a) reconciliation is required (basin's actual coverage was bounded at that axis).
+- Falsifier-direction signal for Doc 709 §6 P1 ("basin boundary = M-rule coverage"). A long persistence run corroborates §7's deeper reading; a drop-to-zero on a new pilot class corroborates P1.
+
 ---
 
 ## I. Done — append-only
@@ -308,7 +316,7 @@ Per Doc 581 §III Move 3, this is the four-to-six-step procedure a session readi
 4. **Run §IV (Live-state spot-check).** Confirms apparatus is in a runnable state before queued work begins.
 5. **Pick the topmost queued item from §II that hasn't been blocked by re-prioritization.** Advance the work; commit; update §I (append-only) and revise §II as items move.
 6. **Don't re-prioritize §II without a stated reason.** If priorities change, record the change as part of the session's commit message AND the §II edit.
-7. **Apply §IV.M7, §IV.M8, and §IV.M9 every round.** Before the round closes: (a) classify the round's M7 fold-back per §III.A8.9 taxonomy (primitive / vacuous / compositionally vacuous / compositional finding / author-side / scope-limit verified); fold back if primitive or compositional. (b) If the round attempted a Bun differential and surfaced a divergence, reconcile per M8 before commit — either align the apparatus with Bun, or record an explicit scope-limit + remove the dependent fixture from the J.1.a (differentially verified) set. "Noted, will deal with later" is forbidden. (c) When the round adds a Tier-J fixture, author it spec-first against Bun per M9: write Bun-spec idioms, run under Bun for baseline, run under rusty-bun-host, reconcile divergences in the same commit. The fixture ships J.1.a directly; J.1.b is reserved for fixtures whose divergences cannot be reconciled in-round.
+7. **Apply §IV.M7, §IV.M8, and §IV.M9 every round.** Before the round closes: (a) classify the round's M7 fold-back per the §III.A8.11 outcome taxonomy (primitive / vacuous / compositionally vacuous / compositional finding / author-side / scope-limit verified); fold back if primitive or compositional. (b) If the round attempted a Bun differential and surfaced a divergence, reconcile per M8 before commit — either align the apparatus with Bun, or record an explicit scope-limit + remove the dependent fixture from the J.1.a (differentially verified) set. "Noted, will deal with later" is forbidden. (c) When the round adds a Tier-J fixture, author it spec-first against Bun per M9: write Bun-spec idioms, run under Bun for baseline, run under rusty-bun-host, reconcile divergences in the same commit. The fixture ships J.1.a directly; J.1.b is reserved for fixtures whose divergences cannot be reconciled in-round. (d) Update `N_persist` per §III.A8.10: increment if the round landed J.1.a with zero apparatus reconciliation AND covered an axis not in the prior basket; reset to 0 if any M8(a) reconciliation was needed; record the current axis-set in the trajectory header.
 
 Discipline against decoration: if a session skips this protocol and re-derives state from the seed alone or from `git log`, the protocol is failing per [Doc 581 F3](https://jaredfoy.com/resolve/doc/581-the-resume-vector). Note the failure and adjust.
 

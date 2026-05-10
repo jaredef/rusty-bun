@@ -249,6 +249,16 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 
 ---
 
+## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)
+
+Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixture authoring. NOT Bun bugs — these are cases where the author wrote spec-violating JS and the runtime (Bun and rusty-bun-host alike) correctly threw. The category is kept as a trace of what spec-strictness Bun enforces and what the author should remember when authoring future fixtures. Each entry implicitly attests Bun's spec compliance on the surface where the author tripped.
+
+### F1. BigInt-arithmetic operand-type strictness
+- **Source.** consumer-batch-loader fixture initial Bun run, 2026-05-10. Author wrote `id % 2 === 0n` (mixing Number `2` with BigInt `id`). Bun threw `TypeError: Invalid mix of BigInt and other type in remainder.`
+- **Spec.** ECMAScript spec: BigInt operators require both operands BigInt; no implicit coercion.
+- **What it attests.** Bun is spec-strict on BigInt mixing — the throw is correct behavior.
+- **Author rule.** When using BigInt anywhere in an arithmetic expression, all operands must be `n`-suffixed literals or BigInt-valued. The shortcut: write `id % 2n === 0n`, not `id % 2`.
+
 ## How this catalogue is maintained
 
 The catalogue is updated as new pilots run. Each pilot's RUN-NOTES.md cross-references findings here. Categories A and C grow with consumer-regression pilots (per Doc 707's bidirectional reading); B is rare and stable; D is provisional and items move to A or get deleted as they're investigated; E grows with verifier-caught derivation bugs **and runtime-integration-pin findings** (the JS-host iteration on 2026-05-10 was the first session that contributed E entries from a non-pilot source).

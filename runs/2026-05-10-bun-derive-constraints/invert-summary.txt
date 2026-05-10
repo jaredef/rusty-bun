@@ -1,0 +1,6 @@
+
+=== derive-constraints invert ===
+output dir:           /home/jaredef/rusty-bun/runs/2026-05-10-bun-derive-constraints/constraints
+surfaces emitted:     99
+constraints emitted:  487
+properties skipped:   3930 (sub-floor cardinality or noise subjects)

@@ -5,6 +5,7 @@
 
 mod cluster;
 mod extract;
+mod invert;
 mod scan;
 
 use anyhow::{Context, Result};
@@ -44,6 +45,19 @@ enum Cmd {
         #[arg(long)]
         summary: bool,
     },
+    /// Emit `.constraints.md` documents in rederive grammar, one per
+    /// architectural surface plus a top-level index. The output is
+    /// consumable by rederive's parse stage; see docs/invert-phase-design.md.
+    Invert {
+        /// Path to a cluster JSON produced by `derive-constraints cluster`.
+        cluster: PathBuf,
+        /// Output directory for the .constraints.md documents.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Print human-readable summary to stderr.
+        #[arg(long)]
+        summary: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -65,6 +79,18 @@ fn main() -> Result<()> {
             write_json(&out, &report)?;
             if summary {
                 print_cluster_summary(&report);
+            }
+        }
+        Cmd::Invert {
+            cluster: cluster_path,
+            out,
+            summary,
+        } => {
+            let cluster_report: cluster::ClusterReport = read_json(&cluster_path)
+                .with_context(|| format!("loading cluster from {}", cluster_path.display()))?;
+            let report = invert::invert(&cluster_report, &out)?;
+            if summary {
+                print_invert_summary(&report);
             }
         }
     }
@@ -90,6 +116,17 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
         }
     }
     Ok(())
+}
+
+fn print_invert_summary(report: &invert::InvertReport) {
+    eprintln!("\n=== derive-constraints invert ===");
+    eprintln!("output dir:           {}", report.output_dir.display());
+    eprintln!("surfaces emitted:     {}", report.surfaces_emitted);
+    eprintln!("constraints emitted:  {}", report.constraints_emitted);
+    eprintln!(
+        "properties skipped:   {} (sub-floor cardinality or noise subjects)",
+        report.properties_skipped
+    );
 }
 
 fn print_cluster_summary(report: &cluster::ClusterReport) {

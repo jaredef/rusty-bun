@@ -120,3 +120,191 @@ fn js_basic_arithmetic_with_string() {
     let r = eval_string(r#"["a", "b", "c"].join("-")"#).unwrap();
     assert_eq!(r, "a-b-c");
 }
+
+// ════════════════════ TextEncoder / TextDecoder ════════════════════
+
+#[test]
+fn js_text_encoder_encoding_property() {
+    let r = eval_string(r#"new TextEncoder().encoding"#).unwrap();
+    assert_eq!(r, "utf-8");
+}
+
+#[test]
+fn js_text_encoder_encode_then_text_decoder() {
+    let r = eval_string(r#"
+        const enc = new TextEncoder();
+        const dec = new TextDecoder();
+        const bytes = enc.encode("hello world");
+        dec.decode(bytes)
+    "#).unwrap();
+    assert_eq!(r, "hello world");
+}
+
+#[test]
+fn js_text_encoder_unicode() {
+    let r = eval_string(r#"
+        const enc = new TextEncoder();
+        const dec = new TextDecoder();
+        dec.decode(enc.encode("héllo, мир! 🌍"))
+    "#).unwrap();
+    assert_eq!(r, "héllo, мир! 🌍");
+}
+
+// ════════════════════ Buffer ════════════════════
+
+#[test]
+fn js_buffer_byte_length_utf8() {
+    let r = eval_i64(r#"Buffer.byteLength("héllo")"#).unwrap();
+    assert_eq!(r, 6);
+}
+
+#[test]
+fn js_buffer_concat_byte_round_trip() {
+    let r = eval_string(r#"
+        const a = Buffer.from("hello ");
+        const b = Buffer.from("world");
+        const combined = Buffer.concat([a, b]);
+        Buffer.decodeUtf8(combined)
+    "#).unwrap();
+    assert_eq!(r, "hello world");
+}
+
+#[test]
+fn js_buffer_alloc_zeros() {
+    let r = eval_i64(r#"
+        const buf = Buffer.alloc(8);
+        let sum = 0;
+        for (let i = 0; i < 8; i++) sum += buf[i];
+        sum
+    "#).unwrap();
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn js_buffer_base64_encode() {
+    let r = eval_string(r#"Buffer.encodeBase64(Buffer.from("hello"))"#).unwrap();
+    assert_eq!(r, "aGVsbG8=");
+}
+
+#[test]
+fn js_buffer_hex_encode() {
+    let r = eval_string(r#"Buffer.encodeHex(Buffer.from("hello"))"#).unwrap();
+    assert_eq!(r, "68656c6c6f");
+}
+
+// ════════════════════ URLSearchParams ════════════════════
+
+#[test]
+fn js_url_search_params_construction_and_get() {
+    let r = eval_string(r#"
+        const p = new URLSearchParams("?a=1&b=2");
+        p.get("a") + "," + p.get("b")
+    "#).unwrap();
+    assert_eq!(r, "1,2");
+}
+
+#[test]
+fn js_url_search_params_to_string() {
+    let r = eval_string(r#"
+        const p = new URLSearchParams();
+        p.append("name", "Jared");
+        p.append("greeting", "hello, world!");
+        p.toString()
+    "#).unwrap();
+    assert_eq!(r, "name=Jared&greeting=hello%2C+world%21");
+}
+
+#[test]
+fn js_url_search_params_sort() {
+    let r = eval_string(r#"
+        const p = new URLSearchParams("c=1&a=2&b=3");
+        p.sort();
+        p.toString()
+    "#).unwrap();
+    assert_eq!(r, "a=2&b=3&c=1");
+}
+
+// ════════════════════ fs (sync subset) ════════════════════
+
+#[test]
+fn js_fs_write_then_read_roundtrip() {
+    let tmp = format!("/tmp/rusty-bun-host-fs-{}", std::process::id());
+    let script = format!(r#"
+        const path = "{}";
+        fs.writeFileSync(path, "test content");
+        const exists = fs.existsSync(path);
+        const content = fs.readFileSyncUtf8(path);
+        fs.unlinkSync(path);
+        exists.toString() + "|" + content
+    "#, tmp);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "true|test content");
+}
+
+#[test]
+fn js_fs_exists_for_missing_file() {
+    let r = eval_bool(r#"fs.existsSync("/nonexistent/path/asdfqwer")"#).unwrap();
+    assert!(!r);
+}
+
+#[test]
+fn js_fs_mkdir_then_rmdir_recursive() {
+    let pid = std::process::id();
+    let parent = format!("/tmp/rusty-bun-host-mkdir-{}", pid);
+    let dir = format!("{}/a/b/c", parent);
+    let script = format!(r#"
+        fs.mkdirSyncRecursive("{}");
+        const exists = fs.existsSync("{}");
+        fs.rmdirSyncRecursive("{}");
+        const goneAfter = fs.existsSync("{}");
+        exists.toString() + "|" + goneAfter.toString()
+    "#, dir, dir, parent, parent);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "true|false");
+}
+
+// ════════════════════ crypto.subtle ════════════════════
+
+#[test]
+fn js_crypto_subtle_digest_sha256() {
+    let r = eval_string(r#"crypto.subtle.digestSha256Hex("abc")"#).unwrap();
+    assert_eq!(r, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+// ════════════════════ Cross-pilot composition from JS ════════════════════
+
+#[test]
+fn js_compose_buffer_and_text_decoder() {
+    let r = eval_string(r#"
+        const bytes = Buffer.from("hello");
+        const dec = new TextDecoder();
+        dec.decode(bytes)
+    "#).unwrap();
+    assert_eq!(r, "hello");
+}
+
+#[test]
+fn js_compose_url_params_and_buffer() {
+    let r = eval_i64(r#"
+        const p = new URLSearchParams();
+        p.append("name", "value");
+        Buffer.byteLength(p.toString())
+    "#).unwrap();
+    assert_eq!(r, 10);
+}
+
+#[test]
+fn js_compose_fs_text_encoder_decoder_chain() {
+    let tmp = format!("/tmp/rusty-bun-host-chain-{}", std::process::id());
+    let script = format!(r#"
+        const path = "{}";
+        fs.writeFileSync(path, "hello, world!");
+        const readBytes = fs.readFileSyncBytes(path);
+        const dec = new TextDecoder();
+        const recovered = dec.decode(readBytes);
+        fs.unlinkSync(path);
+        recovered
+    "#, tmp);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "hello, world!");
+}

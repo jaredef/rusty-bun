@@ -12,7 +12,7 @@ mod seams;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "derive-constraints", version, about = "Extract test-corpus constraints.")]
@@ -93,6 +93,36 @@ enum Cmd {
         /// Print human-readable summary to stderr.
         #[arg(long)]
         summary: bool,
+    },
+    /// Run the full rusty-bun analysis pipeline end-to-end on a corpus.
+    /// Orchestrates: derive-constraints scan → welch scan(impl) →
+    /// welch scan(baseline) → welch baseline → welch compare → cluster →
+    /// invert (namespace) → invert (--by-seams) → seams → couple.
+    /// Outputs a populated directory ready for inspection or rederive
+    /// pilot consumption.
+    Pipeline {
+        /// Test corpus root (directory containing .test.ts / .test.js
+        /// / .zig / .rs test sources).
+        #[arg(long)]
+        test_corpus: PathBuf,
+        /// Implementation source root (directory of target-language
+        /// .rs files welch operates on). Often the same as test_corpus
+        /// when tests live under the impl tree.
+        #[arg(long)]
+        impl_source: PathBuf,
+        /// Baseline source root for welch (a directory containing
+        /// idiomatic-Rust crates that welch's anomaly detection uses
+        /// as the comparison distribution).
+        #[arg(long)]
+        baseline: PathBuf,
+        /// Output directory. Will be created if missing; existing
+        /// contents may be overwritten.
+        #[arg(long)]
+        out: PathBuf,
+        /// Path to the `welch` binary. Defaults to a sibling location
+        /// inside the rusty-bun checkout.
+        #[arg(long)]
+        welch_binary: Option<PathBuf>,
     },
     Seams {
         /// Path to a cluster JSON produced by `derive-constraints cluster`.
@@ -175,6 +205,15 @@ fn main() -> Result<()> {
             if summary {
                 print_couple_summary(&report);
             }
+        }
+        Cmd::Pipeline {
+            test_corpus,
+            impl_source,
+            baseline,
+            out,
+            welch_binary,
+        } => {
+            run_pipeline(test_corpus, impl_source, baseline, out, welch_binary)?;
         }
         Cmd::Seams {
             cluster: cluster_path,
@@ -263,6 +302,235 @@ fn print_couple_summary(report: &couple::CoupledReport) {
             welch_z
         );
     }
+}
+
+/// Run the full pipeline. The orchestrator calls the existing phase
+/// functions directly for derive-constraints' subcommands (no shelling
+/// out within the same binary) and shells out to welch for the
+/// implementation-source diagnostic. Each step's output JSON is
+/// written to a stable path inside `out_dir` so the pipeline can be
+/// re-run incrementally and downstream tools can consume any phase's
+/// output.
+fn run_pipeline(
+    test_corpus: PathBuf,
+    impl_source: PathBuf,
+    baseline: PathBuf,
+    out_dir: PathBuf,
+    welch_binary_arg: Option<PathBuf>,
+) -> Result<()> {
+    use std::time::Instant;
+    std::fs::create_dir_all(&out_dir)
+        .with_context(|| format!("create output dir {}", out_dir.display()))?;
+
+    let welch_binary = welch_binary_arg
+        .or_else(|| guess_welch_binary())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not locate welch binary; pass --welch-binary <PATH>"
+            )
+        })?;
+    if !welch_binary.exists() {
+        anyhow::bail!("welch binary does not exist at {}", welch_binary.display());
+    }
+
+    eprintln!("=== rusty-bun pipeline ===");
+    eprintln!("test_corpus: {}", test_corpus.display());
+    eprintln!("impl_source: {}", impl_source.display());
+    eprintln!("baseline:    {}", baseline.display());
+    eprintln!("out:         {}", out_dir.display());
+    eprintln!("welch:       {}", welch_binary.display());
+    eprintln!();
+
+    // Step 1: derive-constraints scan over test corpus
+    let scan_path = out_dir.join("scan.json");
+    let t = Instant::now();
+    eprintln!("[1/8] scan ({})", test_corpus.display());
+    let scan_report = scan::scan_dir(&test_corpus)
+        .with_context(|| format!("scanning {}", test_corpus.display()))?;
+    write_json_to(&scan_path, &scan_report)?;
+    eprintln!(
+        "      → {} ({} files, {} tests, {} clauses) in {:?}",
+        scan_path.display(),
+        scan_report.stats.files_scanned,
+        scan_report.stats.tests_total,
+        scan_report.stats.constraints_total,
+        t.elapsed()
+    );
+
+    // Step 2: welch scan over implementation source
+    let welch_target_scan = out_dir.join("welch-target-scan.json");
+    let t = Instant::now();
+    eprintln!("[2/8] welch scan {}", impl_source.display());
+    run_command(
+        &welch_binary,
+        &[
+            "scan".as_ref(),
+            impl_source.as_os_str(),
+            "-o".as_ref(),
+            welch_target_scan.as_os_str(),
+        ],
+    )?;
+    eprintln!("      → {} in {:?}", welch_target_scan.display(), t.elapsed());
+
+    // Step 3: welch scan over baseline
+    let welch_baseline_scan = out_dir.join("welch-baseline-scan.json");
+    let t = Instant::now();
+    eprintln!("[3/8] welch scan baseline {}", baseline.display());
+    run_command(
+        &welch_binary,
+        &[
+            "scan".as_ref(),
+            baseline.as_os_str(),
+            "-o".as_ref(),
+            welch_baseline_scan.as_os_str(),
+        ],
+    )?;
+    eprintln!("      → {} in {:?}", welch_baseline_scan.display(), t.elapsed());
+
+    // Step 4: welch baseline (summary)
+    let welch_baseline_summary = out_dir.join("welch-baseline-summary.json");
+    let t = Instant::now();
+    eprintln!("[4/8] welch baseline summary");
+    run_command(
+        &welch_binary,
+        &[
+            "baseline".as_ref(),
+            welch_baseline_scan.as_os_str(),
+            "-o".as_ref(),
+            welch_baseline_summary.as_os_str(),
+        ],
+    )?;
+    eprintln!(
+        "      → {} in {:?}",
+        welch_baseline_summary.display(),
+        t.elapsed()
+    );
+
+    // Step 5: welch compare → anomalies
+    let welch_anomalies = out_dir.join("welch-anomalies.json");
+    let t = Instant::now();
+    eprintln!("[5/8] welch compare");
+    run_command(
+        &welch_binary,
+        &[
+            "compare".as_ref(),
+            welch_baseline_summary.as_os_str(),
+            welch_target_scan.as_os_str(),
+            "-z".as_ref(),
+            "3.0".as_ref(),
+            "-o".as_ref(),
+            welch_anomalies.as_os_str(),
+        ],
+    )?;
+    eprintln!("      → {} in {:?}", welch_anomalies.display(), t.elapsed());
+
+    // Step 6: cluster
+    let cluster_path = out_dir.join("cluster.json");
+    let t = Instant::now();
+    eprintln!("[6/8] cluster");
+    let mut cluster_report = cluster::cluster(&scan_report)?;
+    cluster_report.source_path = Some(scan_path.to_string_lossy().into_owned());
+    write_json_to(&cluster_path, &cluster_report)?;
+    eprintln!(
+        "      → {} ({} properties, {} construction-style) in {:?}",
+        cluster_path.display(),
+        cluster_report.stats.properties_out,
+        cluster_report.stats.construction_style_count,
+        t.elapsed()
+    );
+
+    // Step 7: invert (both modes — namespace + by-seams)
+    let constraints_dir = out_dir.join("constraints");
+    let constraints_by_seams_dir = out_dir.join("constraints-by-seams");
+    let t = Instant::now();
+    eprintln!("[7/8] invert (namespace + by-seams)");
+    let _ns = invert::invert(
+        &cluster_report,
+        &constraints_dir,
+        invert::InvertGrouping::BySurface,
+    )?;
+    let _seam = invert::invert(
+        &cluster_report,
+        &constraints_by_seams_dir,
+        invert::InvertGrouping::BySeam {
+            corpus_root: Some(test_corpus.clone()),
+        },
+    )?;
+    eprintln!(
+        "      → {} + {} in {:?}",
+        constraints_dir.display(),
+        constraints_by_seams_dir.display(),
+        t.elapsed()
+    );
+
+    // Step 8: seams + couple
+    let seams_path = out_dir.join("seams.json");
+    let coupled_path = out_dir.join("coupled.json");
+    let t = Instant::now();
+    eprintln!("[8/8] seams + couple");
+    let mut seams_report = seams::detect_seams(&cluster_report, Some(&test_corpus))?;
+    seams_report.cluster_source = Some(cluster_path.to_string_lossy().into_owned());
+    write_json_to(&seams_path, &seams_report)?;
+    let welch_anomaly_report: couple::WelchAnomalyReport = read_json(&welch_anomalies)?;
+    let coupled_report = couple::couple(
+        &seams_report,
+        &welch_anomaly_report,
+        Some(&seams_path),
+        Some(&welch_anomalies),
+    )?;
+    write_json_to(&coupled_path, &coupled_report)?;
+    eprintln!(
+        "      → {} + {} in {:?}",
+        seams_path.display(),
+        coupled_path.display(),
+        t.elapsed()
+    );
+
+    eprintln!();
+    eprintln!("pipeline complete. Artifacts in {}/:", out_dir.display());
+    eprintln!("  scan.json                  — {} clauses across {} files", scan_report.stats.constraints_total, scan_report.stats.files_scanned);
+    eprintln!("  cluster.json               — {} properties ({} construction-style)", cluster_report.stats.properties_out, cluster_report.stats.construction_style_count);
+    eprintln!("  seams.json                 — {} signal-vector clusters, {} cross-namespace seams", seams_report.stats.distinct_signal_vectors, seams_report.stats.cross_namespace_seam_count);
+    eprintln!("  coupled.json               — {} surfaces, {} mismatch candidates", coupled_report.stats.surfaces_total, coupled_report.stats.mismatch_candidates);
+    eprintln!("  welch-anomalies.json       — implementation-source z-anomalies");
+    eprintln!("  constraints/               — namespace-grouped .constraints.md (rederive-compatible)");
+    eprintln!("  constraints-by-seams/      — seam-grouped .constraints.md (rederive-compatible, Doc 705 form)");
+    Ok(())
+}
+
+/// Heuristic for finding the welch binary when --welch-binary is absent.
+/// The rusty-bun checkout lays out the two crates as siblings; the welch
+/// binary lives at `../welch/target/release/welch` from
+/// `derive-constraints/target/release/derive-constraints`.
+fn guess_welch_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let derive_release = exe.parent()?; // .../derive-constraints/target/release/
+    let derive_target = derive_release.parent()?; // .../derive-constraints/target/
+    let derive_dir = derive_target.parent()?; // .../derive-constraints/
+    let workspace = derive_dir.parent()?; // .../rusty-bun/
+    let candidate = workspace.join("welch/target/release/welch");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn run_command(bin: &Path, args: &[&std::ffi::OsStr]) -> Result<()> {
+    let status = std::process::Command::new(bin)
+        .args(args)
+        .status()
+        .with_context(|| format!("invoking {}", bin.display()))?;
+    if !status.success() {
+        anyhow::bail!("{} exited with {:?}", bin.display(), status.code());
+    }
+    Ok(())
+}
+
+fn write_json_to<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(value)?;
+    std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
 
 fn truncate(s: &str, n: usize) -> String {

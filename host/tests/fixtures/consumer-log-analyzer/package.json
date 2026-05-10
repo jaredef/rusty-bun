@@ -1,0 +1,8 @@
+{
+  "name": "consumer-log-analyzer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #7: log analyzer. Exercises regex with named capture + sticky flag, Date arithmetic, Array.reduce/sort/group-by patterns, String.prototype.matchAll, Map iteration ordering, Object.entries/keys deep. Spec-first M9.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

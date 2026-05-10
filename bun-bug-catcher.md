@@ -249,6 +249,13 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 
 ---
 
+### E7. WeakRef and FinalizationRegistry are absent from rusty-bun-host's embedded QuickJS (basin boundary)
+- **Source.** Direct probe 2026-05-10 — Doc 709 §6 P1 falsifier-direction test. `typeof WeakRef` returns `"undefined"` in rusty-bun-host; `"function"` in Bun 1.3.11. Both globals (WeakRef + FinalizationRegistry) are absent.
+- **Severity.** Apparatus-side scope-limit; rquickjs/QuickJS-build-specific.
+- **What it means.** The rusty-bun-host basin (per Doc 709) has a real boundary here. Consumer code using WeakRef-based caches, FinalizationRegistry-based resource cleanup, or any GC-coupled pattern will not run on rusty-bun-host as currently built. Real Bun runs such code via JavaScriptCore which has both.
+- **Re-open condition.** Either (i) the embedded engine is upgraded to a QuickJS build with WeakRef support (mainline QuickJS-NG has discussed it; rquickjs would need to expose it), OR (ii) rquickjs is replaced with a different engine binding that exposes WeakRef + FinalizationRegistry.
+- **Per M8(b):** scope-limit recorded; no Tier-J fixture depending on WeakRef has been built, so no fixture removal needed. Future fixture-author attempts on this axis must check this entry first.
+
 ## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)
 
 Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixture authoring. NOT Bun bugs — these are cases where the author wrote spec-violating JS and the runtime (Bun and rusty-bun-host alike) correctly threw. The category is kept as a trace of what spec-strictness Bun enforces and what the author should remember when authoring future fixtures. Each entry implicitly attests Bun's spec compliance on the surface where the author tripped.

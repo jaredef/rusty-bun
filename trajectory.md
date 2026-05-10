@@ -41,7 +41,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | `ac33127` | **node-fs pilot — Tier-C #6; sync subset (95 LOC; 0.4% naive against 21,540-LOC reference / ~8% adj)** |
 | 2026-05-10 | `7253d6d` | **node-http pilot — Tier-C #7; data-layer (208 LOC; 6.3% naive against 3,316-LOC TS core)** |
 | 2026-05-10 | `074659f` | **web-crypto pilot — Tier-C #8; SHA-256 + UUID v4 + getRandomValues + timing-safe (101 LOC; real crypto from scratch); completes Tier-C** |
-| 2026-05-10 | (this) | **Tier-D #9 + #10: Cargo workspace consolidation + pilot runner script** (`cargo test --workspace --release` runs 591 tests across 16 pilots in one command) |
+| 2026-05-10 | `f2bc47a` | **Tier-D #9 + #10: Cargo workspace consolidation + pilot runner script** (`cargo test --workspace --release` runs 591 tests across 16 pilots in one command) |
+| 2026-05-10 | (this) | **Tier-D #12: AuthorityTier schema** (Spec / Ecosystem / Contingent on every constraint clause; Bun corpus breakdown 1.3% Spec / 9.1% Ecosystem / 89.7% Contingent) |
 
 **Pilot inventory (16 pilots):**
 
@@ -109,7 +110,7 @@ Doc-tier corpus output:
 
 11. **WPT ingestion (proposed in 2026-05-10 conversation)** — pull web-platform-tests as a third source corpus alongside specs/ and test corpora. Converts every spec extract from "what should be true" to "what is empirically tested." Heavier engineering: ~200 LOC for the WPT extractor + tree-sitter integration. **Re-open condition: a pilot whose constraint coverage from spec extracts alone is operationally insufficient surfaces a derivation gap.**
 
-12. **`AuthorityTier` schema extension** — add `Spec | Ecosystem | Contingent` tier to ConstraintClause. Per the three-tier framing in seed §III.A3 and Doc 707 §"Plug-and-play criterion." Verifier reports per-tier conformance separately. Estimated: 50 LOC + propagation through pipeline.
+12. ~~AuthorityTier schema extension~~ — **DONE** 2026-05-10 (Spec / Ecosystem / Contingent enum on every clause; `classify_authority_tier()` default-tagging; spec extracts always Spec, web-platform subjects always Spec, Bun-namespace + Node-API always Ecosystem, default Contingent; Bun corpus breakdown: 1.3% / 9.1% / 89.7%)
 
 ### Tier-E — completion-criterion-anchoring docs
 

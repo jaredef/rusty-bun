@@ -1,0 +1,4398 @@
+{
+  "seams_source": "runs/2026-05-10-bun-v0.14-authoritytier/seams.json",
+  "welch_source": "runs/2026-05-10-bun-v0.14-authoritytier/welch-anomalies.json",
+  "stats": {
+    "surfaces_total": 292,
+    "surfaces_with_welch_match": 62,
+    "mismatch_candidates": 17
+  },
+  "surfaces": [
+    {
+      "surface": "http",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 21,
+        "max_z": 49.42221161087318,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/http_jsc/fetch_enums_jsc.rs",
+          "src/http_jsc/method_jsc.rs",
+          "src/picohttp_sys/picohttpparser.rs",
+          "src/http/h3_client/PendingConnect.rs",
+          "src/jsc/HTTPServerAgent.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "http: welch flags impl-source anomaly (max z=+49.4 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "Script",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 3,
+        "max_z": 35.41472705598119,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/javascript_core_c_api.rs",
+          "src/runtime/shell/ParsedShellScript.rs",
+          "src/runtime/webcore/ScriptExecutionContext.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "Script: welch flags impl-source anomaly (max z=+35.4 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "zlib",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 5,
+        "max_z": 33.48280195523315,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/zlib_sys/win32.rs",
+          "src/zlib_sys/posix.rs",
+          "src/zlib/lib.rs",
+          "src/http/zlib.rs",
+          "src/runtime/node/zlib/NativeZlib.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "zlib: welch flags impl-source anomaly (max z=+33.5 on raw_pointers; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "BigInt",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 25.000574142233585,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSBigInt.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "BigInt: welch flags impl-source anomaly (max z=+25.0 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "Stream",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 20.781991691510417,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/quic/Stream.rs",
+          "src/runtime/webcore/wasm_streaming.rs",
+          "src/http/ThreadSafeStreamBuffer.rs",
+          "src/runtime/server/FileResponseStream.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "Stream: welch flags impl-source anomaly (max z=+20.8 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "buffer",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 18867,
+        "construction_style_count": 180,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 18.106675068517397,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/MarkedArgumentBuffer.rs",
+          "src/bun_alloc/BufferFallbackAllocator.rs",
+          "src/http/ThreadSafeStreamBuffer.rs",
+          "src/jsc/array_buffer.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "buffer: welch flags impl-source anomaly (max z=+18.1 on extern_blocks; unbounded=false); seams shows 2 clusters with cardinality 18867 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "SourceMap",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 5,
+        "max_z": 15.78297148740346,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/sourcemap_jsc/source_provider.rs",
+          "src/css/sourcemap.rs",
+          "src/sourcemap_jsc/JSSourceMap.rs",
+          "src/sourcemap/ParsedSourceMap.rs",
+          "src/jsc/SavedSourceMap.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "SourceMap: welch flags impl-source anomaly (max z=+15.8 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "App",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 15.48884205006632,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/App.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "App: welch flags impl-source anomaly (max z=+15.5 on raw_pointers; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "module",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 15.46013539354072,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSModuleLoader.rs",
+          "src/jsc/ModuleLoader.rs",
+          "src/jsc/NodeModuleModule.rs",
+          "src/bundler/analyze_transpiled_module.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "module: welch flags impl-source anomaly (max z=+15.5 on raw_pointers; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "WebSocket",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 6,
+        "max_z": 13.358876894325457,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/WebSocket.rs",
+          "src/http_jsc/websocket_client/CppWebSocket.rs",
+          "src/http_jsc/websocket_client/WebSocketProxyTunnel.rs",
+          "src/http_jsc/websocket_client/WebSocketUpgradeClient.rs",
+          "src/runtime/server/WebSocketServerContext.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "WebSocket: welch flags impl-source anomaly (max z=+13.4 on raw_pointers; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "Server",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 9,
+        "max_z": 9.725208760792723,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/HTTPServerAgent.rs",
+          "src/runtime/server/StaticRoute.rs",
+          "src/runtime/bake/DevServer/HmrSocket.rs",
+          "src/runtime/server/HTMLBundle.rs",
+          "src/runtime/server/FileResponseStream.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "Server: welch flags impl-source anomaly (max z=+9.7 on raw_pointers; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "SQL",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 11,
+        "max_z": 9.20956583202315,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/sql_jsc/mysql/MySQLRequestQueue.rs",
+          "src/sql_jsc/jsc.rs",
+          "src/sql/shared/Data.rs",
+          "src/sql_jsc/postgres/PostgresSQLQuery.rs",
+          "src/sql_jsc/shared/SQLDataCell.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "SQL: welch flags impl-source anomaly (max z=+9.2 on unsafe_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "vm",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 7.712657824564126,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/VM.rs"
+        ]
+      },
+      "mismatch": "welch_hot_seams_cold",
+      "mismatch_rationale": "vm: welch flags impl-source anomaly (max z=+7.7 on extern_blocks; unbounded=false); seams shows 1 clusters with cardinality 14172 but no architectural-hedging signal beyond path partition. Candidate implementation-internal seam."
+    },
+    {
+      "surface": "Glob",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 4.784923578042391,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/bun_core/Global.rs",
+          "src/jsc/JSGlobalObject.rs"
+        ]
+      },
+      "mismatch": "seams_hot_welch_cold",
+      "mismatch_rationale": "Glob: seams shows architectural-hedging signal 'ctor' across 1 clusters (cardinality 1840); welch finds 2 matched impl files with max-z=4.8. The seam exists in the API contract but the implementation is idiomatic-Rust-shaped."
+    },
+    {
+      "surface": "path",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 20956,
+        "construction_style_count": 260,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 4.280893284227578,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/node/path_watcher.rs"
+        ]
+      },
+      "mismatch": "seams_hot_welch_cold",
+      "mismatch_rationale": "path: seams shows architectural-hedging signal 'slack' across 4 clusters (cardinality 20956); welch finds 1 matched impl files with max-z=4.3. The seam exists in the API contract but the implementation is idiomatic-Rust-shaped."
+    },
+    {
+      "surface": "Blob",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 18505,
+        "construction_style_count": 246,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 3.987579772394826,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/webcore/blob/write_file.rs",
+          "src/runtime/webcore/blob/read_file.rs"
+        ]
+      },
+      "mismatch": "seams_hot_welch_cold",
+      "mismatch_rationale": "Blob: seams shows architectural-hedging signal 'slack' across 4 clusters (cardinality 18505); welch finds 2 matched impl files with max-z=4.0. The seam exists in the API contract but the implementation is idiomatic-Rust-shaped."
+    },
+    {
+      "surface": "Atomics",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 156,
+        "construction_style_count": 7,
+        "dominant_signal_name": "thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 3.5151445255721336,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/bake/DevServer/WatcherAtomics.rs"
+        ]
+      },
+      "mismatch": "seams_hot_welch_cold",
+      "mismatch_rationale": "Atomics: seams shows architectural-hedging signal 'thr' across 3 clusters (cardinality 156); welch finds 1 matched impl files with max-z=3.5. The seam exists in the API contract but the implementation is idiomatic-Rust-shaped."
+    },
+    {
+      "surface": "Bun",
+      "seams_summary": {
+        "clusters_count": 25,
+        "cardinality_total": 30837,
+        "construction_style_count": 291,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 25,
+        "max_z": 85.98660304942723,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/api/bun/x509.rs",
+          "src/bun_core/tty.rs",
+          "src/bun_core/wtf.rs",
+          "src/bun_alloc/heap_breakdown.rs",
+          "src/bun_alloc/fallback.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Array",
+      "seams_summary": {
+        "clusters_count": 8,
+        "cardinality_total": 29616,
+        "construction_style_count": 208,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 6,
+        "max_z": 53.43324978139819,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSArray.rs",
+          "src/jsc/JSArrayIterator.rs",
+          "src/jsc/JSUint8Array.rs",
+          "src/collections/hive_array.rs",
+          "src/sql/postgres/protocol/ArrayList.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "fetch",
+      "seams_summary": {
+        "clusters_count": 5,
+        "cardinality_total": 20244,
+        "construction_style_count": 176,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 49.42221161087318,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/http_jsc/fetch_enums_jsc.rs",
+          "src/jsc/FetchHeaders.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Symbol",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 20914,
+        "construction_style_count": 259,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 40.752304362556245,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/workaround_missing_symbols.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "tty",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 16070,
+        "construction_style_count": 160,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 35.28807710521363,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/bun_core/tty.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "URLSearchParams",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 9028,
+        "construction_style_count": 114,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 32.93238802093704,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/URLSearchParams.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Socket",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 27,
+        "max_z": 28.84669754625333,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/SocketGroup.rs",
+          "src/uws_sys/quic/Socket.rs",
+          "src/uws_sys/ConnectingSocket.rs",
+          "src/runtime/socket/uws_dispatch.rs",
+          "src/runtime/socket/uws_handlers.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Int8Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 23.50963168383068,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSUint8Array.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Uint8Array",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 22248,
+        "construction_style_count": 179,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 23.50963168383068,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSUint8Array.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Event",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 12,
+        "max_z": 23.208436424450817,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/event_loop/AnyTaskWithExtraContext.rs",
+          "src/event_loop/ManagedTask.rs",
+          "src/runtime/timer/EventLoopDelayMonitor.rs",
+          "src/event_loop/ConcurrentTask.rs",
+          "src/runtime/node/fs_events.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Object",
+      "seams_summary": {
+        "clusters_count": 8,
+        "cardinality_total": 28383,
+        "construction_style_count": 203,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 8,
+        "max_z": 20.781991691510417,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/api/UnsafeObject.rs",
+          "src/runtime/timer/timer_object_internals.rs",
+          "src/runtime/timer/ImmediateObject.rs",
+          "src/runtime/ffi/FFIObject.rs",
+          "src/jsc/JSObject.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "stream",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 20972,
+        "construction_style_count": 175,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 20.781991691510417,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/quic/Stream.rs",
+          "src/runtime/webcore/wasm_streaming.rs",
+          "src/http/ThreadSafeStreamBuffer.rs",
+          "src/runtime/server/FileResponseStream.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Request",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 16555,
+        "construction_style_count": 187,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 20.512506942046528,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/Request.rs",
+          "src/sql_jsc/mysql/MySQLRequestQueue.rs",
+          "src/runtime/server/AnyRequestContext.rs",
+          "src/runtime/webcore/s3/simple_request.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "C",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 507,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 18.542010643335832,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/cares_sys/c_ares.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Buffer",
+      "seams_summary": {
+        "clusters_count": 8,
+        "cardinality_total": 24459,
+        "construction_style_count": 273,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 18.106675068517397,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/MarkedArgumentBuffer.rs",
+          "src/bun_alloc/BufferFallbackAllocator.rs",
+          "src/http/ThreadSafeStreamBuffer.rs",
+          "src/jsc/array_buffer.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "String",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 15232,
+        "construction_style_count": 129,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 11,
+        "max_z": 18.106675068517397,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/CommonStrings.rs",
+          "src/jsc/StringBuilder.rs",
+          "src/jsc/JSString.rs",
+          "src/jsc/ZigString.rs",
+          "src/string/wtf.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "FormData",
+      "seams_summary": {
+        "clusters_count": 5,
+        "cardinality_total": 19940,
+        "construction_style_count": 189,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 18.099399165072132,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/DOMFormData.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Module",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 15.46013539354072,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/JSModuleLoader.rs",
+          "src/jsc/ModuleLoader.rs",
+          "src/jsc/NodeModuleModule.rs",
+          "src/bundler/analyze_transpiled_module.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Headers",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 23215,
+        "construction_style_count": 282,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 15.4428030726196,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/FetchHeaders.rs",
+          "src/http_jsc/headers_jsc.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Response",
+      "seams_summary": {
+        "clusters_count": 9,
+        "cardinality_total": 21749,
+        "construction_style_count": 217,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 14.394544303310402,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/uws_sys/Response.rs",
+          "src/runtime/server/FileResponseStream.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "crypto",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 24462,
+        "construction_style_count": 208,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 13.87499221724801,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/crypto/HMAC.rs",
+          "src/runtime/webcore/Crypto.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "File",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 21360,
+        "construction_style_count": 260,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 7,
+        "max_z": 12.556427661398123,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/BunHeapProfiler.rs",
+          "src/jsc/BunCPUProfiler.rs",
+          "src/runtime/server/FileResponseStream.rs",
+          "src/runtime/webcore/FileSink.rs",
+          "src/runtime/webcore/blob/write_file.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Promise",
+      "seams_summary": {
+        "clusters_count": 8,
+        "cardinality_total": 24994,
+        "construction_style_count": 264,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 10.885220569199223,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/AnyPromise.rs",
+          "src/runtime/api/NativePromiseContext.rs",
+          "src/jsc/ConcurrentPromiseTask.rs",
+          "src/jsc/JSPromise.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "URL",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 21394,
+        "construction_style_count": 280,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 10.765739916432729,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/URL.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "url",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 25632,
+        "construction_style_count": 271,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 10.765739916432729,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/URL.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Error",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 18873,
+        "construction_style_count": 180,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 4,
+        "max_z": 10.478160153789965,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/sys_jsc/error_jsc.rs",
+          "src/jsc/SystemError.rs",
+          "src/sys/Error.rs",
+          "src/jsc/Errorable.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "process",
+      "seams_summary": {
+        "clusters_count": 7,
+        "cardinality_total": 19115,
+        "construction_style_count": 245,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 7,
+        "max_z": 10.407947249583184,
+        "max_z_kind": "unsafe_fns",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/api/bun/subprocess/StaticPipeWriter.rs",
+          "src/runtime/webview/HostProcess.rs",
+          "src/runtime/node/node_process.rs",
+          "src/runtime/api/bun/subprocess/SubprocessPipeReader.rs",
+          "src/jsc/ProcessAutoKiller.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "AbortSignal",
+      "seams_summary": {
+        "clusters_count": 5,
+        "cardinality_total": 21375,
+        "construction_style_count": 272,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 10.106838893869984,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/AbortSignal.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Agent",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 9.725208760792723,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/jsc/HTTPServerAgent.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "events",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 25111,
+        "construction_style_count": 194,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 9.132119059508597,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/node/fs_events.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "fs",
+      "seams_summary": {
+        "clusters_count": 10,
+        "cardinality_total": 22282,
+        "construction_style_count": 259,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 9.132119059508597,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/node/fs_events.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "tls",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 20416,
+        "construction_style_count": 170,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 8.553205506475313,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/socket/tls_socket_functions.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "dns",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 3,
+        "max_z": 7.254507744357523,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/dns/lib.rs",
+          "src/runtime/dns_jsc/cares_jsc.rs",
+          "src/runtime/dns_jsc/dns.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Proxy",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 951,
+        "construction_style_count": 0,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 6.227124362422638,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/http_jsc/websocket_client/WebSocketProxyTunnel.rs",
+          "src/http/ProxyTunnel.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Worker",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 150,
+        "construction_style_count": 8,
+        "dominant_signal_name": "thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 2,
+        "max_z": 5.611123589602409,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/cli/test/parallel/Worker.rs",
+          "src/jsc/web_worker.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Date",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 18130,
+        "construction_style_count": 248,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 5.508822247774782,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/timer/DateHeaderTimer.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SocketAddress",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 5.383972764556999,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/socket/SocketAddress.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TextEncoder",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 5212,
+        "construction_style_count": 28,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 5.189091665622165,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/webcore/TextEncoder.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "util",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 15083,
+        "construction_style_count": 161,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 5.103371967121488,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/bun_core/util.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Hash",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 4.272741250420707,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/string/HashedString.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Writable",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 4.221994677236336,
+        "max_z_kind": "unsafe_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/api/bun/subprocess/Writable.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Markdown",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 3.745927098174678,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/api/MarkdownObject.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "FakeTimers",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 3.6444923910504703,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/test_runner/timers/FakeTimers.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "timers",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 3.6444923910504703,
+        "max_z_kind": "extern_blocks",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/test_runner/timers/FakeTimers.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Duplex",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": {
+        "matched_files": 1,
+        "max_z": 3.5484978405025744,
+        "max_z_kind": "raw_pointers",
+        "any_unbounded_upward": false,
+        "example_files": [
+          "src/runtime/socket/UpgradedDuplex.rs"
+        ]
+      },
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "A",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 2775,
+        "construction_style_count": 11,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ANY",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "A_2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 489,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "AbortController",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 21360,
+        "construction_style_count": 260,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Adler32",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "After",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ArrayBuffer",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "B",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 507,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Boolean",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 2286,
+        "construction_style_count": 11,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Boolean2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Boolean3",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "BroadcastChannel",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 148,
+        "construction_style_count": 7,
+        "dominant_signal_name": "thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "BufferModule",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "BunString_toThreadSafeRefCountDelta",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ByteLengthQueuingStrategy",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CJS",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1518,
+        "construction_style_count": 1,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CJSArrayLike",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1518,
+        "construction_style_count": 1,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CSI",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CSRF",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CString",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 446,
+        "construction_style_count": 1,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Chooses",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Chunks",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Class",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CloseEvent",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Console",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CountQueuingStrategy",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CryptoHasher",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CryptoKey",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CustomError",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "CustomEvent",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "D",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 446,
+        "construction_style_count": 1,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DOMException",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DataView",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Database",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Date2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Date3",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DateTime",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DecoratedAnonClass",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 18,
+        "construction_style_count": 0,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DecoratedClass",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 18,
+        "construction_style_count": 0,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Deno",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Dirent",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBAnyType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBArrayType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBBigIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBBitType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBBlobType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBBlobValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBBooleanType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBDateType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBDateValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBDecimalType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBDecimalValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBDoubleType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBEnumType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBFloatType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBHugeIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBIntegerType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBIntervalType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBListType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBMapType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBSQLNullType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBSmallIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBStructType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimeTZType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimeTZValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimeType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimeValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampMillisecondsType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampMillisecondsValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampNanosecondsType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampNanosecondsValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampSecondsType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampSecondsValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampTZType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampTZValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTimestampValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBTinyIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUBigIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUHugeIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUIntegerType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUSmallIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUTinyIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUUIDType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUUIDValue",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBUnionType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBVarCharType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "DuckDBVarIntType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ECDH",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ErrorEvent",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "EventEmitter",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "EventEmitterAsyncResource",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 406,
+        "construction_style_count": 2,
+        "dominant_signal_name": "sync+async",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "EventTarget",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "F",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "FakeInput",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "FileSystemRouter",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Float32Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Float64Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Foo",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "G",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "GlobalDate",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Greeter",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "HTMLRewriter",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 26,
+        "construction_style_count": 0,
+        "dominant_signal_name": "async|ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "HeadersIteratorNext",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "HttpsProxyAgent",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "INSPECT_MAX_BYTES",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Infinity",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 18867,
+        "construction_style_count": 180,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Int16Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Int32Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Intl",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 16290,
+        "construction_style_count": 238,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "JSON",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 24473,
+        "construction_style_count": 192,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "JSON5",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "LaCroix",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "M",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 489,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MACRO_PARAMS",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MACRO_PARAMS_SLICE",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MIMEType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Map",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 1903,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Math",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MessageChannel",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 148,
+        "construction_style_count": 7,
+        "dominant_signal_name": "thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MessageEvent",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 3887,
+        "construction_style_count": 89,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MessagePort",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 148,
+        "construction_style_count": 7,
+        "dominant_signal_name": "thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Murmur2_32",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Murmur2_64",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Murmur3_32",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MyBlob",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MyOtherBlob",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MyRequest",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "MyX509",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "NaN",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Namespace",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "NodeSocketDebugAdapter",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Number",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 24088,
+        "construction_style_count": 270,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Number2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Number3",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "OFF",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ON",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PassThrough",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Performance",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceEntry",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceMark",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceMeasure",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceObserver",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceObserverEntryList",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceResourceTiming",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceServerTiming",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PerformanceTiming",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "PropertyModifierKeyword",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "RapidHash",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "React",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadStream_",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Readable",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadableStream",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 6996,
+        "construction_style_count": 47,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadableStreamBYOBReader",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadableStreamBYOBRequest",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadableStreamDefaultController",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 14633,
+        "construction_style_count": 169,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ReadableStreamDefaultReader",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 14618,
+        "construction_style_count": 157,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "RedisClient",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Reflect",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 733,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Reflected",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "RegExp",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 1846,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ResultReturnType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "RuntimeError",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "S",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 489,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "S3Client",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 19446,
+        "construction_style_count": 173,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SHARE_ENV",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SYSTEM_ERRNO_NAMES",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 888,
+        "construction_style_count": 0,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Self",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "ServerResponse",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 446,
+        "construction_style_count": 1,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Set",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 6981,
+        "construction_style_count": 35,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SetClass",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4718,
+        "construction_style_count": 12,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SharedArrayBuffer",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1,
+        "construction_style_count": 0,
+        "dominant_signal_name": "ctor|thr",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SlowBuffer",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "StatementType",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Stats",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 18059,
+        "construction_style_count": 245,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "StatusBuilder",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "String2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SubtleCrypto",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "SuppressedError",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TLSSocket",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TextDecoder",
+      "seams_summary": {
+        "clusters_count": 6,
+        "cardinality_total": 21187,
+        "construction_style_count": 211,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TextDecoderStream",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "The",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Transform",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TransformStream",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 19313,
+        "construction_style_count": 181,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "TransformStreamDefaultController",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "URLPattern",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Uint16Array",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Uint32Array",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16012,
+        "construction_style_count": 166,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Uint8ClampedArray",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "VALID_ORDERS",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4718,
+        "construction_style_count": 12,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WRONG",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Wat",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WeakMap",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 5,
+        "construction_style_count": 0,
+        "dominant_signal_name": "ctor|weak",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WeakSet",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 5,
+        "construction_style_count": 0,
+        "dominant_signal_name": "ctor|weak",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WebAssembly",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 1840,
+        "construction_style_count": 10,
+        "dominant_signal_name": "ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WebSocketInspector",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithStatic",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 489,
+        "construction_style_count": 0,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithTypeModuleExportEsModuleAnnotation",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithTypeModuleExportEsModuleAnnotationMissingDefault",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithTypeModuleExportEsModuleAnnotationNoDefault",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithTypeModuleExportEsModuleNoAnnotation",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithoutTypeModuleExportEsModuleAnnotation",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithoutTypeModuleExportEsModuleAnnotationMissingDefault",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithoutTypeModuleExportEsModuleAnnotationNoDefault",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WithoutTypeModuleExportEsModuleNoAnnotation",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WritableStream",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 19328,
+        "construction_style_count": 193,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WritableStreamDefaultController",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WritableStreamDefaultWriter",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 14618,
+        "construction_style_count": 157,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WriteStream",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 71,
+        "construction_style_count": 3,
+        "dominant_signal_name": "cfg|ctor",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "WriteStream_",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "Wyhash",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "X509Certificate",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 20730,
+        "construction_style_count": 178,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "XxHash3",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "XxHash32",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "XxHash64",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 4695,
+        "construction_style_count": 24,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "YAML",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 18867,
+        "construction_style_count": 180,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "assert",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 18867,
+        "construction_style_count": 180,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "atob",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 18886,
+        "construction_style_count": 188,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "btoa",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "console",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "globalThis",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "http2",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "net",
+      "seams_summary": {
+        "clusters_count": 4,
+        "cardinality_total": 21008,
+        "construction_style_count": 250,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "os",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 2047,
+        "construction_style_count": 79,
+        "dominant_signal_name": "cfg",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "performance",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 16219,
+        "construction_style_count": 235,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "queueMicrotask",
+      "seams_summary": {
+        "clusters_count": 2,
+        "cardinality_total": 4714,
+        "construction_style_count": 32,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "readline",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "structuredClone",
+      "seams_summary": {
+        "clusters_count": 3,
+        "cardinality_total": 259,
+        "construction_style_count": 4,
+        "dominant_signal_name": "weak",
+        "any_architectural_signal": true
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    },
+    {
+      "surface": "v8",
+      "seams_summary": {
+        "clusters_count": 1,
+        "cardinality_total": 14172,
+        "construction_style_count": 156,
+        "dominant_signal_name": "slack",
+        "any_architectural_signal": false
+      },
+      "welch_summary": null,
+      "mismatch": null,
+      "mismatch_rationale": null
+    }
+  ]
+}

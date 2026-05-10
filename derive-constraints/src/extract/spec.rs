@@ -88,6 +88,7 @@ pub fn extract(rel_path: &str, src: &str) -> Result<TestFile> {
                     raw: body.to_string(),
                     kind: ConstraintKind::SpecInvariant,
                     subject,
+                    authority_tier: crate::extract::AuthorityTier::Spec,
                 });
                 test.line_end = line_num;
             }

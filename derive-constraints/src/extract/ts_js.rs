@@ -549,11 +549,16 @@ fn classify_constraint(node: &Node, src: &[u8], bindings: &BindingMap) -> Option
                 if text(&inner_func, src) == "expect" {
                     let raw = collapse(&text(node, src));
                     let subject = expect_subject(&object, src, bindings);
+                    let authority_tier = crate::extract::classify_authority_tier(
+                        subject.as_deref(),
+                        ConstraintKind::ExpectChain,
+                    );
                     return Some(ConstraintClause {
                         line: node.start_position().row as u32 + 1,
                         raw,
                         kind: ConstraintKind::ExpectChain,
                         subject,
+                        authority_tier,
                     });
                 }
             }
@@ -565,11 +570,16 @@ fn classify_constraint(node: &Node, src: &[u8], bindings: &BindingMap) -> Option
             if text(&object, src) == "assert" {
                 let raw = collapse(&text(node, src));
                 let subject = first_call_arg_subject(node, src, bindings);
+                let authority_tier = crate::extract::classify_authority_tier(
+                    subject.as_deref(),
+                    ConstraintKind::AssertCall,
+                );
                 return Some(ConstraintClause {
                     line: node.start_position().row as u32 + 1,
                     raw,
                     kind: ConstraintKind::AssertCall,
                     subject,
+                    authority_tier,
                 });
             }
         }
@@ -579,11 +589,16 @@ fn classify_constraint(node: &Node, src: &[u8], bindings: &BindingMap) -> Option
         if ASSERT_NAMES.contains(&head.as_str()) {
             let raw = collapse(&text(node, src));
             let subject = first_call_arg_subject(node, src, bindings);
+            let authority_tier = crate::extract::classify_authority_tier(
+                subject.as_deref(),
+                ConstraintKind::AssertCall,
+            );
             return Some(ConstraintClause {
                 line: node.start_position().row as u32 + 1,
                 raw,
                 kind: ConstraintKind::AssertCall,
                 subject,
+                authority_tier,
             });
         }
     }

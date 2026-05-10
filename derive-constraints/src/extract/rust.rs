@@ -136,11 +136,16 @@ impl<'ast, 'a> Visit<'ast> for ClauseVisitor<'a> {
             let raw = format!("{}!({})", macro_name, mac.tokens.to_string());
             // Heuristic subject: first identifier in the macro tokens.
             let subject = first_identifier(&mac.tokens.to_string());
+            let authority_tier = crate::extract::classify_authority_tier(
+                subject.as_deref(),
+                ConstraintKind::AssertMacro,
+            );
             self.out.push(ConstraintClause {
                 line,
                 raw: collapse(&raw),
                 kind: ConstraintKind::AssertMacro,
                 subject,
+                authority_tier,
             });
         }
         visit::visit_macro(self, mac);

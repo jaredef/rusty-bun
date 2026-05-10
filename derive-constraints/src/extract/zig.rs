@@ -143,11 +143,17 @@ fn capture_clause(re: &Regex, line: &str, lineno: u32) -> Option<ConstraintClaus
     let verb = m.get(1)?.as_str().to_string();
     let raw = collapse(line.trim());
     let subject = extract_call_arg(&raw);
+    let subject = Some(format!("testing.{}/{}", verb, subject.unwrap_or_default()));
+    let authority_tier = crate::extract::classify_authority_tier(
+        subject.as_deref(),
+        ConstraintKind::ZigTestingExpect,
+    );
     Some(ConstraintClause {
         line: lineno,
         raw,
         kind: ConstraintKind::ZigTestingExpect,
-        subject: Some(format!("testing.{}/{}", verb, subject.unwrap_or_default())),
+        subject,
+        authority_tier,
     })
 }
 

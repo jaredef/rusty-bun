@@ -37,8 +37,9 @@ Eight phases: scan → cluster → invert → seams → couple → (derivation b
 - **Consumer expectation** (dependency-survey; from cited consumer source)
 - **WPT entry** (conformance-suite; subset of consumer corpus)
 - **Implementation-source probe** (architectural-witness; from welch/seams analysis)
+- **Runtime-integration probe** (host-binding-witness; from `host/` integration tests)
 
-Each carries different bidirectional information per Doc 707.
+Each carries different bidirectional information per Doc 707. The runtime-integration pin is added as of 2026-05-10 — when a pilot's API is wired into the JS host, the binding shape becomes a probe in its own right. Forward direction: the binding constrains the pilot's API to be JS-host-friendly. Backward direction: the binding reveals which APIs require adaptation (e.g., the QuickJS-GC + stateful-types finding at A8 below).
 
 ### A3. Three-tier authority taxonomy
 
@@ -62,6 +63,18 @@ Every pipeline run lands at `runs/<date>-<corpus>-<version>/RUN-NOTES.md`. Every
 
 `specs/*.spec.md` is curated content but is read by the same `derive-constraints scan` pass that reads test corpora. Spec material flows through cluster / invert / seams identically to test-derived clauses, distinguishable by their `language: spec` tag.
 
+### A8. JS host integration pattern: stateless Rust + JS-side classes
+
+For Sub-criterion 4 of the completion telos (JS host integration), pilots wire into JS through `host/` per the pattern documented at `host/HOST-INTEGRATION-PATTERN.md`:
+
+1. **Pure-value pilot APIs wire directly.** Rust functions that take and return owned values (atob/btoa, path.basename, crypto.randomUUID, fs.readFileSyncUtf8) bind via `Function::new(ctx.clone(), |args| -> result {...})` with no closure-captured state. The JS-side calls them as plain functions or namespaced methods.
+
+2. **Stateful pilot APIs wire indirectly: stateless Rust helpers + JS-side class.** Rust closures that capture `Rc<RefCell<...>>` and are stored as methods on JS objects break QuickJS' GC (it does not track Rust references). Instead: expose a private `__namespace` of stateless Rust helper functions; install a JS-side class via `ctx.eval()` that holds its own state in pure-JS arrays/objects and calls into the Rust helpers for algorithm work. URLSearchParams + TextEncoder + TextDecoder use this pattern; future stateful types (Blob, File, Headers, Request, Response, AbortController, structuredClone-Heap) MUST follow it.
+
+3. **Optional-arg semantics: JS omits, doesn't pass undefined.** rquickjs `Opt<T>` requires the JS-side to OMIT the argument, not pass `undefined`. JS-side classes that delegate to Rust helpers must branch: `if (val === undefined) call(without arg) else call(with arg)`.
+
+4. **Testing surface:** every wired pilot has at least one JS-side integration test in `host/tests/integration.rs` plus appears in `host/examples/runtime-demo.js`. The workspace runner (`./bin/run-pilots.sh`) covers the host suite alongside per-pilot suites.
+
 ## IV. Future-move discipline
 
 **M1. Pilot prioritization.** The next pilot is chosen from the trajectory's queue. Selection criteria, in order:
@@ -77,6 +90,8 @@ Every pipeline run lands at `runs/<date>-<corpus>-<version>/RUN-NOTES.md`. Every
 **M4. Bigger pilots are run only after the hardening floor is firm.** A pilot like Bun.serve or Buffer (Tier-2, large) is attempted only when smaller pilots have validated the apparatus class structure for that pattern. Don't scale to 6,000-LOC reference targets until 300-LOC reference targets are clean.
 
 **M5. Deferred items have explicit re-open conditions.** Per Doc 581 D4. "Reopen when X obtains" — not "someday."
+
+**M6. Host-wirability is a pilot design constraint.** New pilots' Rust APIs are designed to wire cleanly through the JS host pattern (A8). Concretely: prefer pure-value APIs; avoid `Rc<RefCell<...>>` in public interfaces; stateful types should provide stateless algorithm helpers alongside their owned-state types so the host can wire the helpers without adapting the type's storage. A pilot is "host-wirable" when its public API can be exposed via `host/` with no apparatus refinements — verifying this is a pilot-completion check.
 
 ## V. Deferred-list discipline
 

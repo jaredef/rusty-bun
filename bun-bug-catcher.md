@@ -229,11 +229,23 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Spec.** WHATWG Streams §4.tee.cancel. The source's cancel callback fires only once, and only when both tee branches have cancelled.
 - **Suggested action.** Contribute a Bun test that cancels branch A, then branch B, and asserts the source's cancel callback fired exactly once.
 
+### E4. JS-host stateful types: Rust closures capturing Rc<RefCell> stored on JS objects break QuickJS' GC
+- **Source.** `host/RUN-NOTES.md` § "Findings" #1 — surfaced during the rusty-bun-host JS integration iteration on 2026-05-10. QuickJS asserts `list_empty(&rt->gc_obj_list)` at runtime drop because its GC does not track Rust-side references that JS objects hold transitively.
+- **Triggering pattern.** `Function::new(ctx.clone(), move |...| { state.borrow_mut().method() })` where `state` is `Rc<RefCell<...>>`, the Function is stored on a JS Object, and Rust's drop happens after JS' drop.
+- **Severity.** Apparatus-side; relevant to any project binding Rust state to a JS host (Bun's own JSC bindings; Deno's V8 bindings; future runtime-derivation projects). Not a Bun bug; an integration discipline.
+- **Suggested action.** Document the alternative pattern (stateless Rust helpers + JS-side class holding pure-JS state) anywhere a team is binding a Rust API into a JS host. The rusty-bun apparatus' formalization is at `host/HOST-INTEGRATION-PATTERN.md`. Bun's own JSC bindings already use a similar pattern (state on the JS-side via JSC class infrastructure); the finding is more relevant to greenfield Rust-to-JS integrations.
+
+### E5. rquickjs Opt<T> requires JS-side arity omission, not undefined-as-value
+- **Source.** `host/RUN-NOTES.md` § "Findings" #2.
+- **Triggering pattern.** A JS class wrapper passes `this._optionalField` to a Rust function expecting `Opt<T>`. When the field is undefined, rquickjs converts undefined → T directly and errors with "Error converting from js 'undefined' into type 'X'".
+- **Severity.** Apparatus-side; rquickjs-specific.
+- **Suggested action.** Apply the JS-side branching pattern documented at `host/HOST-INTEGRATION-PATTERN.md` whenever a JS class delegates to a Rust function with optional arguments. Not directly relevant to Bun's JSC bindings (different binding crate with different optional-arg semantics) but useful to other projects evaluating rquickjs for Rust-to-JS bindings.
+
 ---
 
 ## How this catalogue is maintained
 
-The catalogue is updated as new pilots run. Each pilot's RUN-NOTES.md cross-references findings here. Categories A and C grow with consumer-regression pilots (per Doc 707's bidirectional reading); B is rare and stable; D is provisional and items move to A or get deleted as they're investigated; E grows with verifier-caught derivation bugs.
+The catalogue is updated as new pilots run. Each pilot's RUN-NOTES.md cross-references findings here. Categories A and C grow with consumer-regression pilots (per Doc 707's bidirectional reading); B is rare and stable; D is provisional and items move to A or get deleted as they're investigated; E grows with verifier-caught derivation bugs **and runtime-integration-pin findings** (the JS-host iteration on 2026-05-10 was the first session that contributed E entries from a non-pilot source).
 
 Bun maintainers are welcome to use any of these directly, link to them in commits/issues, or ignore them. The apparatus produces them as a by-product of derivation work; the cost to surface them is low; their value is whatever Bun's discretion finds.
 

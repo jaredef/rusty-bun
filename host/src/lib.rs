@@ -2930,6 +2930,39 @@ pub fn eval_i64(source: &str) -> Result<i64, String> {
     })
 }
 
+/// Load `entry_path` as a CommonJS module via bootRequire, drive the
+/// microtask queue, then read `globalThis.__asyncResult` as a string.
+/// Used for Tier-J consumer fixtures that complete asynchronously.
+pub fn eval_cjs_module_async(entry_path: &str) -> Result<String, String> {
+    let (runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
+    let bootstrap = format!(
+        r#"globalThis.__asyncResult = undefined;
+        globalThis.__asyncError = undefined;
+        bootRequire({});"#,
+        serde_json::to_string(entry_path).unwrap()
+    );
+    context.with(|ctx| -> Result<(), String> {
+        ctx.eval::<(), _>(bootstrap.as_str())
+            .map_err(|e| format!("boot: {:?}", e))
+    })?;
+    for _ in 0..1_000_000 {
+        match runtime.execute_pending_job() {
+            Ok(true) => continue,
+            Ok(false) => break,
+            Err(_) => break,
+        }
+    }
+    context.with(|ctx| -> Result<String, String> {
+        let g = ctx.globals();
+        let err: Option<String> = g.get::<_, Option<String>>("__asyncError")
+            .map_err(|e| format!("read err: {:?}", e))?;
+        if let Some(e) = err { return Err(format!("js error: {}", e)); }
+        let res: Option<String> = g.get::<_, Option<String>>("__asyncResult")
+            .map_err(|e| format!("read result: {:?}", e))?;
+        res.ok_or_else(|| "module did not set __asyncResult".to_string())
+    })
+}
+
 /// Evaluate the ESM module at `entry_path` (absolute path); after the
 /// module's top-level executes, read `globalThis.__esmResult` as a string.
 /// Tier-H.3 #2: ESM with node-style resolution.
@@ -2945,7 +2978,7 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
             .map_err(|e| format!("declare entry: {:?}", e))?;
         Ok(())
     })?;
-    for _ in 0..10_000 {
+    for _ in 0..1_000_000 {
         match runtime.execute_pending_job() {
             Ok(true) => continue,
             Ok(false) => break,

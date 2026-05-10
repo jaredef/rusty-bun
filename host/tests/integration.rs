@@ -2127,3 +2127,20 @@ fn js_consumer_todo_api_runs_clean() {
     assert!(result.starts_with("10/10"),
         "consumer self-test failed: {}", result);
 }
+
+// ════════════════════ Tier-J #2: stream-processor consumer (CJS) ═════════
+//
+// Orthogonal axis from Tier-J #1: CJS instead of ESM, async-heavy
+// pipeline (streams + AbortController + setTimeout + fs across module
+// boundaries).
+
+use rusty_bun_host::eval_cjs_module_async;
+
+#[test]
+fn js_consumer_stream_processor_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-stream-processor/index.js");
+    let result = eval_cjs_module_async(fixture.to_str().unwrap()).unwrap();
+    assert!(result.starts_with("8/8"),
+        "consumer self-test failed: {}", result);
+}

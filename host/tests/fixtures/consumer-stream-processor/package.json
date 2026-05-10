@@ -1,0 +1,6 @@
+{
+  "name": "consumer-stream-processor",
+  "version": "0.1.0",
+  "description": "Tier-J consumer-shape pilot #2 (CJS): a stream-processing pipeline exercising ReadableStream + TransformStream + WritableStream + AbortController + setTimeout + fs across CJS module boundaries.",
+  "main": "./index.js"
+}

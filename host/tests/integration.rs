@@ -1370,3 +1370,184 @@ fn js_compose_streams_canonical_pattern() {
     "#).unwrap();
     assert_eq!(r, "1,4,9,16,25");
 }
+
+// ════════════════════ node:http data-layer ════════════════════
+
+#[test]
+fn js_node_http_create_server() {
+    let r = eval_i64(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.writeHead(200, {"content-type": "text/plain"});
+            res.end("hello");
+        });
+        server.listen(3000);
+        server.port
+    "#).unwrap();
+    assert_eq!(r, 3000);
+}
+
+#[test]
+fn js_node_http_dispatch_basic() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.writeHead(200);
+            res.end("ok");
+        });
+        const res = server.dispatch({method: "GET", url: "/"});
+        res.statusCode + ":" + res.body()
+    "#).unwrap();
+    assert_eq!(r, "200:ok");
+}
+
+#[test]
+fn js_node_http_response_headers_lowercased() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("X-Custom", "value");
+            res.end();
+        });
+        const res = server.dispatch({method: "GET", url: "/"});
+        res.getHeader("content-type") + "|" + res.getHeader("X-CUSTOM")
+    "#).unwrap();
+    assert_eq!(r, "application/json|value");
+}
+
+#[test]
+fn js_node_http_request_url_method() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.end(req.method + " " + req.url);
+        });
+        const res = server.dispatch({method: "POST", url: "/api/users"});
+        res.body()
+    "#).unwrap();
+    assert_eq!(r, "POST /api/users");
+}
+
+#[test]
+fn js_node_http_incoming_message_headers_case_insensitive() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.end(req.headers["content-type"]);
+        });
+        const res = server.dispatch({
+            method: "POST", url: "/",
+            headers: { "Content-Type": "text/plain" }
+        });
+        res.body()
+    "#).unwrap();
+    assert_eq!(r, "text/plain");
+}
+
+#[test]
+fn js_node_http_write_head_with_status_message() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.writeHead(404, "Not Found", {"x-source": "pilot"});
+            res.end("missing");
+        });
+        const res = server.dispatch({method: "GET", url: "/missing"});
+        res.statusCode + ":" + res.statusMessage + ":" + res.getHeader("x-source")
+    "#).unwrap();
+    assert_eq!(r, "404:Not Found:pilot");
+}
+
+#[test]
+fn js_node_http_write_chunks_then_end() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            res.write("hello ");
+            res.write("world");
+            res.end("!");
+        });
+        const res = server.dispatch({method: "GET", url: "/"});
+        res.body() + ":" + res.ended
+    "#).unwrap();
+    assert_eq!(r, "hello world!:true");
+}
+
+#[test]
+fn js_node_http_close_transitions_state() {
+    let r = eval_bool(r#"
+        const server = nodeHttp.createServer(() => {});
+        server.listen(8080);
+        const wasListening = server.listening;
+        server.close();
+        wasListening && !server.listening
+    "#).unwrap();
+    assert!(r);
+}
+
+#[test]
+fn js_node_http_client_request_construction() {
+    let r = eval_string(r#"
+        const req = nodeHttp.request({
+            method: "POST",
+            url: "/api/data",
+            headers: { "Content-Type": "application/json" }
+        });
+        req.write('{"a":1}');
+        req.end();
+        req.method + " " + req.url + " " + req.getHeader("content-type") + " " + req.body()
+    "#).unwrap();
+    assert_eq!(r, "POST /api/data application/json {\"a\":1}");
+}
+
+#[test]
+fn js_node_http_request_string_url_form() {
+    let r = eval_string(r#"
+        const req = nodeHttp.request("/health");
+        req.method + " " + req.url
+    "#).unwrap();
+    assert_eq!(r, "GET /health");
+}
+
+#[test]
+fn js_node_http_on_request_event_form() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer();
+        server.on("request", (req, res) => {
+            res.end("via on");
+        });
+        server.dispatch({method: "GET", url: "/"}).body()
+    "#).unwrap();
+    assert_eq!(r, "via on");
+}
+
+// Canonical-docs composition test: the Node.js docs flagship example.
+#[test]
+fn js_compose_node_http_canonical_pattern() {
+    let r = eval_string(r#"
+        // From nodejs.org/api/http.html — flagship createServer example.
+        const hostname = '127.0.0.1';
+        const port = 3000;
+        const server = nodeHttp.createServer((req, res) => {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'text/plain');
+            res.end('Hello World');
+        });
+        server.listen(port);
+        // Real consumers exercise via HTTP. Pilot data-layer: dispatch.
+        const res = server.dispatch({method: "GET", url: "/", headers: {host: hostname}});
+        res.statusCode + "|" + res.getHeader("content-type") + "|" + res.body() + "|" + server.port
+    "#).unwrap();
+    assert_eq!(r, "200|text/plain|Hello World|3000");
+}
+
+// Cross-pilot composition: node-http server emitting a Response shape.
+#[test]
+fn js_compose_node_http_with_url_search_params() {
+    let r = eval_string(r#"
+        const server = nodeHttp.createServer((req, res) => {
+            const queryStart = req.url.indexOf("?");
+            const query = queryStart >= 0 ? req.url.substring(queryStart + 1) : "";
+            const params = new URLSearchParams(query);
+            res.writeHead(200, {"content-type": "text/plain"});
+            res.end("user=" + (params.get("user") || "guest"));
+        });
+        const res = server.dispatch({method: "GET", url: "/?user=alice"});
+        res.body()
+    "#).unwrap();
+    assert_eq!(r, "user=alice");
+}

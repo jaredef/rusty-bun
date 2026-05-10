@@ -60,6 +60,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_bun_spawn_js(&ctx)?;
     install_structured_clone_js(&ctx)?;
     install_streams_js(&ctx)?;
+    install_node_http_js(&ctx)?;
     Ok(())
 }
 
@@ -1814,6 +1815,219 @@ const STREAMS_JS: &str = r#"
 
 fn install_streams_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(STREAMS_JS)?;
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// node-http data-layer — JS-side wiring (Pattern 4)
+// ════════════════════════════════════════════════════════════════════════
+//
+// node-http's pilot is data-only: NodeHeaders + IncomingMessage +
+// ServerResponse + ClientRequest + Server with no transport. All state
+// is plain values; the only algorithm is case-insensitive header
+// normalization (lowercased keys per Node API). Per seed §III.A8.2bis,
+// wires as JS-side reimplementation against the same constraint set.
+//
+// Provides node:http data-layer surface accessible as `nodeHttp.*` on
+// globalThis. Real consumers would import from "node:http"; module
+// resolution is Tier-H.3 (deferred).
+
+const NODE_HTTP_JS: &str = r#"
+(function() {
+    function makeHeaders() {
+        // Node represents headers as plain object with lowercased keys.
+        // Multi-value headers stored as arrays per Node convention for
+        // set-cookie etc.; pilot scope keeps single-value semantics.
+        return Object.create(null);
+    }
+
+    function normalizeName(name) {
+        return String(name).toLowerCase();
+    }
+
+    function setHeader(headers, name, value) {
+        headers[normalizeName(name)] = String(value);
+    }
+
+    function getHeader(headers, name) {
+        return headers[normalizeName(name)];
+    }
+
+    function removeHeader(headers, name) {
+        delete headers[normalizeName(name)];
+    }
+
+    class IncomingMessage {
+        constructor(init = {}) {
+            this.method = init.method || "GET";
+            this.url = init.url || "/";
+            this.httpVersion = init.httpVersion || "1.1";
+            this.headers = makeHeaders();
+            if (init.headers) {
+                for (const k of Object.keys(init.headers)) {
+                    setHeader(this.headers, k, init.headers[k]);
+                }
+            }
+            this.statusCode = init.statusCode || 0;
+            this.statusMessage = init.statusMessage || "";
+            this._body = init.body || "";
+            this.complete = init.complete !== undefined ? init.complete : true;
+        }
+    }
+
+    class ServerResponse {
+        constructor() {
+            this.statusCode = 200;
+            this.statusMessage = "OK";
+            this._headers = makeHeaders();
+            this._body = [];
+            this.headersSent = false;
+            this.ended = false;
+        }
+        writeHead(statusCode, statusMessage, headers) {
+            if (this.headersSent) return this;
+            this.statusCode = statusCode;
+            // statusMessage is optional; if it's an object it's the headers arg.
+            if (typeof statusMessage === "object" && statusMessage !== null) {
+                headers = statusMessage;
+                statusMessage = undefined;
+            }
+            if (statusMessage !== undefined) this.statusMessage = String(statusMessage);
+            if (headers) {
+                for (const k of Object.keys(headers)) {
+                    setHeader(this._headers, k, headers[k]);
+                }
+            }
+            this.headersSent = true;
+            return this;
+        }
+        setHeader(name, value) { setHeader(this._headers, name, value); return this; }
+        getHeader(name) { return getHeader(this._headers, name); }
+        removeHeader(name) { removeHeader(this._headers, name); return this; }
+        getHeaders() { return Object.assign({}, this._headers); }
+        write(chunk) {
+            if (this.ended) return false;
+            this.headersSent = true;
+            this._body.push(String(chunk));
+            return true;
+        }
+        end(chunk) {
+            if (this.ended) return this;
+            if (chunk !== undefined) this._body.push(String(chunk));
+            this.headersSent = true;
+            this.ended = true;
+            return this;
+        }
+        // Pilot helper: serialize body to string.
+        body() { return this._body.join(""); }
+    }
+
+    class ClientRequest {
+        constructor(method, url) {
+            this.method = method;
+            this.url = url;
+            this._headers = makeHeaders();
+            this._body = [];
+            this.aborted = false;
+            this.ended = false;
+        }
+        setHeader(name, value) { setHeader(this._headers, name, value); return this; }
+        getHeader(name) { return getHeader(this._headers, name); }
+        write(chunk) {
+            if (this.aborted || this.ended) return false;
+            this._body.push(String(chunk));
+            return true;
+        }
+        end(chunk) {
+            if (this.aborted || this.ended) return this;
+            if (chunk !== undefined) this._body.push(String(chunk));
+            this.ended = true;
+            return this;
+        }
+        abort() { this.aborted = true; return this; }
+        getHeaders() { return Object.assign({}, this._headers); }
+        body() { return this._body.join(""); }
+    }
+
+    class Server {
+        constructor(handler) {
+            this._handler = handler || null;
+            this._port = 0;
+            this._listening = false;
+            this._closed = false;
+        }
+        on(event, handler) {
+            if (event === "request") this._handler = handler;
+            return this;
+        }
+        listen(port, cb) {
+            this._port = port;
+            this._listening = true;
+            if (typeof cb === "function") {
+                Promise.resolve().then(cb);
+            }
+            return this;
+        }
+        close(cb) {
+            this._listening = false;
+            this._closed = true;
+            if (typeof cb === "function") {
+                Promise.resolve().then(cb);
+            }
+            return this;
+        }
+        get listening() { return this._listening; }
+        get port() { return this._port; }
+        // Pilot-only invocation: route a synthetic IncomingMessage through
+        // the handler and return the populated ServerResponse. Real Node
+        // delivers via socket; this is data-layer dispatch.
+        dispatch(req) {
+            const incoming = req instanceof IncomingMessage ? req : new IncomingMessage(req);
+            const res = new ServerResponse();
+            if (this._handler) this._handler(incoming, res);
+            return res;
+        }
+    }
+
+    function createServer(handler) {
+        return new Server(handler);
+    }
+
+    function request(options, cb) {
+        // Accept both string-url and options-object forms per Node.
+        const opts = typeof options === "string"
+            ? { method: "GET", url: options }
+            : options;
+        const req = new ClientRequest(opts.method || "GET", opts.url || opts.path || "/");
+        if (opts.headers) {
+            for (const k of Object.keys(opts.headers)) {
+                setHeader(req._headers, k, opts.headers[k]);
+            }
+        }
+        // Per Node API, the response callback is invoked when the response
+        // arrives. Pilot data-layer cannot actually send; if a cb is given,
+        // it gets a stub IncomingMessage with status 0 to indicate no
+        // transport occurred. Real wiring requires Tier-G.
+        if (typeof cb === "function") {
+            Promise.resolve().then(() =>
+                cb(new IncomingMessage({ statusCode: 0, statusMessage: "no-transport" })));
+        }
+        return req;
+    }
+
+    globalThis.nodeHttp = {
+        createServer,
+        request,
+        IncomingMessage,
+        ServerResponse,
+        ClientRequest,
+        Server,
+    };
+})();
+"#;
+
+fn install_node_http_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(NODE_HTTP_JS)?;
     Ok(())
 }
 

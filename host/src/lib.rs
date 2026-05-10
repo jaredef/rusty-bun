@@ -223,7 +223,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:http" | "http" |
         "node:crypto" | "crypto" |
         "node:buffer" | "buffer" |
-        "node:url" | "url"
+        "node:url" | "url" |
+        "node:os" | "os"
     )
 }
 
@@ -242,6 +243,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:crypto" | "crypto" => ("crypto", &["randomUUID", "subtle"]),
         "node:buffer" | "buffer" => ("Buffer", &[]),  // see special handling below
         "node:url" | "url" => ("URL", &[]),
+        "node:os" | "os" => ("os", &["platform", "arch", "type", "tmpdir",
+            "homedir", "hostname", "endianness", "EOL"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -281,6 +284,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_console(&ctx, &global)?;
     wire_atob_btoa(&ctx, &global)?;
     wire_path(&ctx, &global)?;
+    wire_os(&ctx, &global)?;
     wire_crypto(&ctx, &global)?;
     wire_text_encoding(&ctx, &global)?;
     wire_buffer(&ctx, &global)?;
@@ -393,6 +397,61 @@ fn wire_atob_btoa<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResu
 }
 
 // ─────────────────── path ────────────────────────────────────────────
+
+fn wire_os<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // node:os data-layer. Bun-portable subset: platform, arch, type,
+    // tmpdir, homedir, hostname, EOL, endianness.
+    let os = Object::new(ctx.clone())?;
+    os.set("platform", Function::new(ctx.clone(), || -> &'static str {
+        // Node.js convention: "linux", "darwin", "win32", etc.
+        if cfg!(target_os = "linux") { "linux" }
+        else if cfg!(target_os = "macos") { "darwin" }
+        else if cfg!(target_os = "windows") { "win32" }
+        else if cfg!(target_os = "freebsd") { "freebsd" }
+        else if cfg!(target_os = "openbsd") { "openbsd" }
+        else { "unknown" }
+    })?)?;
+    os.set("arch", Function::new(ctx.clone(), || -> &'static str {
+        // Node.js convention: "x64", "arm64", "arm", "ia32", etc.
+        if cfg!(target_arch = "x86_64") { "x64" }
+        else if cfg!(target_arch = "aarch64") { "arm64" }
+        else if cfg!(target_arch = "arm") { "arm" }
+        else if cfg!(target_arch = "x86") { "ia32" }
+        else { "unknown" }
+    })?)?;
+    os.set("type", Function::new(ctx.clone(), || -> &'static str {
+        // Node.js: returns the OS name like uname -s.
+        if cfg!(target_os = "linux") { "Linux" }
+        else if cfg!(target_os = "macos") { "Darwin" }
+        else if cfg!(target_os = "windows") { "Windows_NT" }
+        else if cfg!(target_os = "freebsd") { "FreeBSD" }
+        else if cfg!(target_os = "openbsd") { "OpenBSD" }
+        else { "Unknown" }
+    })?)?;
+    os.set("tmpdir", Function::new(ctx.clone(), || -> String {
+        std::env::temp_dir().to_string_lossy().into_owned()
+    })?)?;
+    os.set("homedir", Function::new(ctx.clone(), || -> String {
+        std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "/".to_string())
+    })?)?;
+    os.set("hostname", Function::new(ctx.clone(), || -> String {
+        std::env::var("HOSTNAME")
+            .or_else(|_| {
+                // POSIX fallback via /etc/hostname; final fallback "localhost".
+                std::fs::read_to_string("/etc/hostname")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .unwrap_or_else(|_| "localhost".to_string())
+    })?)?;
+    os.set("endianness", Function::new(ctx.clone(), || -> &'static str {
+        if cfg!(target_endian = "little") { "LE" } else { "BE" }
+    })?)?;
+    os.set("EOL", if cfg!(target_os = "windows") { "\r\n" } else { "\n" })?;
+    global.set("os", os)?;
+    Ok(())
+}
 
 fn wire_path<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     let p = Object::new(ctx.clone())?;
@@ -2630,6 +2689,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "crypto": () => globalThis.crypto,
         "node:buffer": () => ({ Buffer: globalThis.Buffer }),
         "buffer": () => ({ Buffer: globalThis.Buffer }),
+        "node:os": () => globalThis.os,
+        "os": () => globalThis.os,
     };
 
     function loadModule(absPath) {

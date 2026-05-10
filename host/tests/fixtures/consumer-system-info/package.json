@@ -1,0 +1,8 @@
+{
+  "name": "consumer-system-info",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #11: system-info reporter using node:os. Real consumer-shape: query system facts, format report.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

@@ -267,6 +267,7 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Source.** Direct probe 2026-05-10. Compound finding: five Bun-platform globals/namespaces absent from rusty-bun-host while present in Bun 1.3.11:
   - `Intl` (+ `Intl.NumberFormat`, `Intl.DateTimeFormat`, `Intl.Collator`): internationalization namespace. QuickJS can be built with Intl support via ICU but rquickjs default does not link it.
   - `Bun.password` (and `Bun.sql`): Bun extension APIs for password hashing / SQLite. Not part of the rusty-bun Bun-namespace wiring (which covers `Bun.serve`, `Bun.spawn`, `Bun.file` data-layer).
+  - ~~`node:os`~~ **CLOSED 2026-05-10**: wired in host's `wire_os` covering platform/arch/type/tmpdir/homedir/hostname/endianness/EOL via std::env + cfg!(); CJS/ESM `require("node:os")` and `import os from "node:os"` both work; consumer-system-info fixture differentially verified.
   - `WebSocket`: transport-tier global. Requires socket binding (Tier-G).
   - `BroadcastChannel`: messaging-between-contexts. Requires shared-state infrastructure.
   - `Worker`: threading global. Requires actual thread spawning.

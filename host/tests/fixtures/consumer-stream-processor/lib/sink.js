@@ -1,5 +1,6 @@
-// Sink module. Writes records to a file via fs, returning a Promise
-// that resolves with the count of records written.
+// Sink module. Writes records to a file via node:fs, returning a
+// WritableStream and a count getter.
+const fs = require("node:fs");
 
 function makeFileSink(path) {
     const lines = [];

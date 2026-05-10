@@ -786,6 +786,29 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
         })?,
     )?;
     global.set("fs", fs)?;
+    // Node/Bun-portable readFileSync(path, encoding|options) override.
+    // The Rust binding for readFileSync errors out telling you to use
+    // readFileSyncUtf8/Bytes; this JS layer dispatches based on encoding
+    // so consumer code using the standard Node shape just works.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const orig = globalThis.fs;
+            orig.readFileSync = function readFileSync(path, options) {
+                let encoding;
+                if (typeof options === "string") encoding = options;
+                else if (options && typeof options === "object") encoding = options.encoding;
+                if (encoding === "utf8" || encoding === "utf-8") {
+                    return orig.readFileSyncUtf8(path);
+                }
+                if (encoding === undefined || encoding === null) {
+                    // Node default: return Buffer (raw bytes).
+                    const bytes = orig.readFileSyncBytes(path);
+                    return typeof Buffer !== "undefined" ? Buffer.from(bytes) : bytes;
+                }
+                throw new Error("readFileSync: unsupported encoding " + encoding);
+            };
+        })();
+    "#)?;
     Ok(())
 }
 

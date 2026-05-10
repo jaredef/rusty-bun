@@ -1,14 +1,18 @@
-// Tier-J consumer #2 (CJS): stream-processing pipeline.
+// Tier-J consumer #2 (CJS, post-M8 reconciliation): Bun-portable
+// stream-processing pipeline. Exercises ReadableStream + TransformStream
+// + WritableStream + AbortController + setTimeout + node:fs + node:Buffer
+// + URL across CJS module boundaries.
 //
-// Exercises orthogonal pilots from Tier-J #1:
-//   - CJS module loading (require + module.exports across boundaries)
-//   - ReadableStream / TransformStream / WritableStream composition
-//   - AbortController / AbortSignal coordinating cancellation
-//   - setTimeout for deferred work + Promise chains
-//   - fs.writeFileSync / readFileSyncUtf8 for I/O sink
-//   - Headers building from a derived count
-//   - Buffer for hex encoding of a digest-like summary
+// Bun-portability achieved via three reconciliations (M8(a) alignments):
+//   - require("node:fs") instead of global fs (rusty-bun-host's CJS
+//     loader maps node:fs to the wired fs global)
+//   - Buffer.from(...).toString("hex") instead of Buffer.encodeHex (the
+//     Buffer class wraps Uint8Array with Bun-portable .toString)
+//   - process.stdout.write for result emission (Bun-portable; rusty-bun-
+//     host's bootRequire path doesn't capture stdout, so a fallback to
+//     globalThis.__asyncResult is kept for the host-internal test path)
 
+const fs = require("node:fs");
 const { makeRecordStream } = require("./lib/source");
 const { makeFilterTransform, makeMapTransform } = require("./lib/transform");
 const { makeFileSink } = require("./lib/sink");
@@ -22,13 +26,11 @@ async function runPipeline(records, outPath, signal) {
     const doubled = makeMapTransform((r) => ({ id: r.id, value: r.value * 2 }));
     const sink = makeFileSink(outPath);
 
-    // Manually pipe source → evenOnly → doubled → sink (pipeTo deferred).
     const sourceReader = source.getReader();
     const evenWriter = evenOnly.writable.getWriter();
     const doubledWriter = doubled.writable.getWriter();
     const sinkWriter = sink.stream.getWriter();
 
-    // source → evenOnly.writable
     (async () => {
         while (true) {
             if (signal && signal.aborted) {
@@ -41,7 +43,6 @@ async function runPipeline(records, outPath, signal) {
         }
     })();
 
-    // evenOnly.readable → doubled.writable
     (async () => {
         const r = evenOnly.readable.getReader();
         while (true) {
@@ -51,7 +52,6 @@ async function runPipeline(records, outPath, signal) {
         }
     })();
 
-    // doubled.readable → sink
     const r = doubled.readable.getReader();
     while (true) {
         const { value, done } = await r.read();
@@ -66,7 +66,6 @@ async function selfTest() {
     const results = [];
     const outPath = "/tmp/rusty-bun-stream-processor-out.json";
 
-    // 1. Pipeline runs end-to-end and writes correct count.
     const records = [
         { id: "a", value: 1 },
         { id: "b", value: 2 },
@@ -77,13 +76,12 @@ async function selfTest() {
     const count = await runPipeline(records, outPath, null);
     results.push(["pipeline-count", count === 3]);
 
-    // 2. File contains the doubled values.
-    const written = fs.readFileSyncUtf8(outPath);
+    // Read written output. Bun-portable signature: readFileSync(path, "utf8").
+    const written = fs.readFileSync(outPath, "utf8");
     const lines = written.trim().split("\n").map((l) => JSON.parse(l));
     results.push(["pipeline-output", lines.length === 3 &&
         lines[0].value === 4 && lines[1].value === 8 && lines[2].value === 12]);
 
-    // 3. AbortController halts at construction (signal already aborted).
     const ac = new AbortController();
     ac.abort();
     let caught = null;
@@ -94,31 +92,27 @@ async function selfTest() {
     }
     results.push(["abort-honored", caught !== null]);
 
-    // 4. setTimeout deferred work integrates with the pipeline.
     let deferredCount = 0;
     setTimeout(() => { deferredCount = count; }, 0);
     await new Promise((resolve) => setTimeout(resolve, 0));
     results.push(["timer-deferred", deferredCount === 3]);
 
-    // 5. Headers built from result, using the wired pilot.
     const h = new Headers();
     h.set("x-record-count", String(count));
     h.set("content-type", "application/x-ndjson");
     results.push(["headers", h.get("x-record-count") === "3" &&
         h.get("content-type") === "application/x-ndjson"]);
 
-    // 6. Buffer hex-encoding of a digest-shaped summary.
+    // Bun-portable Buffer instance API: .toString("hex").
     const summary = "count=" + count + ",bytes=" + written.length;
-    const hex = Buffer.encodeHex(Buffer.from(summary));
+    const hex = Buffer.from(summary).toString("hex");
     results.push(["buffer-hex", hex.length === summary.length * 2 && /^[0-9a-f]+$/.test(hex)]);
 
-    // 7. URL composition for an upstream sink (typical real-world shape).
     const sinkUrl = new URL("/ingest", "https://example.com:8443/v1/");
     sinkUrl.searchParams.set("count", String(count));
     sinkUrl.searchParams.set("checksum", hex.slice(0, 8));
     results.push(["url-build", sinkUrl.href.startsWith("https://example.com:8443/ingest?count=3&checksum=")]);
 
-    // 8. Cleanup.
     fs.unlinkSync(outPath);
     results.push(["cleanup", !fs.existsSync(outPath)]);
 
@@ -128,8 +122,19 @@ async function selfTest() {
 selfTest().then((results) => {
     const passed = results.filter(([_, ok]) => ok).length;
     const failed = results.filter(([_, ok]) => !ok).map(([name]) => name);
-    globalThis.__asyncResult = passed + "/" + results.length +
+    const summary = passed + "/" + results.length +
         (failed.length > 0 ? " failed: " + failed.join(",") : "");
+    if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
+        process.stdout.write(summary + "\n");
+    } else {
+        globalThis.__asyncResult = summary;
+    }
 }).catch((e) => {
-    globalThis.__asyncError = String(e && e.message ? e.message : e);
+    const msg = String(e && e.message ? e.message : e);
+    if (typeof process !== "undefined" && process.stderr && process.stderr.write) {
+        process.stderr.write("error: " + msg + "\n");
+        if (typeof process.exit === "function") process.exit(1);
+    } else {
+        globalThis.__asyncError = msg;
+    }
 });

@@ -2234,3 +2234,35 @@ fn js_differential_consumer_todo_api_matches_bun() {
     assert!(rb.starts_with("10/10"), "rusty-bun side did not pass: {}", rb);
     assert!(bun_stdout.starts_with("10/10"), "Bun side did not pass: {}", bun_stdout);
 }
+
+// Tier-J differential: consumer-stream-processor runs identically on Bun
+// and rusty-bun-host post-M8 reconciliation (Buffer-as-class + node:fs
+// builtin resolution + fixture-side rewrite to use require("node:fs") and
+// Buffer.toString("hex") and process.stdout.write).
+#[test]
+fn js_differential_consumer_stream_processor_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-stream-processor/index.js");
+
+    // rusty-bun side: CJS via bootRequire + microtask pump.
+    let rb = eval_cjs_module_async(fixture.to_str().unwrap()).unwrap();
+
+    // Bun side.
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun exited with error: stdout={} stderr={}",
+            String::from_utf8_lossy(&bun.stdout),
+            String::from_utf8_lossy(&bun.stderr));
+    }
+    let bun_stdout = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+
+    assert_eq!(rb.trim(), bun_stdout.trim(),
+        "stream-processor differential mismatch:\nrb={}\nbun={}", rb, bun_stdout);
+    assert!(rb.starts_with("8/8"), "rusty-bun did not pass: {}", rb);
+    assert!(bun_stdout.starts_with("8/8"), "Bun did not pass: {}", bun_stdout);
+}

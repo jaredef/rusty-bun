@@ -1551,3 +1551,181 @@ fn js_compose_node_http_with_url_search_params() {
     "#).unwrap();
     assert_eq!(r, "user=alice");
 }
+
+// ════════════════════ CommonJS module loader (Tier-H.3) ═══════════════════
+
+fn cjs_test_setup(pid_suffix: &str) -> (String, String) {
+    let pid = std::process::id();
+    let root = format!("/tmp/rusty-bun-cjs-{}-{}", pid, pid_suffix);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    (root.clone(), root)
+}
+
+#[test]
+fn js_cjs_basic_relative_require() {
+    let (root, _) = cjs_test_setup("basic");
+    std::fs::write(format!("{}/main.js", root),
+        r#"const greet = require("./greet"); module.exports = greet("world");"#).unwrap();
+    std::fs::write(format!("{}/greet.js", root),
+        r#"module.exports = function(name) { return "hello " + name; };"#).unwrap();
+    let script = format!(r#"bootRequire("{}/main.js")"#, root);
+    let r = eval_string(&script).unwrap();
+    assert_eq!(r, "hello world");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_module_cache_returns_same_exports() {
+    let (root, _) = cjs_test_setup("cache");
+    std::fs::write(format!("{}/counter.js", root),
+        r#"let n = 0; module.exports = { inc: () => ++n, get: () => n };"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"const a = require("./counter"); const b = require("./counter");
+        a.inc(); a.inc(); module.exports = b.get();"#).unwrap();
+    let script = format!(r#"bootRequire("{}/main.js")"#, root);
+    let r = eval_i64(&script).unwrap();
+    assert_eq!(r, 2);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_json_module() {
+    let (root, _) = cjs_test_setup("json");
+    std::fs::write(format!("{}/data.json", root),
+        r#"{"name": "rusty-bun", "version": 1}"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"const d = require("./data.json"); module.exports = d.name + ":" + d.version;"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "rusty-bun:1");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_directory_with_index() {
+    let (root, _) = cjs_test_setup("dirindex");
+    std::fs::create_dir_all(format!("{}/lib", root)).unwrap();
+    std::fs::write(format!("{}/lib/index.js", root),
+        r#"module.exports = { name: "from-index" };"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"const lib = require("./lib"); module.exports = lib.name;"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "from-index");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_package_json_main() {
+    let (root, _) = cjs_test_setup("pkgmain");
+    std::fs::create_dir_all(format!("{}/node_modules/foo", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/foo/package.json", root),
+        r#"{"name": "foo", "main": "./lib/entry.js"}"#).unwrap();
+    std::fs::create_dir_all(format!("{}/node_modules/foo/lib", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/foo/lib/entry.js", root),
+        r#"module.exports = "from-pkg-main";"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"module.exports = require("foo");"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "from-pkg-main");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_node_modules_walk_upward() {
+    let (root, _) = cjs_test_setup("walkup");
+    // node_modules at root; consumer is two dirs deep.
+    std::fs::create_dir_all(format!("{}/node_modules/util", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/util/index.js", root),
+        r#"module.exports = "shared-util";"#).unwrap();
+    std::fs::create_dir_all(format!("{}/app/src", root)).unwrap();
+    std::fs::write(format!("{}/app/src/main.js", root),
+        r#"module.exports = require("util");"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/app/src/main.js")"#, root)).unwrap();
+    assert_eq!(r, "shared-util");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_scoped_package() {
+    let (root, _) = cjs_test_setup("scoped");
+    std::fs::create_dir_all(format!("{}/node_modules/@org/lib", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/@org/lib/package.json", root),
+        r#"{"main": "main.js"}"#).unwrap();
+    std::fs::write(format!("{}/node_modules/@org/lib/main.js", root),
+        r#"module.exports = "scoped-ok";"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"module.exports = require("@org/lib");"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "scoped-ok");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_filename_dirname_injected() {
+    let (root, _) = cjs_test_setup("fndn");
+    std::fs::write(format!("{}/main.js", root),
+        r#"module.exports = __filename + "|" + __dirname;"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    let expected = format!("{}/main.js|{}", root, root);
+    assert_eq!(r, expected);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_exports_field_string() {
+    let (root, _) = cjs_test_setup("expstr");
+    std::fs::create_dir_all(format!("{}/node_modules/lib", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/lib/package.json", root),
+        r#"{"exports": "./mod.js"}"#).unwrap();
+    std::fs::write(format!("{}/node_modules/lib/mod.js", root),
+        r#"module.exports = "from-exports-string";"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"module.exports = require("lib");"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "from-exports-string");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn js_cjs_cycle_partial_exports() {
+    let (root, _) = cjs_test_setup("cycle");
+    std::fs::write(format!("{}/a.js", root),
+        r#"exports.fromA = 1; const b = require("./b"); exports.b_fromA_seen = b.fromA_seen;"#).unwrap();
+    std::fs::write(format!("{}/b.js", root),
+        r#"const a = require("./a"); exports.fromA_seen = a.fromA;"#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"const a = require("./a"); module.exports = a.fromA + ":" + a.b_fromA_seen;"#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "1:1");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Canonical-docs composition test: a small npm-package pattern using the
+// wired pilots from inside a require()'d module.
+#[test]
+fn js_compose_cjs_with_pilots_canonical_pattern() {
+    let (root, _) = cjs_test_setup("compose");
+    std::fs::create_dir_all(format!("{}/node_modules/qsutil", root)).unwrap();
+    std::fs::write(format!("{}/node_modules/qsutil/package.json", root),
+        r#"{"main": "index.js"}"#).unwrap();
+    std::fs::write(format!("{}/node_modules/qsutil/index.js", root),
+        r#"
+        // Real npm-style helper: parse query string into an object,
+        // using URLSearchParams from the host.
+        module.exports = function parse(query) {
+            const p = new URLSearchParams(query);
+            const out = {};
+            for (const [k, v] of p) out[k] = v;
+            return out;
+        };
+        "#).unwrap();
+    std::fs::write(format!("{}/main.js", root),
+        r#"
+        const parse = require("qsutil");
+        const obj = parse("a=1&b=2&c=hello%20world");
+        module.exports = obj.a + ":" + obj.b + ":" + obj.c;
+        "#).unwrap();
+    let r = eval_string(&format!(r#"bootRequire("{}/main.js")"#, root)).unwrap();
+    assert_eq!(r, "1:2:hello world");
+    let _ = std::fs::remove_dir_all(&root);
+}

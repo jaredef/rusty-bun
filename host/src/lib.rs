@@ -61,6 +61,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_structured_clone_js(&ctx)?;
     install_streams_js(&ctx)?;
     install_node_http_js(&ctx)?;
+    install_commonjs_loader_js(&ctx)?;
     Ok(())
 }
 
@@ -420,6 +421,7 @@ globalThis.URLSearchParams = class URLSearchParams {
     keys()    { return this._pairs.map(p => p[0])[Symbol.iterator](); }
     values()  { return this._pairs.map(p => p[1])[Symbol.iterator](); }
     forEach(cb) { for (const [k, v] of this._pairs) cb(v, k, this); }
+    [Symbol.iterator]() { return this.entries(); }
 };
 "#;
 
@@ -483,6 +485,18 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
         "existsSync",
         Function::new(ctx.clone(), |path: String| -> bool {
             rusty_node_fs::exists_sync(&path)
+        })?,
+    )?;
+    fs.set(
+        "isFileSync",
+        Function::new(ctx.clone(), |path: String| -> bool {
+            std::path::Path::new(&path).is_file()
+        })?,
+    )?;
+    fs.set(
+        "isDirectorySync",
+        Function::new(ctx.clone(), |path: String| -> bool {
+            std::path::Path::new(&path).is_dir()
         })?,
     )?;
     fs.set(
@@ -2028,6 +2042,251 @@ const NODE_HTTP_JS: &str = r#"
 
 fn install_node_http_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(NODE_HTTP_JS)?;
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// CommonJS module loader (Tier-H.3, partial)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Implements Node-style synchronous require() over the wired fs pilot.
+// First subitem of H.3 (module loader/resolver). ESM (import/import.meta)
+// is deferred to a follow-on round; rquickjs has a built-in FileResolver
+// + ScriptLoader that handles the ESM side, but composing them with
+// node_modules-walking resolution requires its own pass.
+//
+// Scope of THIS round (Node-spec CommonJS, sufficient for typical npm
+// packages whose entry is a CJS module):
+//   - require(specifier) resolves relative paths (./foo, ../bar) and
+//     bare specifiers (pkg, pkg/sub) walking node_modules upward.
+//   - Extensions tried in order: as-is, .js, .json, /index.js, /index.json.
+//   - package.json `main` field honored. `exports` (Node 12+ subpath
+//     exports) is partially supported (string + "." key only).
+//   - Module cache by absolute resolved path.
+//   - Loaded sources wrapped in (function(module, exports, require,
+//     __filename, __dirname) { ... }).
+//   - Cycle handling: returns the partial exports per Node semantics.
+//
+// Bootstrapping require: the loader exposes a global `bootRequire(absPath)`
+// that loads `absPath` as the entry module. From there, that module's
+// require() resolves everything relative to its own __dirname.
+
+const COMMONJS_LOADER_JS: &str = r#"
+(function() {
+    if (typeof fs === "undefined") {
+        throw new Error("fs must be wired before commonjs-loader");
+    }
+
+    function readSourceUtf8(absPath) {
+        return fs.readFileSyncUtf8(absPath);
+    }
+
+    function pathExists(absPath) {
+        return fs.existsSync(absPath);
+    }
+
+    // Pure-JS path utilities (we don't want a dependency on the `path`
+    // wiring exhibiting a circular load order).
+    function dirname(p) {
+        const i = p.lastIndexOf("/");
+        if (i < 0) return ".";
+        if (i === 0) return "/";
+        return p.substring(0, i);
+    }
+
+    function basename(p) {
+        const i = p.lastIndexOf("/");
+        return i < 0 ? p : p.substring(i + 1);
+    }
+
+    function joinPath(a, b) {
+        if (b.startsWith("/")) return b;
+        if (a.endsWith("/")) return a + b;
+        return a + "/" + b;
+    }
+
+    function normalizePath(p) {
+        const isAbsolute = p.startsWith("/");
+        const segments = p.split("/").filter((s) => s.length > 0);
+        const out = [];
+        for (const seg of segments) {
+            if (seg === ".") continue;
+            if (seg === "..") {
+                if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
+                else if (!isAbsolute) out.push("..");
+            } else {
+                out.push(seg);
+            }
+        }
+        return (isAbsolute ? "/" : "") + out.join("/");
+    }
+
+    const EXTENSIONS = ["", ".js", ".json", ".cjs"];
+
+    function tryExtensions(absPath) {
+        for (const ext of EXTENSIONS) {
+            const candidate = absPath + ext;
+            if (fs.isFileSync(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    function tryDirectoryWithIndex(absDir) {
+        const pkgJson = absDir + "/package.json";
+        if (pathExists(pkgJson)) {
+            try {
+                const pkg = JSON.parse(readSourceUtf8(pkgJson));
+                // exports field — string or object with "." key.
+                if (pkg.exports) {
+                    let main = null;
+                    if (typeof pkg.exports === "string") main = pkg.exports;
+                    else if (typeof pkg.exports === "object") {
+                        const dot = pkg.exports["."];
+                        if (typeof dot === "string") main = dot;
+                        else if (dot && typeof dot === "object") {
+                            main = dot.require || dot.default || dot.node;
+                        }
+                    }
+                    if (main) {
+                        const resolved = tryExtensions(normalizePath(joinPath(absDir, main)));
+                        if (resolved) return resolved;
+                    }
+                }
+                // main field.
+                if (typeof pkg.main === "string") {
+                    const resolved = tryExtensions(normalizePath(joinPath(absDir, pkg.main)));
+                    if (resolved) return resolved;
+                }
+            } catch (e) {
+                // Ignore malformed package.json; fall through to index.
+            }
+        }
+        // Default index files.
+        for (const idx of ["/index.js", "/index.json", "/index.cjs"]) {
+            const candidate = absDir + idx;
+            if (pathExists(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    function resolvePath(specifier, fromDir) {
+        // Relative specifier.
+        if (specifier.startsWith("./") || specifier.startsWith("../") || specifier === "." || specifier === "..") {
+            const joined = normalizePath(joinPath(fromDir, specifier));
+            // Try as file first.
+            const asFile = tryExtensions(joined);
+            if (asFile) return asFile;
+            // Then as directory.
+            const asDir = tryDirectoryWithIndex(joined);
+            if (asDir) return asDir;
+            throw new Error("Cannot find module '" + specifier + "' from " + fromDir);
+        }
+        // Absolute specifier.
+        if (specifier.startsWith("/")) {
+            const asFile = tryExtensions(specifier);
+            if (asFile) return asFile;
+            const asDir = tryDirectoryWithIndex(specifier);
+            if (asDir) return asDir;
+            throw new Error("Cannot find module '" + specifier + "'");
+        }
+        // Bare specifier — walk up node_modules.
+        // Split into pkg + subpath: "pkg" or "pkg/sub" or "@scope/pkg/sub".
+        let pkgEnd;
+        if (specifier.startsWith("@")) {
+            const firstSlash = specifier.indexOf("/");
+            if (firstSlash < 0) throw new Error("Invalid scoped specifier: " + specifier);
+            const secondSlash = specifier.indexOf("/", firstSlash + 1);
+            pkgEnd = secondSlash < 0 ? specifier.length : secondSlash;
+        } else {
+            const firstSlash = specifier.indexOf("/");
+            pkgEnd = firstSlash < 0 ? specifier.length : firstSlash;
+        }
+        const pkgName = specifier.substring(0, pkgEnd);
+        const subPath = specifier.substring(pkgEnd);  // includes leading / or ""
+
+        let dir = fromDir;
+        while (true) {
+            const pkgRoot = joinPath(dir, "node_modules/" + pkgName);
+            if (pathExists(pkgRoot)) {
+                if (subPath.length > 0) {
+                    const target = normalizePath(pkgRoot + subPath);
+                    const asFile = tryExtensions(target);
+                    if (asFile) return asFile;
+                    const asDir = tryDirectoryWithIndex(target);
+                    if (asDir) return asDir;
+                } else {
+                    const asDir = tryDirectoryWithIndex(pkgRoot);
+                    if (asDir) return asDir;
+                }
+            }
+            if (dir === "/" || dir === "" || dir === ".") break;
+            const parent = dirname(dir);
+            if (parent === dir) break;
+            dir = parent;
+        }
+        throw new Error("Cannot find module '" + specifier + "' from " + fromDir);
+    }
+
+    const moduleCache = Object.create(null);
+
+    function loadModule(absPath) {
+        if (moduleCache[absPath]) return moduleCache[absPath].exports;
+
+        const moduleObj = {
+            exports: {},
+            id: absPath,
+            filename: absPath,
+            loaded: false,
+            children: [],
+        };
+        // Cache BEFORE evaluating, so cycles see partial exports.
+        moduleCache[absPath] = moduleObj;
+
+        const source = readSourceUtf8(absPath);
+
+        // .json modules: parse and assign.
+        if (absPath.endsWith(".json")) {
+            moduleObj.exports = JSON.parse(source);
+            moduleObj.loaded = true;
+            return moduleObj.exports;
+        }
+
+        const dir = dirname(absPath);
+        const requireFn = function require(spec) {
+            const resolved = resolvePath(spec, dir);
+            return loadModule(resolved);
+        };
+        requireFn.cache = moduleCache;
+        requireFn.resolve = function (spec) {
+            return resolvePath(spec, dir);
+        };
+
+        // Wrap source per Node's module wrapper.
+        const wrapper = "(function (exports, require, module, __filename, __dirname) { " +
+            source +
+            "\n})";
+        try {
+            const fn = (0, eval)(wrapper);
+            fn(moduleObj.exports, requireFn, moduleObj, absPath, dir);
+            moduleObj.loaded = true;
+        } catch (e) {
+            // Remove from cache so that a retry isn't poisoned.
+            delete moduleCache[absPath];
+            throw e;
+        }
+        return moduleObj.exports;
+    }
+
+    globalThis.bootRequire = function bootRequire(absPath) {
+        return loadModule(absPath);
+    };
+    // Expose resolution + cache for tests/diagnostics.
+    globalThis.__cjs = { resolvePath, moduleCache, loadModule };
+})();
+"#;
+
+fn install_commonjs_loader_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(COMMONJS_LOADER_JS)?;
     Ok(())
 }
 

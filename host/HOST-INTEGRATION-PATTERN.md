@@ -129,6 +129,12 @@ Apply when ALL of:
 
 **Active examples:** structuredClone, ReadableStream/WritableStream/TransformStream.
 
+## Iterable-protocol completeness for collection-shaped JS classes
+
+Any JS class wrapping a collection-shaped surface (URLSearchParams, Headers, Map-like, FormData, etc.) MUST expose `[Symbol.iterator]()` in addition to `.entries()` / `.keys()` / `.values()`. Without it, idiomatic consumer code like `for (const [k, v] of params)` throws because the language does not auto-fall-back from `Symbol.iterator` to `.entries()`. Surfaced during the CommonJS loader round (2026-05-10) when a canonical `qsutil` consumer module used `for...of` on URLSearchParams; without `[Symbol.iterator]` set to `entries()`, the consumer broke and the failure was indistinguishable from a module-loader bug.
+
+Rule: alongside `entries()/keys()/values()`, always add `[Symbol.iterator]() { return this.entries(); }`.
+
 ## Sync-or-async user callbacks
 
 When invoking user-supplied callbacks that the spec declares MAY be sync OR async (ReadableStream's `start`/`pull`/`cancel`, WritableStream's `start`/`write`/`close`/`abort`, TransformStream's `transform`/`flush`), DO NOT blanket-wrap with `await`. Per [bug-catcher E.6](../bun-bug-catcher.md), wrapping a sync callback in `async () => await fn()` introduces an extra microtask boundary that, under rquickjs/QuickJS, drops the resumption of awaiters resolved synchronously inside the user callback.

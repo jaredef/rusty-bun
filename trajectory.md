@@ -56,7 +56,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 | 2026-05-10 | corpus `bc5d287` / resolve `011ae5c` | **Doc 708 second amendment** (records M7 closure; sharpens keeper-mediation reading: dyad ascends rather than collapses) |
 | 2026-05-10 | `b7a2b8e` | **Tier-H continued: structuredClone wired** (17 pilot families; 120/120 host tests; introduced Pattern 4 — spec-formalization pilot, JS-side instantiation; folded back as seed §III.A8.2bis per M7) |
 | 2026-05-10 | `dacd31d` | **Tier-H continued: streams wired (ReadableStream/WritableStream/TransformStream)** (18 pilot families; 129/129 host tests; 720/720 workspace tests; introduced eval_string_async helper for microtask-driven tests; M7 fold-back: bug-catcher E.6 + HOST-INTEGRATION-PATTERN.md "Sync-or-async user callbacks" section) |
-| 2026-05-10 | (this) | **Tier-H continued: node-http data-layer wired** (19 pilot families; 142/142 host tests; 733/733 workspace tests; **completes H.2** — all data-layer pilots now runnable from JS; M7 fold-back: no new patterns surfaced — Pattern 4 reapplied cleanly, vacuous fold-back recorded) |
+| 2026-05-10 | `7c3b96d` | **Tier-H continued: node-http data-layer wired** (19 pilot families; 142/142 host tests; 733/733 workspace tests; **completes H.2** — all data-layer pilots now runnable from JS; M7 fold-back: no new patterns surfaced — Pattern 4 reapplied cleanly, vacuous fold-back recorded) |
+| 2026-05-10 | (this) | **Tier-H.3 #1: CommonJS module loader landed** (require/module/exports/__filename/__dirname; relative + bare specifier resolution with node_modules walk-up; package.json main + exports.string + exports."." subpath; .js/.json/.cjs extensions + dir/index; module cache; cycle handling; scoped packages; 153/153 host tests; 744/744 workspace tests; M7 fold-back: iterable-protocol completeness rule added to HOST-INTEGRATION-PATTERN.md after canonical-test surfaced URLSearchParams [Symbol.iterator] gap; gap closed) |
 
 **Pilot inventory (16 pilots):**
 
@@ -192,7 +193,7 @@ The data-layer-only pilots lift to wire-format. Each is significantly larger tha
 
   H.2 ALL WIRED. Next H subitems are H.3 (module loader/resolver), H.4 (remaining globals: URL/setTimeout/console-format), H.5 (console + error reporting / source maps). Each wiring ships with (a) integration tests including a **canonical-docs composition test** that mirrors the upstream's flagship usage example verbatim, AND (b) a fold-back commit per M7 if any new patterns surfaced.
 
-**H.3 — Module loader + resolver.** ESM + CommonJS resolution. `import`, `require`, `import.meta`, package.json semantics, node_modules resolution.
+**H.3 — Module loader + resolver.** PARTIAL: CommonJS landed 2026-05-10 (require/module/exports/__filename/__dirname; relative + bare specifier with node_modules walk-up; package.json main + exports.string + exports."." subpath; .js/.json/.cjs + dir/index; cycle handling; scoped packages). Remaining: ESM (import/import.meta) via rquickjs FileResolver+ScriptLoader composed with the same node_modules-walk; npm-package consumer test harness.
 
 **H.4 — globalThis setup.** Wire all the globals (URL, fetch, console, setTimeout, structuredClone, etc.) into the JS host's `globalThis`.
 

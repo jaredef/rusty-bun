@@ -7,6 +7,7 @@ mod cluster;
 mod extract;
 mod invert;
 mod scan;
+mod seams;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -58,6 +59,21 @@ enum Cmd {
         #[arg(long)]
         summary: bool,
     },
+    /// Detect architectural seams over a cluster catalog by extracting
+    /// per-property architectural-hedging signal vectors and grouping
+    /// by signal-vector agreement. Operationalizes RESOLVE Doc 705
+    /// (Pin-Art for intra-architectural seam detection) per the design
+    /// at docs/seam-detection-design.md.
+    Seams {
+        /// Path to a cluster JSON produced by `derive-constraints cluster`.
+        cluster: PathBuf,
+        /// Optional output file; defaults to stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Print human-readable summary to stderr.
+        #[arg(long)]
+        summary: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -93,6 +109,20 @@ fn main() -> Result<()> {
                 print_invert_summary(&report);
             }
         }
+        Cmd::Seams {
+            cluster: cluster_path,
+            out,
+            summary,
+        } => {
+            let cluster_report: cluster::ClusterReport = read_json(&cluster_path)
+                .with_context(|| format!("loading cluster from {}", cluster_path.display()))?;
+            let mut report = seams::detect_seams(&cluster_report)?;
+            report.cluster_source = Some(cluster_path.to_string_lossy().into_owned());
+            write_json(&out, &report)?;
+            if summary {
+                print_seams_summary(&report);
+            }
+        }
     }
     Ok(())
 }
@@ -116,6 +146,82 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
         }
     }
     Ok(())
+}
+
+fn print_seams_summary(report: &seams::SeamsReport) {
+    let s = &report.stats;
+    eprintln!("\n=== derive-constraints seams ===");
+    if let Some(ref src) = report.cluster_source {
+        eprintln!("cluster source:        {}", src);
+    }
+    eprintln!("properties in:         {}", s.properties_in);
+    eprintln!("distinct signal vecs:  {}", s.distinct_signal_vectors);
+    eprintln!("clusters emitted:      {}", s.clusters_emitted);
+    eprintln!("cross-namespace seams: {}", s.cross_namespace_seam_count);
+    eprintln!("\ntop 20 clusters by total cardinality:");
+    for c in report.signal_clusters.iter().take(20) {
+        let surfaces = if c.surfaces_touched.len() <= 5 {
+            c.surfaces_touched.join(", ")
+        } else {
+            format!(
+                "{} (and {} more)",
+                c.surfaces_touched[..5].join(", "),
+                c.surfaces_touched.len() - 5
+            )
+        };
+        let name = name_for_signal_terse(&c.signal_vector);
+        eprintln!(
+            "  {}  card={:>5} props={:>4} cs={:>3}  surfaces=[{}]  signal={}",
+            c.id, c.cardinality_total, c.property_count, c.construction_style_count, surfaces, name
+        );
+    }
+    eprintln!("\ntop 20 cross-namespace seams (by cardinality):");
+    let mut cs = report.cross_namespace_seams.clone();
+    cs.sort_by(|a, b| b.cardinality_total.cmp(&a.cardinality_total));
+    for s in cs.iter().take(20) {
+        let surfaces = if s.surfaces.len() <= 6 {
+            s.surfaces.join(", ")
+        } else {
+            format!("{} (+{})", s.surfaces[..6].join(", "), s.surfaces.len() - 6)
+        };
+        eprintln!(
+            "  {}  card={:>5}  action={}  surfaces=[{}]  seam={}",
+            s.cluster_id, s.cardinality_total, s.action, surfaces, s.seam_name
+        );
+    }
+}
+
+fn name_for_signal_terse(v: &seams::SignalVector) -> String {
+    let mut parts = Vec::new();
+    if v.cfg {
+        parts.push("cfg".to_string());
+    }
+    match v.sync_async {
+        seams::SyncAsync::Sync => parts.push("sync".into()),
+        seams::SyncAsync::Async => parts.push("async".into()),
+        seams::SyncAsync::Mixed => parts.push("sync+async".into()),
+        seams::SyncAsync::Neither => {}
+    }
+    match v.throw_return {
+        seams::ThrowReturn::Throw => parts.push("throw".into()),
+        seams::ThrowReturn::ReturnError => parts.push("ret-err".into()),
+        seams::ThrowReturn::Mixed => parts.push("throw+ret".into()),
+        seams::ThrowReturn::Neither => {}
+    }
+    if v.native {
+        parts.push("ffi".into());
+    }
+    if v.construct_handle {
+        parts.push("ctor".into());
+    }
+    if let Some(ref p) = v.path_top {
+        parts.push(format!("@{}", p));
+    }
+    if parts.is_empty() {
+        "slack".into()
+    } else {
+        parts.join("|")
+    }
 }
 
 fn print_invert_summary(report: &invert::InvertReport) {

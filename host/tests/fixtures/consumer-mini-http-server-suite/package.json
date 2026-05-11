@@ -1,0 +1,9 @@
+{
+  "name": "consumer-mini-http-server-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #47: end-to-end HTTP server pattern composing http-codec + Request/Response semantics — bytes-in → bytes-out without sockets.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "mini-http-server": "^0.1.0" }
+}

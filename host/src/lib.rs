@@ -2534,9 +2534,9 @@ globalThis.Request = class Request {
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return "";
         if (typeof this._body === "string") return this._body;
-        if (Array.isArray(this._body)) {
-            return new TextDecoder().decode(this._body);
-        }
+        if (this._body instanceof Uint8Array) return new TextDecoder().decode(this._body);
+        if (this._body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(this._body));
+        if (Array.isArray(this._body)) return new TextDecoder().decode(this._body);
         return String(this._body);
     }
     async arrayBuffer() {
@@ -2544,10 +2544,25 @@ globalThis.Request = class Request {
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return [];
         if (typeof this._body === "string") return new TextEncoder().encode(this._body);
+        if (this._body instanceof Uint8Array) return Array.from(this._body);
         if (Array.isArray(this._body)) return this._body;
         return [];
     }
-    async bytes() { return this.arrayBuffer(); }
+    async bytes() {
+        // Return Uint8Array per spec. arrayBuffer is consumed by this call;
+        // recompute body sourcing inline to avoid double-consume.
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return new Uint8Array(0);
+        if (typeof this._body === "string") {
+            const arr = new TextEncoder().encode(this._body);
+            // arr may be plain Array in rusty-bun-host runtime; coerce to Uint8Array.
+            return arr instanceof Uint8Array ? arr : new Uint8Array(arr);
+        }
+        if (this._body instanceof Uint8Array) return this._body;
+        if (Array.isArray(this._body)) return new Uint8Array(this._body);
+        return new Uint8Array(0);
+    }
     async json() {
         return JSON.parse(await this.text());
     }
@@ -2613,6 +2628,8 @@ globalThis.Response = class Response {
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return "";
         if (typeof this._body === "string") return this._body;
+        if (this._body instanceof Uint8Array) return new TextDecoder().decode(this._body);
+        if (this._body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(this._body));
         if (Array.isArray(this._body)) return new TextDecoder().decode(this._body);
         return String(this._body);
     }
@@ -2621,10 +2638,22 @@ globalThis.Response = class Response {
         this._bodyUsed = true;
         if (this._body === null || this._body === undefined) return [];
         if (typeof this._body === "string") return new TextEncoder().encode(this._body);
+        if (this._body instanceof Uint8Array) return Array.from(this._body);
         if (Array.isArray(this._body)) return this._body;
         return [];
     }
-    async bytes() { return this.arrayBuffer(); }
+    async bytes() {
+        if (this._bodyUsed) throw new TypeError("Body already used");
+        this._bodyUsed = true;
+        if (this._body === null || this._body === undefined) return new Uint8Array(0);
+        if (typeof this._body === "string") {
+            const arr = new TextEncoder().encode(this._body);
+            return arr instanceof Uint8Array ? arr : new Uint8Array(arr);
+        }
+        if (this._body instanceof Uint8Array) return this._body;
+        if (Array.isArray(this._body)) return new Uint8Array(this._body);
+        return new Uint8Array(0);
+    }
     async json() {
         return JSON.parse(await this.text());
     }

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-process-events-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #56: process EventEmitter + signal stubs + stdin stub. Tier-Π2.7 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

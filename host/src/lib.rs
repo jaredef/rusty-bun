@@ -510,6 +510,108 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
             globalThis.process.hrtime.bigint = function() {
                 return BigInt(Math.floor(performance.now() * 1e6));
             };
+
+            // Π2.7: EventEmitter pattern on process. Real Bun + Node fire
+            // SIGINT/SIGTERM listeners on signal delivery; rusty-bun-host
+            // is a test runtime that doesn't deliver real signals to JS,
+            // so handlers register but never fire. exit and beforeExit
+            // listeners fire from the host's eval loop on completion.
+            const _listeners = Object.create(null);
+            function _ensure(event) {
+                if (!_listeners[event]) _listeners[event] = [];
+                return _listeners[event];
+            }
+            globalThis.process.on = function on(event, listener) {
+                if (typeof listener !== "function") {
+                    throw new TypeError("process.on: listener must be a function");
+                }
+                _ensure(event).push(listener);
+                return globalThis.process;
+            };
+            globalThis.process.once = function once(event, listener) {
+                if (typeof listener !== "function") {
+                    throw new TypeError("process.once: listener must be a function");
+                }
+                const wrapped = (...args) => {
+                    globalThis.process.off(event, wrapped);
+                    listener(...args);
+                };
+                wrapped._original = listener;
+                _ensure(event).push(wrapped);
+                return globalThis.process;
+            };
+            globalThis.process.off = function off(event, listener) {
+                const arr = _listeners[event];
+                if (!arr) return globalThis.process;
+                const i = arr.findIndex(l => l === listener || l._original === listener);
+                if (i >= 0) arr.splice(i, 1);
+                return globalThis.process;
+            };
+            globalThis.process.removeListener = globalThis.process.off;
+            globalThis.process.removeAllListeners = function removeAllListeners(event) {
+                if (event === undefined) {
+                    for (const k of Object.keys(_listeners)) delete _listeners[k];
+                } else {
+                    delete _listeners[event];
+                }
+                return globalThis.process;
+            };
+            globalThis.process.listenerCount = function listenerCount(event) {
+                return _listeners[event] ? _listeners[event].length : 0;
+            };
+            globalThis.process.listeners = function listeners(event) {
+                return _listeners[event] ? _listeners[event].slice() : [];
+            };
+            globalThis.process.emit = function emit(event, ...args) {
+                // Per M9 (spec-first against Bun): Bun's process.emit
+                // returns true regardless of listener presence. We match.
+                const arr = _listeners[event];
+                if (arr) {
+                    const copy = arr.slice();
+                    for (const l of copy) {
+                        try { l(...args); } catch (e) {
+                            globalThis.__stderrBuf += "process emit error: " + (e && e.message ? e.message : String(e)) + "\n";
+                        }
+                    }
+                }
+                return true;
+            };
+
+            // process.stdin: a minimal EventEmitter-shape stream. In the
+            // host context there is no real stdin; reads complete with
+            // immediate 'end'. Calling .on('data', cb) does nothing useful
+            // but the API is present so consumer code doesn't crash.
+            const _stdinListeners = Object.create(null);
+            function _stdinEnsure(e) {
+                if (!_stdinListeners[e]) _stdinListeners[e] = [];
+                return _stdinListeners[e];
+            }
+            globalThis.process.stdin = {
+                readable: false,
+                isTTY: undefined,  // Bun matches Node: undefined when not on a TTY
+                on(event, listener) {
+                    _stdinEnsure(event).push(listener);
+                    if (event === "end") {
+                        // Immediately schedule 'end' since there's no real stdin.
+                        queueMicrotask(() => { try { listener(); } catch (_) {} });
+                    }
+                    return this;
+                },
+                once(event, listener) { return this.on(event, listener); },
+                off(event, listener) {
+                    const arr = _stdinListeners[event];
+                    if (arr) {
+                        const i = arr.indexOf(listener);
+                        if (i >= 0) arr.splice(i, 1);
+                    }
+                    return this;
+                },
+                removeListener(event, listener) { return this.off(event, listener); },
+                read() { return null; },
+                resume() { return this; },
+                pause() { return this; },
+                setEncoding() { return this; },
+            };
         })();
     "#)?;
 

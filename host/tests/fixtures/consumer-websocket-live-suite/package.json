@@ -1,0 +1,8 @@
+{
+  "name": "consumer-websocket-live-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #67: live ws:// round-trip against a Bun-spawned echo server. Tier-Π1.5.d closure.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

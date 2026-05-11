@@ -3024,6 +3024,69 @@ fn with_compression_target_server<F: FnOnce()>(f: F) {
     let _ = server_thread.join();
 }
 
+// Π1.5.d: live WebSocket round-trip harness. Spawns a Bun subprocess
+// running a minimal Bun.serve websocket echo, sets WS_TEST_PORT,
+// runs the fixture. Both implementations connect to the same Bun-
+// hosted server and exercise the canonical lifecycle.
+fn with_ws_echo_server<F: FnOnce()>(f: F) {
+    use std::io::Read;
+    use std::sync::Mutex;
+    static WS_LIVE_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = WS_LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    // Bun WebSocket echo server inline.
+    let server_script = format!(r#"
+        const s = Bun.serve({{
+            port: {},
+            hostname: "127.0.0.1",
+            fetch(req, server) {{
+                if (server.upgrade(req)) return;
+                return new Response("not a websocket", {{status: 400}});
+            }},
+            websocket: {{
+                message(ws, msg) {{ ws.send(msg); }},
+                close() {{ process.exit(0); }},
+            }},
+        }});
+    "#, port);
+
+    let mut server = match std::process::Command::new("bun")
+        .args(&["-e", &server_script])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => { eprintln!("skipped: bun not on PATH for ws echo server"); return; }
+    };
+    // Wait for the server to bind.
+    std::thread::sleep(std::time::Duration::from_millis(800));
+
+    std::env::set_var("WS_TEST_PORT", port.to_string());
+    f();
+    std::env::remove_var("WS_TEST_PORT");
+
+    let _ = server.kill();
+    let _ = server.wait();
+}
+
+#[test]
+#[ignore]  // seed A8.17: spawns Bun subprocess + live ws handshake
+fn js_consumer_websocket_live_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-websocket-live-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_ws_echo_server(|| {
+        let r = eval_esm_module(&path).unwrap();
+        let summary = r.lines().filter(|l| !l.is_empty()).last().unwrap_or("");
+        assert!(summary.starts_with("4/4"), "websocket-live-suite failed: {}", r);
+    });
+}
+
 // Π1.5.b: harness for __ws namespace structural test.
 fn with_ws_primitives_test_env<F: FnOnce()>(f: F) {
     use std::sync::Mutex;

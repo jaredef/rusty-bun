@@ -991,3 +991,126 @@ fn rsa_pss_zero_salt_length_is_deterministic() {
     assert_eq!(sig1, sig2, "PSS with sLen=0 must be deterministic");
     rusty_web_crypto::rsa_pss_verify(&n, &e, b"msg", &sig1, 0, sha256_vec, 32).unwrap();
 }
+
+// ─────────────── ECDSA P-256 / SHA-256 (FIPS 186-4 §6.4) ────────────
+
+fn test_ecdsa_p256() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    // Real keypair generated via Bun's crypto.subtle.generateKey for this
+    // test corpus. NOT used in production.
+    let d  = hex_decode("9d54708c83230f09c38f5958c55f9fd48bade9606ba5c57786fed793e2a7595b");
+    let qx = hex_decode("d04f885b9b44a493212c14ba09b6164bdf979fc6fde2d5ea9d6be140cff187bf");
+    let qy = hex_decode("1ba85fda4c55efe16747296487f35ba18e2e63d5846a14515f14c46b17104778");
+    (d, qx, qy)
+}
+
+#[test]
+fn ecdsa_p256_sign_verify_roundtrip() {
+    let (d, qx, qy) = test_ecdsa_p256();
+    let message = b"sign-this-ecdsa-message";
+    let nonce = hex_decode("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+    let sig = rusty_web_crypto::ecdsa_p256_sha256_sign(&d, message, &nonce).unwrap();
+    assert_eq!(sig.len(), 64);
+    rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &qy, message, &sig).unwrap();
+}
+
+#[test]
+fn ecdsa_p256_verify_rejects_wrong_message() {
+    let (d, qx, qy) = test_ecdsa_p256();
+    let nonce = hex_decode("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+    let sig = rusty_web_crypto::ecdsa_p256_sha256_sign(&d, b"original", &nonce).unwrap();
+    assert!(rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &qy, b"tampered", &sig).is_err());
+}
+
+#[test]
+fn ecdsa_p256_verify_rejects_tampered_signature() {
+    let (d, qx, qy) = test_ecdsa_p256();
+    let nonce = hex_decode("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+    let mut sig = rusty_web_crypto::ecdsa_p256_sha256_sign(&d, b"msg", &nonce).unwrap();
+    sig[0] ^= 0x01;
+    assert!(rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &qy, b"msg", &sig).is_err());
+}
+
+#[test]
+fn ecdsa_p256_rejects_off_curve_public_key() {
+    let (_, qx, _qy) = test_ecdsa_p256();
+    // Use a fake y by perturbing it — not on the curve.
+    let bad_qy = vec![0x00u8; 32];
+    let sig = vec![0x01u8; 64];  // Any signature; verification stops at curve check.
+    assert!(rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &bad_qy, b"msg", &sig).is_err());
+}
+
+#[test]
+fn ecdsa_p256_g_order_is_n() {
+    // Sanity: n*G should be the identity.
+    let n_bytes = hex_decode("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    let n = rusty_web_crypto::BigUInt::from_be_bytes(&n_bytes);
+    let result = rusty_web_crypto::p256_scalar_mul(&n, &rusty_web_crypto::p256_g());
+    assert!(matches!(result, rusty_web_crypto::P256Point::Identity));
+}
+
+#[test]
+fn ecdsa_p256_double_g() {
+    // Known 2G on P-256:
+    //   2G_x = 7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978
+    //   2G_y = 07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1
+    let one = rusty_web_crypto::BigUInt::from_be_bytes(&[2]);
+    let result = rusty_web_crypto::p256_scalar_mul(&one, &rusty_web_crypto::p256_g());
+    if let rusty_web_crypto::P256Point::Affine { x, y } = result {
+        let x_hex: String = x.to_be_bytes(32).iter().map(|b| format!("{:02x}", b)).collect();
+        let y_hex: String = y.to_be_bytes(32).iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(x_hex, "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978");
+        assert_eq!(y_hex, "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1");
+    } else {
+        panic!("2G is identity?!");
+    }
+}
+
+#[test]
+fn ecdsa_p256_g_on_curve() {
+    // Sanity: G_y² ≡ G_x³ - 3·G_x + b (mod p)
+    use rusty_web_crypto::BigUInt;
+    let p_bytes = hex_decode("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+    let p = BigUInt::from_be_bytes(&p_bytes);
+    let gx = BigUInt::from_be_bytes(&hex_decode("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"));
+    let gy = BigUInt::from_be_bytes(&hex_decode("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"));
+    let b  = BigUInt::from_be_bytes(&hex_decode("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b"));
+    let three = BigUInt::from_be_bytes(&[3]);
+    let lhs = gy.mul(&gy).modulo(&p);
+    let gx2 = gx.mul(&gx).modulo(&p);
+    let gx3 = gx2.mul(&gx).modulo(&p);
+    let three_gx = three.mul(&gx).modulo(&p);
+    // rhs = gx3 - three_gx + b mod p
+    // compute (gx3 + b - three_gx) mod p, with sub safe via add trick
+    let gx3_plus_b = gx3.add(&b).modulo(&p);
+    // gx3_plus_b >= three_gx? If yes, sub directly; else m+a - b
+    let rhs = {
+        use std::cmp::Ordering;
+        if gx3_plus_b.cmp(&three_gx) != Ordering::Less {
+            gx3_plus_b.sub(&three_gx).modulo(&p)
+        } else {
+            p.add(&gx3_plus_b).sub(&three_gx).modulo(&p)
+        }
+    };
+    assert_eq!(lhs.to_be_bytes(32), rhs.to_be_bytes(32), "G not on curve!");
+}
+
+#[test]
+fn debug_p256_mod_consistency() {
+    use rusty_web_crypto::BigUInt;
+    let p = BigUInt::from_be_bytes(&hex_decode("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff"));
+    let gx = BigUInt::from_be_bytes(&hex_decode("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"));
+    // Gx < p, so Gx mod p = Gx.
+    let r = gx.modulo(&p);
+    assert_eq!(r.to_be_bytes(32), gx.to_be_bytes(32), "Gx mod p ≠ Gx");
+    // Gx * Gx mod p — just check it produces 32 reduced bytes, not check value.
+    let gx2 = gx.mul(&gx).modulo(&p);
+    assert_eq!(gx2.to_be_bytes(32).len(), 32);
+    // p mod p = 0.
+    let pmodp = p.modulo(&p);
+    assert!(pmodp.is_zero(), "p mod p ≠ 0");
+    // (p - 1) mod p = p - 1.
+    let one = BigUInt::one();
+    let pm1 = p.sub(&one);
+    let r2 = pm1.modulo(&p);
+    assert_eq!(r2.to_be_bytes(32), pm1.to_be_bytes(32), "(p-1) mod p ≠ p-1");
+}

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-ecdsa-p256-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #34: ECDSA P-256 / SHA-256 sign/verify via crypto.subtle.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

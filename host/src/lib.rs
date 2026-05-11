@@ -723,6 +723,23 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // ECDSA over P-256 with SHA-256 (FIPS 186-4 §6.4). Signature
+    // format: r ‖ s (P1363 / WebCrypto raw), 64 bytes total. Caller
+    // provides a 32-byte k from /dev/urandom for sign; verify is
+    // deterministic given the inputs.
+    subtle.set(
+        "ecdsaP256Sha256SignBytes",
+        Function::new(ctx.clone(), |d: Vec<u8>, msg: Vec<u8>, k: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::ecdsa_p256_sha256_sign(&d, &msg, &k)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDSA", "sign", e))
+        })?,
+    )?;
+    subtle.set(
+        "ecdsaP256Sha256VerifyBytes",
+        Function::new(ctx.clone(), |qx: Vec<u8>, qy: Vec<u8>, msg: Vec<u8>, sig: Vec<u8>| -> bool {
+            rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &qy, &msg, &sig).is_ok()
+        })?,
+    )?;
     // RSA-PSS (RFC 8017 §8.1). Signing requires private key + salt;
     // verify requires public key + signature + claimed salt length.
     subtle.set(
@@ -974,6 +991,30 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
                 if (format === "jwk") {
                     const alg = normalizeAlg(algorithm);
+                    if (alg.name === "ECDSA") {
+                        // JWK EC: {kty:"EC", crv:"P-256", x, y, d?}
+                        if (!keyData || keyData.kty !== "EC") throw new TypeError("JWK kty must be EC");
+                        if (keyData.crv !== "P-256") {
+                            throw new Error("ECDSA pilot scope: P-256 only, got " + keyData.crv);
+                        }
+                        const x = b64urlToBytes(keyData.x);
+                        const y = b64urlToBytes(keyData.y);
+                        if (keyData.d != null) {
+                            const d = b64urlToBytes(keyData.d);
+                            return {
+                                type: "private", extractable: !!extractable,
+                                algorithm: { name: "ECDSA", namedCurve: "P-256" },
+                                usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                                _x: x, _y: y, _d: d, _algName: "ECDSA", _curve: "P-256",
+                            };
+                        }
+                        return {
+                            type: "public", extractable: !!extractable,
+                            algorithm: { name: "ECDSA", namedCurve: "P-256" },
+                            usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                            _x: x, _y: y, _algName: "ECDSA", _curve: "P-256",
+                        };
+                    }
                     if (alg.name === "RSAOAEP" || alg.name === "RSAPSS") {
                         const specName = alg.name === "RSAOAEP" ? "RSA-OAEP" : "RSA-PSS";
                         if (!keyData || keyData.kty !== "RSA") throw new TypeError("JWK kty must be RSA");
@@ -1237,6 +1278,19 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     const h = keyHash(key);
                     return toArrayBuffer(h.hmac(key._bytes, toBytes(data)));
                 }
+                if (alg.name === "ECDSA") {
+                    if (key._algName !== "ECDSA" || !key._d) {
+                        throw new TypeError("sign: key is not an ECDSA private key");
+                    }
+                    if (key._curve !== "P-256") throw new Error("ECDSA pilot scope: P-256 only");
+                    // Generate random k in [1, n-1]; with overwhelming probability
+                    // a 32-byte /dev/urandom value satisfies this. Spec-grade ECDSA
+                    // would loop on r=0 / s=0; pilot accepts a single attempt.
+                    const kArr = new Uint8Array(32);
+                    globalThis.crypto.getRandomValues(kArr);
+                    return toArrayBuffer(subtle.ecdsaP256Sha256SignBytes(
+                        key._d, toBytes(data), Array.from(kArr)));
+                }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS" || !key._d) {
                         throw new TypeError("sign: key is not an RSA-PSS private key");
@@ -1264,6 +1318,12 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     const h = keyHash(key);
                     const expected = h.hmac(key._bytes, toBytes(data));
                     return subtle.timingSafeEqualBytes(toBytes(signature), expected);
+                }
+                if (alg.name === "ECDSA") {
+                    if (key._algName !== "ECDSA") throw new TypeError("verify: key is not ECDSA");
+                    if (key._curve !== "P-256") throw new Error("ECDSA pilot scope: P-256 only");
+                    return subtle.ecdsaP256Sha256VerifyBytes(
+                        key._x, key._y, toBytes(data), toBytes(signature));
                 }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS") {

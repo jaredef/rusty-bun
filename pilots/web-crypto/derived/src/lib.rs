@@ -726,7 +726,7 @@ impl BigUInt {
         self.0.get(limb).copied().unwrap_or(0) & (1u32 << bit) != 0
     }
 
-    fn cmp(&self, other: &BigUInt) -> std::cmp::Ordering {
+    pub fn cmp(&self, other: &BigUInt) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         // Compare limbs from most-significant down.
         let la = self.0.len();
@@ -890,6 +890,227 @@ pub fn rsadp(n: &BigUInt, d: &BigUInt, c: &BigUInt) -> Result<BigUInt, String> {
         return Err("RSADP: ciphertext representative out of range".to_string());
     }
     Ok(c.mod_pow(d, n))
+}
+
+// ─────────────────────── P-256 elliptic curve ──────────────────────
+//
+// NIST P-256 / secp256r1 / prime256v1. Short Weierstrass curve
+// y² = x³ + ax + b (mod p) where a = -3 mod p.
+// Parameters: FIPS 186-4 §D.1.2.3 / SEC 2 §2.4.2.
+//
+// Pilot scope: P-256 with SHA-256 only. Affine coordinates throughout
+// (slow but correct — Jacobian projective is the production speedup).
+// Reuses BigUInt above for the finite-field arithmetic.
+
+fn p256_p() -> BigUInt {
+    BigUInt::from_be_bytes(&[
+        0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    ])
+}
+fn p256_n() -> BigUInt {
+    BigUInt::from_be_bytes(&[
+        0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x00,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xbc,0xe6,0xfa,0xad,0xa7,0x17,0x9e,0x84,0xf3,0xb9,0xca,0xc2,0xfc,0x63,0x25,0x51,
+    ])
+}
+fn p256_b() -> BigUInt {
+    BigUInt::from_be_bytes(&[
+        0x5a,0xc6,0x35,0xd8,0xaa,0x3a,0x93,0xe7,0xb3,0xeb,0xbd,0x55,0x76,0x98,0x86,0xbc,
+        0x65,0x1d,0x06,0xb0,0xcc,0x53,0xb0,0xf6,0x3b,0xce,0x3c,0x3e,0x27,0xd2,0x60,0x4b,
+    ])
+}
+pub fn p256_g() -> P256Point {
+    P256Point::Affine {
+        x: BigUInt::from_be_bytes(&[
+            0x6b,0x17,0xd1,0xf2,0xe1,0x2c,0x42,0x47,0xf8,0xbc,0xe6,0xe5,0x63,0xa4,0x40,0xf2,
+            0x77,0x03,0x7d,0x81,0x2d,0xeb,0x33,0xa0,0xf4,0xa1,0x39,0x45,0xd8,0x98,0xc2,0x96,
+        ]),
+        y: BigUInt::from_be_bytes(&[
+            0x4f,0xe3,0x42,0xe2,0xfe,0x1a,0x7f,0x9b,0x8e,0xe7,0xeb,0x4a,0x7c,0x0f,0x9e,0x16,
+            0x2b,0xce,0x33,0x57,0x6b,0x31,0x5e,0xce,0xcb,0xb6,0x40,0x68,0x37,0xbf,0x51,0xf5,
+        ]),
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum P256Point {
+    Identity,
+    Affine { x: BigUInt, y: BigUInt },
+}
+
+fn mod_add(a: &BigUInt, b: &BigUInt, m: &BigUInt) -> BigUInt {
+    a.add(b).modulo(m)
+}
+fn mod_sub(a: &BigUInt, b: &BigUInt, m: &BigUInt) -> BigUInt {
+    use std::cmp::Ordering;
+    if a.cmp(b) != Ordering::Less { a.sub(b) } else { m.add(a).sub(b).modulo(m) }
+}
+fn mod_mul(a: &BigUInt, b: &BigUInt, m: &BigUInt) -> BigUInt {
+    a.mul(b).modulo(m)
+}
+fn mod_inv_fermat(a: &BigUInt, p: &BigUInt) -> BigUInt {
+    // Fermat: a^(p-2) mod p for prime p.
+    let two = BigUInt::from_be_bytes(&[2]);
+    let p_minus_2 = p.sub(&two);
+    a.mod_pow(&p_minus_2, p)
+}
+
+fn p256_double(pt: &P256Point) -> P256Point {
+    let p = p256_p();
+    let three = BigUInt::from_be_bytes(&[3]);
+    let two = BigUInt::from_be_bytes(&[2]);
+    match pt {
+        P256Point::Identity => P256Point::Identity,
+        P256Point::Affine { x, y } => {
+            if y.is_zero() { return P256Point::Identity; }
+            // λ = (3x² + a) / (2y); a = -3 mod p.
+            let x2 = mod_mul(x, x, &p);
+            let three_x2 = mod_mul(&three, &x2, &p);
+            let three_x2_plus_a = mod_sub(&three_x2, &three, &p);  // a = -3 → +(-3) ≡ -3
+            let two_y = mod_mul(&two, y, &p);
+            let inv = mod_inv_fermat(&two_y, &p);
+            let lambda = mod_mul(&three_x2_plus_a, &inv, &p);
+            // x3 = λ² - 2x
+            let lambda2 = mod_mul(&lambda, &lambda, &p);
+            let two_x = mod_mul(&two, x, &p);
+            let x3 = mod_sub(&lambda2, &two_x, &p);
+            // y3 = λ(x - x3) - y
+            let x_minus_x3 = mod_sub(x, &x3, &p);
+            let lambda_diff = mod_mul(&lambda, &x_minus_x3, &p);
+            let y3 = mod_sub(&lambda_diff, y, &p);
+            P256Point::Affine { x: x3, y: y3 }
+        }
+    }
+}
+
+fn p256_add(p1: &P256Point, p2: &P256Point) -> P256Point {
+    use std::cmp::Ordering;
+    let p = p256_p();
+    match (p1, p2) {
+        (P256Point::Identity, q) | (q, P256Point::Identity) => q.clone(),
+        (P256Point::Affine { x: x1, y: y1 }, P256Point::Affine { x: x2, y: y2 }) => {
+            if x1.cmp(x2) == Ordering::Equal {
+                // Same x: doubling or inverse (y1 = -y2 → identity).
+                if y1.cmp(y2) == Ordering::Equal {
+                    return p256_double(p1);
+                }
+                // y1 + y2 ≡ 0 mod p → identity.
+                return P256Point::Identity;
+            }
+            // λ = (y2 - y1) / (x2 - x1)
+            let dy = mod_sub(y2, y1, &p);
+            let dx = mod_sub(x2, x1, &p);
+            let inv = mod_inv_fermat(&dx, &p);
+            let lambda = mod_mul(&dy, &inv, &p);
+            // x3 = λ² - x1 - x2
+            let lambda2 = mod_mul(&lambda, &lambda, &p);
+            let x3 = mod_sub(&mod_sub(&lambda2, x1, &p), x2, &p);
+            // y3 = λ(x1 - x3) - y1
+            let x1_minus_x3 = mod_sub(x1, &x3, &p);
+            let lambda_diff = mod_mul(&lambda, &x1_minus_x3, &p);
+            let y3 = mod_sub(&lambda_diff, y1, &p);
+            P256Point::Affine { x: x3, y: y3 }
+        }
+    }
+}
+
+/// Scalar multiplication via binary double-and-add (LSB-first).
+pub fn p256_scalar_mul(k: &BigUInt, pt: &P256Point) -> P256Point {
+    let mut result = P256Point::Identity;
+    let mut addend = pt.clone();
+    let bits = k.bit_len();
+    for i in 0..bits {
+        if k.bit(i) {
+            result = p256_add(&result, &addend);
+        }
+        addend = p256_double(&addend);
+    }
+    result
+}
+
+/// ECDSA-P256 sign per FIPS 186-4 §6.4. `nonce_k` is the per-signature
+/// random k in [1, n-1] — caller-supplied for testability. Hash output
+/// is reduced mod n. Signature format: r ‖ s (P1363 / WebCrypto raw),
+/// each 32 bytes big-endian.
+pub fn ecdsa_p256_sha256_sign(
+    d_bytes: &[u8], message: &[u8], nonce_k: &[u8],
+) -> Result<Vec<u8>, String> {
+    let n = p256_n();
+    let d = BigUInt::from_be_bytes(d_bytes);
+    let k = BigUInt::from_be_bytes(nonce_k);
+    use std::cmp::Ordering;
+    if k.is_zero() || k.cmp(&n) != Ordering::Less {
+        return Err("ECDSA: nonce_k out of range".into());
+    }
+    if d.is_zero() || d.cmp(&n) != Ordering::Less {
+        return Err("ECDSA: private key out of range".into());
+    }
+    let e_bytes = digest_sha256(message);
+    let e = BigUInt::from_be_bytes(&e_bytes);
+    // e mod n (P-256: hash output 256 bits == ⌈log2 n⌉, so this is just the reduction).
+    let e_red = e.modulo(&n);
+    let g = p256_g();
+    let r_pt = p256_scalar_mul(&k, &g);
+    let x1 = match &r_pt {
+        P256Point::Affine { x, .. } => x.clone(),
+        P256Point::Identity => return Err("ECDSA: k*G is identity".into()),
+    };
+    let r = x1.modulo(&n);
+    if r.is_zero() { return Err("ECDSA: r=0 — retry with new k".into()); }
+    let k_inv = mod_inv_fermat(&k, &n);
+    let rd = mod_mul(&r, &d, &n);
+    let e_plus_rd = mod_add(&e_red, &rd, &n);
+    let s = mod_mul(&k_inv, &e_plus_rd, &n);
+    if s.is_zero() { return Err("ECDSA: s=0 — retry with new k".into()); }
+    let mut out = Vec::with_capacity(64);
+    out.extend_from_slice(&r.to_be_bytes(32));
+    out.extend_from_slice(&s.to_be_bytes(32));
+    Ok(out)
+}
+
+/// ECDSA-P256 verify per FIPS 186-4 §6.4. Signature is P1363 r ‖ s.
+pub fn ecdsa_p256_sha256_verify(
+    qx_bytes: &[u8], qy_bytes: &[u8], message: &[u8], signature: &[u8],
+) -> Result<(), String> {
+    use std::cmp::Ordering;
+    if signature.len() != 64 { return Err("ECDSA: signature must be 64 bytes".into()); }
+    let n = p256_n();
+    let one = BigUInt::one();
+    let r = BigUInt::from_be_bytes(&signature[..32]);
+    let s = BigUInt::from_be_bytes(&signature[32..]);
+    if r.cmp(&one) == Ordering::Less || r.cmp(&n) != Ordering::Less {
+        return Err("ECDSA: r out of range".into());
+    }
+    if s.cmp(&one) == Ordering::Less || s.cmp(&n) != Ordering::Less {
+        return Err("ECDSA: s out of range".into());
+    }
+    let qx = BigUInt::from_be_bytes(qx_bytes);
+    let qy = BigUInt::from_be_bytes(qy_bytes);
+    // Validate Q is on curve: y² ≡ x³ + ax + b (mod p), a = -3.
+    let p = p256_p();
+    let three = BigUInt::from_be_bytes(&[3]);
+    let lhs = mod_mul(&qy, &qy, &p);
+    let x3 = mod_mul(&mod_mul(&qx, &qx, &p), &qx, &p);
+    let neg3x = mod_mul(&three, &qx, &p);
+    let rhs = mod_sub(&mod_add(&x3, &p256_b(), &p), &neg3x, &p);
+    if lhs.cmp(&rhs) != Ordering::Equal {
+        return Err("ECDSA: public key not on curve".into());
+    }
+    let q = P256Point::Affine { x: qx, y: qy };
+    let e = BigUInt::from_be_bytes(&digest_sha256(message)).modulo(&n);
+    let w = mod_inv_fermat(&s, &n);
+    let u1 = mod_mul(&e, &w, &n);
+    let u2 = mod_mul(&r, &w, &n);
+    let p1 = p256_scalar_mul(&u1, &p256_g());
+    let p2 = p256_scalar_mul(&u2, &q);
+    let r_pt = p256_add(&p1, &p2);
+    let x1 = match r_pt {
+        P256Point::Affine { x, .. } => x,
+        P256Point::Identity => return Err("ECDSA: u1*G + u2*Q is identity".into()),
+    };
+    if x1.modulo(&n).cmp(&r) == Ordering::Equal { Ok(()) }
+    else { Err("ECDSA: signature mismatch".into()) }
 }
 
 // ─────────────────────── MGF1 + RSA-OAEP (RFC 8017) ───────────────

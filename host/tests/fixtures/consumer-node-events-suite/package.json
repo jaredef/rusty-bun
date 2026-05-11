@@ -1,0 +1,8 @@
+{
+  "name": "consumer-node-events-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #57: node:events EventEmitter. Tier-Π3.8 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

@@ -227,7 +227,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:os" | "os" |
         "node:process" | "process" |
         "node:dns" | "dns" |
-        "node:dns/promises" | "dns/promises"
+        "node:dns/promises" | "dns/promises" |
+        "node:events" | "events"
     )
 }
 
@@ -255,6 +256,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "resolve6", "promises"]),
         "node:dns/promises" | "dns/promises" => ("nodeDnsPromises",
             &["lookup", "resolve", "resolve4", "resolve6"]),
+        "node:events" | "events" => ("nodeEvents", &["EventEmitter",
+            "once", "on", "captureRejectionSymbol", "errorMonitor",
+            "setMaxListeners", "getEventListeners"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -326,6 +330,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_structured_clone_js(&ctx)?;
     install_streams_js(&ctx)?;
     install_node_http_js(&ctx)?;
+    install_node_events_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -4755,6 +4760,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "dns": () => globalThis.nodeDns,
         "node:dns/promises": () => globalThis.nodeDnsPromises,
         "dns/promises": () => globalThis.nodeDnsPromises,
+        "node:events": () => globalThis.nodeEvents,
+        "events": () => globalThis.nodeEvents,
     };
 
     function loadModule(absPath) {
@@ -4815,6 +4822,234 @@ const COMMONJS_LOADER_JS: &str = r#"
     globalThis.__cjs = { resolvePath, moduleCache, loadModule };
 })();
 "#;
+
+fn install_node_events_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    // Π3.8: node:events. EventEmitter class is the canonical
+    // npm-dependency primitive (most-imported builtin across the
+    // ecosystem). Real Node + Bun export `EventEmitter` as the default
+    // AND as a named export, plus module-level helpers `once` and `on`
+    // for promise-bridging.
+    //
+    // Per M9 (spec-first): targeted against Bun's actual shape via test
+    // probes; per §III.A8.2 the class is JS-side stateless-Rust-free.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const DEFAULT_MAX = 10;
+
+            function EventEmitter() {
+                this._events = Object.create(null);
+                this._maxListeners = undefined;
+            }
+            EventEmitter.defaultMaxListeners = DEFAULT_MAX;
+
+            function _ensure(self) {
+                if (!self._events) self._events = Object.create(null);
+                return self._events;
+            }
+
+            EventEmitter.prototype.on = function on(event, listener) {
+                if (typeof listener !== "function") {
+                    throw new TypeError('The "listener" argument must be of type Function. Received type ' + typeof listener);
+                }
+                const events = _ensure(this);
+                if (!events[event]) events[event] = [];
+                // Fire 'newListener' before adding, per Node convention.
+                if (events.newListener && event !== "newListener") {
+                    this.emit("newListener", event, listener._original || listener);
+                }
+                events[event].push(listener);
+                return this;
+            };
+            EventEmitter.prototype.addListener = EventEmitter.prototype.on;
+
+            EventEmitter.prototype.once = function once(event, listener) {
+                if (typeof listener !== "function") {
+                    throw new TypeError('The "listener" argument must be of type Function.');
+                }
+                const self = this;
+                const wrapped = function(...args) {
+                    self.off(event, wrapped);
+                    listener.apply(self, args);
+                };
+                wrapped._original = listener;
+                return self.on(event, wrapped);
+            };
+
+            EventEmitter.prototype.prependListener = function prependListener(event, listener) {
+                if (typeof listener !== "function") throw new TypeError("listener must be function");
+                const events = _ensure(this);
+                if (!events[event]) events[event] = [];
+                if (events.newListener && event !== "newListener") {
+                    this.emit("newListener", event, listener._original || listener);
+                }
+                events[event].unshift(listener);
+                return this;
+            };
+
+            EventEmitter.prototype.prependOnceListener = function prependOnceListener(event, listener) {
+                const self = this;
+                const wrapped = function(...args) {
+                    self.off(event, wrapped);
+                    listener.apply(self, args);
+                };
+                wrapped._original = listener;
+                return self.prependListener(event, wrapped);
+            };
+
+            EventEmitter.prototype.off = function off(event, listener) {
+                const events = _ensure(this);
+                const arr = events[event];
+                if (!arr) return this;
+                for (let i = arr.length - 1; i >= 0; i--) {
+                    if (arr[i] === listener || arr[i]._original === listener) {
+                        arr.splice(i, 1);
+                        if (events.removeListener) {
+                            this.emit("removeListener", event, listener);
+                        }
+                        break;
+                    }
+                }
+                if (arr.length === 0) delete events[event];
+                return this;
+            };
+            EventEmitter.prototype.removeListener = EventEmitter.prototype.off;
+
+            EventEmitter.prototype.removeAllListeners = function removeAllListeners(event) {
+                const events = _ensure(this);
+                if (event === undefined) {
+                    this._events = Object.create(null);
+                } else {
+                    delete events[event];
+                }
+                return this;
+            };
+
+            EventEmitter.prototype.emit = function emit(event, ...args) {
+                const events = _ensure(this);
+                const arr = events[event];
+                // 'error' event with no listener throws per Node convention.
+                if (event === "error" && (!arr || arr.length === 0)) {
+                    const err = args[0];
+                    if (err instanceof Error) throw err;
+                    const e = new Error("Unhandled error.");
+                    e.context = err;
+                    throw e;
+                }
+                if (!arr || arr.length === 0) return false;
+                const copy = arr.slice();
+                for (const l of copy) {
+                    try { l.apply(this, args); } catch (e) {
+                        // Re-emit as 'error' if a listener throws and 'error' has handlers.
+                        const errArr = events.error;
+                        if (errArr && errArr.length > 0 && event !== "error") {
+                            this.emit("error", e);
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+                return true;
+            };
+
+            EventEmitter.prototype.listenerCount = function listenerCount(event) {
+                const events = _ensure(this);
+                return events[event] ? events[event].length : 0;
+            };
+
+            EventEmitter.prototype.listeners = function listeners(event) {
+                const events = _ensure(this);
+                if (!events[event]) return [];
+                return events[event].map(l => l._original || l);
+            };
+
+            EventEmitter.prototype.rawListeners = function rawListeners(event) {
+                const events = _ensure(this);
+                return events[event] ? events[event].slice() : [];
+            };
+
+            EventEmitter.prototype.eventNames = function eventNames() {
+                const events = _ensure(this);
+                return Object.keys(events);
+            };
+
+            EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
+                if (typeof n !== "number" || n < 0 || Number.isNaN(n)) {
+                    throw new RangeError("n must be a non-negative number");
+                }
+                this._maxListeners = n;
+                return this;
+            };
+
+            EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
+                return this._maxListeners === undefined
+                    ? EventEmitter.defaultMaxListeners
+                    : this._maxListeners;
+            };
+
+            // Module-level helpers per Node v15+ (Promise-bridging).
+            // once(emitter, event) -> Promise<args[]>
+            function onceHelper(emitter, eventName, options) {
+                return new Promise((resolve, reject) => {
+                    const errHandler = (err) => {
+                        emitter.off(eventName, valHandler);
+                        reject(err);
+                    };
+                    const valHandler = (...args) => {
+                        if (eventName !== "error") emitter.off("error", errHandler);
+                        resolve(args);
+                    };
+                    emitter.once(eventName, valHandler);
+                    if (eventName !== "error") emitter.once("error", errHandler);
+                });
+            }
+
+            // on(emitter, event) -> AsyncIterable<args[]>
+            function onHelper(emitter, eventName) {
+                const buffer = [];
+                let resolveNext = null;
+                let done = false;
+                emitter.on(eventName, (...args) => {
+                    if (resolveNext) {
+                        const r = resolveNext;
+                        resolveNext = null;
+                        r({ value: args, done: false });
+                    } else {
+                        buffer.push(args);
+                    }
+                });
+                return {
+                    [Symbol.asyncIterator]() { return this; },
+                    next() {
+                        if (buffer.length > 0) {
+                            return Promise.resolve({ value: buffer.shift(), done: false });
+                        }
+                        if (done) return Promise.resolve({ value: undefined, done: true });
+                        return new Promise(r => { resolveNext = r; });
+                    },
+                    return() { done = true; return Promise.resolve({ value: undefined, done: true }); },
+                };
+            }
+
+            // Self-reference: node:events default export is the class
+            // AND the class has .EventEmitter pointing to itself.
+            EventEmitter.EventEmitter = EventEmitter;
+            EventEmitter.once = onceHelper;
+            EventEmitter.on = onHelper;
+            EventEmitter.captureRejectionSymbol = Symbol("nodejs.rejection");
+            EventEmitter.errorMonitor = Symbol("events.errorMonitor");
+            EventEmitter.setMaxListeners = function(n, ...emitters) {
+                for (const e of emitters) e.setMaxListeners(n);
+            };
+            EventEmitter.getEventListeners = function(emitter, eventName) {
+                return emitter.listeners ? emitter.listeners(eventName) : [];
+            };
+
+            globalThis.nodeEvents = EventEmitter;
+            globalThis.EventEmitter = EventEmitter;
+        })();
+    "#)?;
+    Ok(())
+}
 
 fn install_commonjs_loader_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(COMMONJS_LOADER_JS)?;

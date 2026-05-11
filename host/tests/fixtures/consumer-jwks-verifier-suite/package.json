@@ -1,0 +1,11 @@
+{
+  "name": "consumer-jwks-verifier-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #38: real-shape JWKS verifier exercising the closed WebCrypto surface end-to-end via a vendored library.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": {
+    "jwks-verifier": "^0.1.0"
+  }
+}

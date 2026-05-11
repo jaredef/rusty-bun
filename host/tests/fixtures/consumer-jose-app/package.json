@@ -1,0 +1,6 @@
+{
+  "name": "consumer-jose-app",
+  "type": "module",
+  "version": "0.0.0",
+  "dependencies": { "jose": "^5" }
+}

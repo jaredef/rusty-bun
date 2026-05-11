@@ -66,11 +66,73 @@ fn try_extensions(abs_path: &std::path::Path) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Resolve a conditional exports value (string or nested object) given the
+/// priority-ordered conditions list. Returns the first matching string path.
+fn resolve_exports_value(
+    value: &serde_json::Value, conditions: &[&str],
+) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(map) => {
+            for cond in conditions {
+                if let Some(v) = map.get(*cond) {
+                    if let Some(r) = resolve_exports_value(v, conditions) {
+                        return Some(r);
+                    }
+                }
+            }
+            // Fall back to "default" key if present.
+            if let Some(v) = map.get("default") {
+                return resolve_exports_value(v, conditions);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 fn try_directory_with_index(abs_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let pkg_json = abs_dir.join("package.json");
     if pkg_json.is_file() {
         if let Ok(text) = std::fs::read_to_string(&pkg_json) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                // Per Node + Bun semantics, `exports` (when present) takes
+                // priority over `main`/`module`. Conditions match Bun's
+                // priority order so consumer libraries with a `bun` build
+                // condition land on the same entry point.
+                if let Some(exports) = parsed.get("exports") {
+                    // exports may itself be a string (single export) or
+                    // an object whose "." key is the root export.
+                    let conditions = ["bun", "import", "module", "default", "node"];
+                    let root = match exports {
+                        serde_json::Value::String(_) => Some(exports.clone()),
+                        serde_json::Value::Object(map) => map.get(".").cloned()
+                            .or_else(|| {
+                                // No "." subpath but conditions at top level
+                                // (e.g. {"import": "./x.js"}). Treat the
+                                // whole object as the root conditional set.
+                                let has_subpath = map.keys().any(|k| k.starts_with('.'));
+                                if has_subpath { None } else { Some(exports.clone()) }
+                            }),
+                        _ => None,
+                    };
+                    if let Some(r) = root {
+                        if let Some(rel) = resolve_exports_value(&r, &conditions) {
+                            let target = abs_dir.join(rel.trim_start_matches("./"));
+                            if let Some(f) = try_extensions(&target) {
+                                return Some(f);
+                            }
+                            if target.is_file() {
+                                return Some(target);
+                            }
+                            if target.is_dir() {
+                                if let Some(f) = try_directory_with_index(&target) {
+                                    return Some(f);
+                                }
+                            }
+                        }
+                    }
+                }
                 let main_str = parsed
                     .get("module")
                     .or_else(|| parsed.get("main"))
@@ -1985,6 +2047,15 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
         (function() {
             const subtle = globalThis.crypto.subtle;
 
+            // CryptoKey global — many consumer libs (jose, oslo, openid-client)
+            // do `instanceof CryptoKey` on values returned by subtle.importKey.
+            // Defined here as a marker class; importKey sets the prototype on
+            // its returns so the instanceof check passes without changing the
+            // internal _bytes/_n/_e/_x/_y/_d shape.
+            if (typeof globalThis.CryptoKey === "undefined") {
+                globalThis.CryptoKey = class CryptoKey {};
+            }
+
             // crypto.getRandomValues(typedArray) — fills the array with
             // cryptographically random bytes and returns the same array.
             globalThis.crypto.getRandomValues = function getRandomValues(typedArray) {
@@ -2205,6 +2276,18 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     _hashName: alg.hash,  // implementation-private; pinned at import
                     _algName: "HMAC",
                 };
+            };
+
+            // Wrap importKey so every returned key has CryptoKey.prototype.
+            // jose + oslo + openid-client + many other consumer libraries
+            // gate signing/verification on `instanceof CryptoKey`.
+            const _importKeyOrig = subtle.importKey.bind(subtle);
+            subtle.importKey = async function importKey() {
+                const k = await _importKeyOrig.apply(null, arguments);
+                if (k && typeof k === "object") {
+                    Object.setPrototypeOf(k, globalThis.CryptoKey.prototype);
+                }
+                return k;
             };
 
             // deriveBits(algorithm, baseKey, length) → Promise<ArrayBuffer>
@@ -2535,8 +2618,12 @@ fn wire_text_encoding<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> Js
         globalThis.TextEncoder = class TextEncoder {
             get encoding() { return "utf-8"; }
             encode(input) {
-                if (input === undefined) return __te.encode();
-                return __te.encode(input);
+                // Per WHATWG Encoding: encode() returns Uint8Array, not Array.
+                // The Rust binding returns a plain array (rquickjs FFI shape);
+                // wrap so consumers checking `instanceof Uint8Array` (jose,
+                // many crypto libs) accept it.
+                const raw = (input === undefined) ? __te.encode() : __te.encode(input);
+                return new Uint8Array(raw);
             }
         };
         globalThis.TextDecoder = class TextDecoder {

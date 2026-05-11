@@ -71,12 +71,15 @@ async function selfTest() {
         e5 instanceof TypeError &&
         /HTTPS not yet supported|TLS substrate/.test(e5.message)]);
 
-    // 6. Bad hostname throws ENODNS-shaped error.
+    // 6. Bad hostname throws DNS-resolution error. RFC 2606 reserved
+    //    .invalid TLD is guaranteed never to resolve. Π1.2 changed
+    //    the error semantics: previously "Tier-Π1.2 pending" guard;
+    //    now an actual resolver failure routed through TypeError.
     pulse();
     let e6 = null;
-    try { await fetch("http://example.com/"); } catch (e) { e6 = e; }
+    try { await fetch("http://nonexistent-host-12345.invalid/"); } catch (e) { e6 = e; }
     results.push(["bad-hostname-throws",
-        e6 instanceof TypeError && /DNS|hostname/.test(e6.message)]);
+        e6 instanceof TypeError && /DNS|resolution|invalid|failed/i.test(e6.message)]);
 
     // 7. Content-Length auto-set on request body (proven via successful POST).
     pulse();

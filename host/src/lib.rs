@@ -225,7 +225,9 @@ fn is_node_builtin(name: &str) -> bool {
         "node:buffer" | "buffer" |
         "node:url" | "url" |
         "node:os" | "os" |
-        "node:process" | "process"
+        "node:process" | "process" |
+        "node:dns" | "dns" |
+        "node:dns/promises" | "dns/promises"
     )
 }
 
@@ -249,6 +251,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:process" | "process" => ("process", &["argv", "env", "platform",
             "arch", "version", "versions", "cwd", "exit", "stdout", "stderr",
             "hrtime"]),
+        "node:dns" | "dns" => ("nodeDns", &["lookup", "resolve", "resolve4",
+            "resolve6", "promises"]),
+        "node:dns/promises" | "dns/promises" => ("nodeDnsPromises",
+            &["lookup", "resolve", "resolve4", "resolve6"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -306,8 +312,12 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_fetch_api_classes_js(&ctx)?;
     wire_http_codec(&ctx, &global)?;
     wire_sockets(&ctx, &global)?;
+    wire_dns(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
+    // install_dns_js extends globalThis.Bun.dns, so it MUST run after
+    // install_bun_namespace_js. Order matters per seed §A8 install pattern.
+    install_dns_js(&ctx)?;
     wire_bun_serve_static(&ctx, &global)?;
     install_bun_serve_js(&ctx)?;
     wire_bun_spawn_static(&ctx, &global)?;
@@ -773,6 +783,224 @@ fn json_str(s: &str) -> String {
 // caller is responsible for not blocking the main JS thread in a
 // production server (a higher-level Bun.listen async wrapper will land
 // in a follow-on round).
+
+fn wire_dns<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    use std::net::ToSocketAddrs;
+    // Tier-Π1.2: DNS resolution via std::net::ToSocketAddrs.
+    //
+    // Sync (blocking) resolver. This is the Tier-3 implementation-contingent
+    // divergence from Bun (Bun uses c-ares for async resolution with an
+    // in-process cache). Recorded against seed C1's three-tier authority
+    // taxonomy: Tier-1 spec conformance holds (lookup resolves hostnames to
+    // IPs per RFC 1035 / Node dns semantics); Tier-2 ecosystem-compat holds
+    // (Bun.dns + node:dns surfaces visible to consumers); Tier-3 sync vs
+    // async resolver internals deliberately diverge.
+    //
+    // Per seed §A8.16: no process-global resolver cache in this round (would
+    // require a serial guard). A future round can add an Arc<Mutex<...>>
+    // cache layer if consumer demand surfaces.
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "lookup_sync",
+        Function::new(ctx.clone(), |host: String| -> JsResult<String> {
+            // Use port 0 for resolution-only; we discard the SocketAddr's port.
+            // ToSocketAddrs requires a host:port string.
+            let addrs: Vec<std::net::SocketAddr> = format!("{}:0", host)
+                .to_socket_addrs()
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "dns", "lookup_sync", e.to_string()))?
+                .collect();
+            // Prefer IPv4 first per Node/Bun default ("ipv4first" or "verbatim"
+            // family ordering; we approximate "ipv4first" for Π1.2).
+            let first = addrs.iter().find(|a| a.is_ipv4())
+                .or_else(|| addrs.first())
+                .ok_or_else(|| rquickjs::Error::new_from_js_message(
+                    "dns", "lookup_sync",
+                    format!("no addresses found for '{}'", host)))?;
+            Ok(first.ip().to_string())
+        })?,
+    )?;
+    ns.set(
+        "lookup_all_sync",
+        Function::new(ctx.clone(), |host: String| -> JsResult<Vec<Vec<String>>> {
+            // Returns Vec<[address_string, family_string]> as a JSON-friendly
+            // pair-list per seed §A8.6 (rquickjs FFI tuple workaround).
+            let addrs: Vec<std::net::SocketAddr> = format!("{}:0", host)
+                .to_socket_addrs()
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "dns", "lookup_all_sync", e.to_string()))?
+                .collect();
+            let out: Vec<Vec<String>> = addrs.iter().map(|a| {
+                let family = if a.is_ipv4() { "4" } else { "6" };
+                vec![a.ip().to_string(), family.to_string()]
+            }).collect();
+            Ok(out)
+        })?,
+    )?;
+    global.set("__dns", ns)?;
+    Ok(())
+}
+
+fn install_dns_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // JS-side facades per seed §III.A8.2 (stateless Rust helpers + JS-side
+    // class). Three surfaces:
+    //   1. globalThis.Bun.dns.lookup(host, opts?) -> Promise<[{address, family}]>
+    //   2. globalThis.nodeDns (node:dns shape): lookup(h, opts?, cb) +
+    //      resolve / resolve4 / resolve6 + promises sub-namespace.
+    //   3. globalThis.nodeDnsPromises (node:dns/promises shape):
+    //      lookup(h, opts?) -> Promise<{address, family}>.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const dns = globalThis.__dns;
+
+            function decodeFamily(famStr) { return famStr === "4" ? 4 : 6; }
+
+            // Bun.dns.lookup: returns array of {address, family} promises.
+            // https://bun.sh/docs/api/dns
+            globalThis.Bun = globalThis.Bun || {};
+            globalThis.Bun.dns = globalThis.Bun.dns || {};
+            globalThis.Bun.dns.lookup = async function(hostname, options) {
+                const all = dns.lookup_all_sync(hostname);
+                let filtered = all;
+                if (options && typeof options.family === "number") {
+                    const famStr = options.family === 6 ? "6" : "4";
+                    filtered = all.filter(pair => pair[1] === famStr);
+                }
+                return filtered.map(pair => ({
+                    address: pair[0],
+                    family: decodeFamily(pair[1]),
+                }));
+            };
+
+            // node:dns shape. lookup is callback-style; resolve* return arrays.
+            const nodeDns = {};
+            nodeDns.lookup = function(hostname, optionsOrCb, maybeCb) {
+                let options, cb;
+                if (typeof optionsOrCb === "function") {
+                    cb = optionsOrCb;
+                    options = {};
+                } else {
+                    options = optionsOrCb || {};
+                    cb = maybeCb;
+                }
+                if (typeof cb !== "function") {
+                    throw new TypeError("dns.lookup: callback required");
+                }
+                try {
+                    const all = dns.lookup_all_sync(hostname);
+                    let filtered = all;
+                    if (typeof options.family === "number" && options.family !== 0) {
+                        const famStr = options.family === 6 ? "6" : "4";
+                        filtered = all.filter(p => p[1] === famStr);
+                    }
+                    if (filtered.length === 0) {
+                        const err = new Error("ENOTFOUND " + hostname);
+                        err.code = "ENOTFOUND";
+                        err.hostname = hostname;
+                        queueMicrotask(() => cb(err));
+                        return;
+                    }
+                    if (options.all === true) {
+                        const arr = filtered.map(p => ({
+                            address: p[0], family: decodeFamily(p[1]),
+                        }));
+                        queueMicrotask(() => cb(null, arr));
+                    } else {
+                        const first = filtered[0];
+                        queueMicrotask(() => cb(null, first[0], decodeFamily(first[1])));
+                    }
+                } catch (e) {
+                    const err = new Error("ENOTFOUND " + hostname);
+                    err.code = "ENOTFOUND";
+                    err.hostname = hostname;
+                    queueMicrotask(() => cb(err));
+                }
+            };
+            nodeDns.resolve4 = function(hostname, cb) {
+                try {
+                    const all = dns.lookup_all_sync(hostname);
+                    const v4 = all.filter(p => p[1] === "4").map(p => p[0]);
+                    if (v4.length === 0) {
+                        const err = new Error("ENOTFOUND " + hostname);
+                        err.code = "ENOTFOUND";
+                        err.hostname = hostname;
+                        queueMicrotask(() => cb(err));
+                        return;
+                    }
+                    queueMicrotask(() => cb(null, v4));
+                } catch (e) {
+                    const err = new Error("ENOTFOUND " + hostname);
+                    err.code = "ENOTFOUND";
+                    err.hostname = hostname;
+                    queueMicrotask(() => cb(err));
+                }
+            };
+            nodeDns.resolve6 = function(hostname, cb) {
+                try {
+                    const all = dns.lookup_all_sync(hostname);
+                    const v6 = all.filter(p => p[1] === "6").map(p => p[0]);
+                    if (v6.length === 0) {
+                        const err = new Error("ENOTFOUND " + hostname);
+                        err.code = "ENOTFOUND";
+                        err.hostname = hostname;
+                        queueMicrotask(() => cb(err));
+                        return;
+                    }
+                    queueMicrotask(() => cb(null, v6));
+                } catch (e) {
+                    const err = new Error("ENOTFOUND " + hostname);
+                    err.code = "ENOTFOUND";
+                    err.hostname = hostname;
+                    queueMicrotask(() => cb(err));
+                }
+            };
+            nodeDns.resolve = function(hostname, rrtypeOrCb, maybeCb) {
+                let rrtype, cb;
+                if (typeof rrtypeOrCb === "function") {
+                    cb = rrtypeOrCb;
+                    rrtype = "A";
+                } else {
+                    rrtype = rrtypeOrCb || "A";
+                    cb = maybeCb;
+                }
+                if (rrtype === "AAAA") return nodeDns.resolve6(hostname, cb);
+                return nodeDns.resolve4(hostname, cb);
+            };
+
+            // node:dns/promises sub-namespace and standalone module.
+            const promisesNs = {};
+            promisesNs.lookup = function(hostname, options) {
+                return new Promise((resolve, reject) => {
+                    nodeDns.lookup(hostname, options || {}, (err, addr, fam) => {
+                        if (err) reject(err);
+                        else if (options && options.all) resolve(addr);
+                        else resolve({ address: addr, family: fam });
+                    });
+                });
+            };
+            promisesNs.resolve4 = function(hostname) {
+                return new Promise((resolve, reject) => {
+                    nodeDns.resolve4(hostname, (e, r) => e ? reject(e) : resolve(r));
+                });
+            };
+            promisesNs.resolve6 = function(hostname) {
+                return new Promise((resolve, reject) => {
+                    nodeDns.resolve6(hostname, (e, r) => e ? reject(e) : resolve(r));
+                });
+            };
+            promisesNs.resolve = function(hostname, rrtype) {
+                return new Promise((resolve, reject) => {
+                    nodeDns.resolve(hostname, rrtype || "A", (e, r) => e ? reject(e) : resolve(r));
+                });
+            };
+            nodeDns.promises = promisesNs;
+
+            globalThis.nodeDns = nodeDns;
+            globalThis.nodeDnsPromises = promisesNs;
+        })();
+    "#)?;
+    Ok(())
+}
 
 fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     let ns = Object::new(ctx.clone())?;
@@ -2912,11 +3140,23 @@ if (typeof globalThis.fetch === "undefined" ||
         }
         let host = url.hostname;
         if (host === "localhost") host = "127.0.0.1";
-        // IPv4 literal check: a.b.c.d with 0-255 octets.
+        // IPv4 literal check: a.b.c.d with 0-255 octets. If not literal,
+        // route through the DNS resolver (Π1.2: std::net::ToSocketAddrs).
         const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(host) &&
             host.split(".").every(o => +o >= 0 && +o <= 255);
         if (!isIPv4) {
-            throw new TypeError("rusty-bun-host: hostname '" + host + "' requires DNS (Tier-Π1.2 pending). Use an IPv4 literal or 'localhost'.");
+            // Strip IPv6 bracket form: URL gives "[::1]" as hostname.
+            const bracketed = /^\[.*\]$/.test(host);
+            if (bracketed) {
+                // IPv6 literal — passthrough; sockets layer must accept it.
+                host = host.slice(1, -1);
+            } else {
+                try {
+                    host = globalThis.__dns.lookup_sync(host);
+                } catch (e) {
+                    throw new TypeError("rusty-bun-host: DNS resolution failed for '" + url.hostname + "': " + e.message);
+                }
+            }
         }
         const port = url.port ? parseInt(url.port, 10) : 80;
 
@@ -4342,6 +4582,10 @@ const COMMONJS_LOADER_JS: &str = r#"
         "os": () => globalThis.os,
         "node:process": () => globalThis.process,
         "process": () => globalThis.process,
+        "node:dns": () => globalThis.nodeDns,
+        "dns": () => globalThis.nodeDns,
+        "node:dns/promises": () => globalThis.nodeDnsPromises,
+        "dns/promises": () => globalThis.nodeDnsPromises,
     };
 
     function loadModule(absPath) {

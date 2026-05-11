@@ -1,0 +1,8 @@
+{
+  "name": "consumer-dns-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #53: DNS resolution via Bun.dns + node:dns + dns/promises. Tier-Π1.2 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

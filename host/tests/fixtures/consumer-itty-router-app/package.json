@@ -1,0 +1,9 @@
+{
+  "name": "consumer-hono-app",
+  "type": "module",
+  "version": "0.0.0",
+  "dependencies": {
+    "hono": "^4.6.0",
+    "itty-router": "^5.0.23"
+  }
+}

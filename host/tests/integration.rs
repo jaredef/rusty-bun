@@ -4366,3 +4366,34 @@ fn autoserve_self_fetch_round_trips() {
     "#).unwrap();
     assert_eq!(r, "200:hello from /echo");
 }
+
+// ════════════════════ Π5: first real-OSS differential (itty-router) ═════
+//
+// hono v4 was the first attempted target. Its dist build uses bare
+// uninitialized class field declarations with reserved-method names
+// (`get;` `post;` etc.) which QuickJS rejects as malformed accessor
+// syntax. Recorded as basin boundary E.12; re-open: (a) upgrade
+// rquickjs/QuickJS to a build accepting class-field decls with
+// reserved-method-name shorthand, OR (b) pre-eval source transform.
+//
+// itty-router is a tree-shakeable minified-ESM router popular in the
+// Bun/edge ecosystem (~1.5 KB). Uses Proxy + RegExp named-capture
+// groups + URL + URLSearchParams + async iteration — all in basin.
+
+#[test]
+fn consumer_itty_router_app_byte_identical_to_bun() {
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-itty-router-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}

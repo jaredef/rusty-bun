@@ -1281,3 +1281,75 @@ fn rsa_pkcs1_v15_sha384_sha512() {
         rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &hash, &sig, hash_name).unwrap();
     }
 }
+
+// ─── Blake2b (RFC 7693 §A) ──────────────────────────────────────────
+
+fn hex_to_bytes(s: &str) -> Vec<u8> {
+    let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut out = Vec::with_capacity(chars.len() / 2);
+    for i in (0..chars.len()).step_by(2) {
+        let hi = chars[i].to_digit(16).unwrap() as u8;
+        let lo = chars[i + 1].to_digit(16).unwrap() as u8;
+        out.push((hi << 4) | lo);
+    }
+    out
+}
+
+#[test]
+fn blake2b_rfc7693_abc() {
+    // RFC 7693 Appendix A: BLAKE2b-512("abc") =
+    // BA80A53F981C4D0D 6A2797B69F12F6E9 4C212F14685AC4B7 4B12BB6FDBFFA2D1
+    // 7D87C5392AAB792D C252D5DE4533CC95 18D38AA8DBF1925A B92386EDD4009923.
+    let out = rusty_web_crypto::blake2b(b"abc", &[], 64).unwrap();
+    let expected = hex_to_bytes(
+        "BA80A53F981C4D0D6A2797B69F12F6E94C212F14685AC4B74B12BB6FDBFFA2D1\
+         7D87C5392AAB792DC252D5DE4533CC9518D38AA8DBF1925AB92386EDD4009923");
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn blake2b_empty_input() {
+    // BLAKE2b-512 of empty input (cross-referenced with the Python
+    // hashlib.blake2b(digest_size=64).hexdigest() value).
+    let out = rusty_web_crypto::blake2b(b"", &[], 64).unwrap();
+    let expected = hex_to_bytes(
+        "786A02F742015903C6C6FD852552D272912F4740E15847618A86E217F71F5419\
+         D25E1031AFEE585313896444934EB04B903A685B1448B755D56F701AFE9BE2CE");
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn blake2b_with_key() {
+    // Keyed BLAKE2b is HMAC-style. With key=00..3f (64 bytes) and input
+    // 00..00 (64 bytes) the output is a known vector. We just sanity-check
+    // that key changes the output and length is correct.
+    let key: Vec<u8> = (0..64u8).collect();
+    let out = rusty_web_crypto::blake2b(b"hello", &key, 64).unwrap();
+    let out_no_key = rusty_web_crypto::blake2b(b"hello", &[], 64).unwrap();
+    assert_eq!(out.len(), 64);
+    assert_ne!(out, out_no_key);
+}
+
+#[test]
+fn blake2b_variable_output_length() {
+    // Truncated outputs match the prefix of the full 64-byte output ONLY
+    // if the parameter block is the same. Per RFC 7693 §2.5 the digest
+    // length is mixed into h[0]; different output sizes produce different
+    // streams. So we just verify length and uniqueness.
+    let a = rusty_web_crypto::blake2b(b"test", &[], 32).unwrap();
+    let b = rusty_web_crypto::blake2b(b"test", &[], 16).unwrap();
+    assert_eq!(a.len(), 32);
+    assert_eq!(b.len(), 16);
+    // First 16 bytes will NOT match because the parameter block differs.
+    // Just verify both have non-zero bytes (sanity).
+    assert!(a.iter().any(|&b| b != 0));
+    assert!(b.iter().any(|&b| b != 0));
+}
+
+#[test]
+fn blake2b_rejects_invalid_length() {
+    assert!(rusty_web_crypto::blake2b(b"", &[], 0).is_err());
+    assert!(rusty_web_crypto::blake2b(b"", &[], 65).is_err());
+    let too_long_key = vec![0u8; 65];
+    assert!(rusty_web_crypto::blake2b(b"", &too_long_key, 32).is_err());
+}

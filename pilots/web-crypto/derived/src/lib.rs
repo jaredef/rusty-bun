@@ -2112,3 +2112,117 @@ pub mod subtle {
         }
     }
 }
+
+// ──────────────────────── Blake2b (RFC 7693) ────────────────────────
+//
+// 64-bit BLAKE2b: produces 1-64-byte hashes, optional 0-64-byte key.
+// Block size 128 bytes; 12 rounds of mixing per compression call.
+// Used by Argon2id (RFC 9106) for password hashing.
+
+const BLAKE2B_IV: [u64; 8] = [
+    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
+    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
+    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+];
+
+// SIGMA permutation table (RFC 7693 §2.7).
+const BLAKE2B_SIGMA: [[usize; 16]; 12] = [
+    [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
+    [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
+    [ 7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8],
+    [ 9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13],
+    [ 2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
+    [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
+    [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
+    [ 6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
+    [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
+    [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
+];
+
+fn blake2b_mix(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
+    v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
+    v[d] = (v[d] ^ v[a]).rotate_right(32);
+    v[c] = v[c].wrapping_add(v[d]);
+    v[b] = (v[b] ^ v[c]).rotate_right(24);
+    v[a] = v[a].wrapping_add(v[b]).wrapping_add(y);
+    v[d] = (v[d] ^ v[a]).rotate_right(16);
+    v[c] = v[c].wrapping_add(v[d]);
+    v[b] = (v[b] ^ v[c]).rotate_right(63);
+}
+
+fn blake2b_compress(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
+    let mut v: [u64; 16] = [0; 16];
+    v[..8].copy_from_slice(h);
+    v[8..].copy_from_slice(&BLAKE2B_IV);
+    v[12] ^= t as u64;
+    v[13] ^= (t >> 64) as u64;
+    if last { v[14] = !v[14]; }
+    let mut m: [u64; 16] = [0; 16];
+    for i in 0..16 {
+        let off = i * 8;
+        m[i] = u64::from_le_bytes([
+            block[off], block[off+1], block[off+2], block[off+3],
+            block[off+4], block[off+5], block[off+6], block[off+7],
+        ]);
+    }
+    for round in 0..12 {
+        let s = &BLAKE2B_SIGMA[round];
+        blake2b_mix(&mut v, 0, 4,  8, 12, m[s[ 0]], m[s[ 1]]);
+        blake2b_mix(&mut v, 1, 5,  9, 13, m[s[ 2]], m[s[ 3]]);
+        blake2b_mix(&mut v, 2, 6, 10, 14, m[s[ 4]], m[s[ 5]]);
+        blake2b_mix(&mut v, 3, 7, 11, 15, m[s[ 6]], m[s[ 7]]);
+        blake2b_mix(&mut v, 0, 5, 10, 15, m[s[ 8]], m[s[ 9]]);
+        blake2b_mix(&mut v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
+        blake2b_mix(&mut v, 2, 7,  8, 13, m[s[12]], m[s[13]]);
+        blake2b_mix(&mut v, 3, 4,  9, 14, m[s[14]], m[s[15]]);
+    }
+    for i in 0..8 { h[i] ^= v[i] ^ v[i + 8]; }
+}
+
+/// Blake2b hash with variable output length (1..=64) and optional key (0..=64).
+pub fn blake2b(input: &[u8], key: &[u8], out_len: usize) -> Result<Vec<u8>, String> {
+    if out_len == 0 || out_len > 64 { return Err("blake2b: out_len must be 1..=64".into()); }
+    if key.len() > 64 { return Err("blake2b: key length must be 0..=64".into()); }
+    let mut h = BLAKE2B_IV;
+    // Parameter block (RFC 7693 §2.5): low byte order is
+    //   digest_length || key_length || fanout || depth.
+    h[0] ^= 0x01010000 | ((key.len() as u64) << 8) | (out_len as u64);
+    // Prepend the key padded to a full block (RFC 7693 §3.3).
+    let mut buf: Vec<u8> = Vec::new();
+    if !key.is_empty() {
+        let mut padded = [0u8; 128];
+        padded[..key.len()].copy_from_slice(key);
+        buf.extend_from_slice(&padded);
+    }
+    buf.extend_from_slice(input);
+    // If buf is empty (no key AND no input), the final block is all-zero with t=0 + last=true.
+    // Process all but the final block as non-last.
+    let mut t: u128 = 0;
+    let mut i = 0;
+    while i + 128 < buf.len() {
+        let mut block = [0u8; 128];
+        block.copy_from_slice(&buf[i..i + 128]);
+        t = t.wrapping_add(128);
+        blake2b_compress(&mut h, &block, t, false);
+        i += 128;
+    }
+    // Final block (may be partial, padded with zeros).
+    let remaining = buf.len() - i;
+    let mut last_block = [0u8; 128];
+    last_block[..remaining].copy_from_slice(&buf[i..]);
+    t = t.wrapping_add(remaining as u128);
+    blake2b_compress(&mut h, &last_block, t, true);
+    // Output the first out_len bytes (LE).
+    let mut out = Vec::with_capacity(out_len);
+    for word in h.iter().take((out_len + 7) / 8) {
+        for b in word.to_le_bytes() {
+            if out.len() < out_len { out.push(b); }
+        }
+    }
+    out.truncate(out_len);
+    Ok(out)
+}
+

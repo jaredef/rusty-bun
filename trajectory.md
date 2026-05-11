@@ -203,7 +203,9 @@ Per seed §VII.A. The 2026-05-11 engagement run achieved curated-corpus parity (
 13. **Optional, based on consumer-corpus pull:** node:zlib (folded into Π1.3), node:child_process (atop Bun.spawn), node:readline / repl / tty / vm / perf_hooks / async_hooks. **node:assert** ✅ DONE 2026-05-11 (single round; landed as the natural next-move after the L2M-bound resolver-side observation per Doc 700 Appendix C — the lowest-per-round-load surface remaining in the queue at that point in the session). assert / strictEqual / deepStrictEqual / throws / doesNotThrow / rejects / doesNotReject / match / doesNotMatch / fail / ifError / AssertionError + strict mode alias. consumer-node-assert-suite 8/8 byte-identical to Bun on first commit.
 
 **Phase Π4 — Bun-namespace breadth (2-3 rounds).**
-14. **Bun.password** — Argon2id wrapper. 1 round.
+14. **Bun.password**
+   - **Π4.14.a (Blake2b substrate per RFC 7693)** ✅ DONE 2026-05-11. Added blake2b(input, key, out_len) to rusty-web-crypto. Variable output length 1-64, optional key 0-64. 12 rounds of G-mix per compression. RFC 7693 §A "abc" golden vector + empty-input golden vector both verified. 5 new tests. Bug caught in-round: initial implementation pushed a safety zero byte for empty input, producing wrong hash; fixed by treating empty buf as the canonical all-zero-block final case. Gates Π4.14.b.
+   - **Π4.14.b (Argon2id per RFC 9106 + Bun.password JS host wiring)** — next.
 15. **Bun.SQLite** — substantial; defer unless consumer-corpus requires.
 16. ~~**Bun-namespace utilities (small subset)**~~ — ✅ DONE 2026-05-11 (single round, K~12 surfaces in one commit per §III.A8.13). Bun.write, Bun.fileURLToPath, Bun.pathToFileURL, Bun.deepEquals, Bun.inspect, Bun.CryptoHasher (sha1/sha256/sha384/sha512), Bun.Glob (minimal match), Bun.gunzipSync + Bun.inflateSync (compose on Π1.3), Bun.escapeHTML, Bun.nanoseconds, Bun.sleep, Bun.sleepSync. consumer-bun-small-utilities-suite 8/8 byte-identical to Bun. Bun.YAML / Bun.connect (async) remain deferred (architectural cost). Bun.dns already landed in Π1.2.
 

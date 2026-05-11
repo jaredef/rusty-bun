@@ -1,0 +1,9 @@
+{
+  "name": "consumer-async-pool-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #42: vendored async-pool library exercising AbortSignal + Promise lifecycle + concurrency control.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "async-pool": "^0.1.0" }
+}

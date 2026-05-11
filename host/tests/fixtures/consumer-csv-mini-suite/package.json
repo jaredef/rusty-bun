@@ -1,0 +1,9 @@
+{
+  "name": "consumer-csv-mini-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #40: vendored RFC 4180 CSV parser+writer exercising state-machine string processing.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "csv-mini": "^0.1.0" }
+}

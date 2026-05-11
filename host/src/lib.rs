@@ -2857,6 +2857,154 @@ globalThis.Response = class Response {
         return r;
     }
 };
+
+// ─── globalThis.fetch (Tier-Π1.1) ─────────────────────────────────
+// Real fetch() composing globalThis.HTTP (RFC 7230 codec) + globalThis.TCP
+// (sockets pilot, async-listener-capable). HTTP only this round; HTTPS
+// (Π1.4 TLS) + DNS (Π1.2) + chunked-streaming response (Π1 polish) come
+// in follow-on rounds. The fetch-api classes (Request/Response/Headers)
+// installed above remain the data-layer; this wiring lifts them onto
+// real wire-level I/O for http:// URLs.
+//
+// Scope (this round):
+//   - http:// only; throws "ENOTLS" for https:// (Π1.4 closes)
+//   - IP-literal hosts + "localhost" supported; other hostnames throw
+//     "ENODNS" with a pointer to Π1.2
+//   - Response body read by looping TCP.read until orderly close
+//     (forces Connection: close in the request)
+//   - Returns a real Response built from the codec's ParsedResponse
+//
+// Out of scope this round (deferred to Π1 follow-on rounds):
+//   - Keep-alive / connection pooling
+//   - Transfer-Encoding: chunked response streaming (parseResponse already
+//     handles whole-message chunked; streaming is later)
+//   - Compression (Π1.3): Content-Encoding gzip/deflate/brotli decoding
+
+if (typeof globalThis.fetch === "undefined" ||
+    !globalThis.fetch.__isRustyBunReal) {
+    globalThis.fetch = async function fetch(input, init) {
+        if (typeof globalThis.TCP === "undefined" ||
+            typeof globalThis.HTTP === "undefined") {
+            throw new TypeError("rusty-bun-host: fetch requires globalThis.TCP + globalThis.HTTP (Tier-G substrate)");
+        }
+        // Accept string URL, URL object, or Request object.
+        let url, method, headers, body;
+        if (input instanceof Request) {
+            url = new URL(input.url);
+            method = input.method;
+            headers = input.headers;
+            body = (init && init.body !== undefined) ? init.body :
+                (input._body !== null && input._body !== undefined) ? input._body : null;
+        } else {
+            url = (input instanceof URL) ? input : new URL(String(input));
+            init = init || {};
+            method = (init.method || "GET").toUpperCase();
+            headers = new Headers(init.headers || {});
+            body = init.body != null ? init.body : null;
+        }
+
+        // Scheme + host validation per Tier-Π1.1 scope.
+        if (url.protocol !== "http:") {
+            if (url.protocol === "https:") {
+                throw new TypeError("rusty-bun-host: HTTPS not yet supported (Tier-Π1.4 TLS substrate pending). url=" + url.href);
+            }
+            throw new TypeError("rusty-bun-host: unsupported scheme '" + url.protocol + "' (only http: this round)");
+        }
+        let host = url.hostname;
+        if (host === "localhost") host = "127.0.0.1";
+        // IPv4 literal check: a.b.c.d with 0-255 octets.
+        const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(host) &&
+            host.split(".").every(o => +o >= 0 && +o <= 255);
+        if (!isIPv4) {
+            throw new TypeError("rusty-bun-host: hostname '" + host + "' requires DNS (Tier-Π1.2 pending). Use an IPv4 literal or 'localhost'.");
+        }
+        const port = url.port ? parseInt(url.port, 10) : 80;
+
+        // Build headers list as [name, value] pairs.
+        const headerList = [];
+        let hasHost = false, hasContentLength = false, hasConnection = false;
+        headers.forEach((v, n) => {
+            const lower = n.toLowerCase();
+            if (lower === "host") hasHost = true;
+            if (lower === "content-length") hasContentLength = true;
+            if (lower === "connection") hasConnection = true;
+            headerList.push([n, v]);
+        });
+        if (!hasHost) headerList.push(["Host", url.host]);
+        // Force Connection: close so the server closes the TCP connection
+        // when the response is complete; we use orderly-close as the
+        // "response complete" signal in this round. Keep-alive is later.
+        if (!hasConnection) headerList.push(["Connection", "close"]);
+
+        // Body normalization.
+        let bodyBytes;
+        if (body == null) {
+            bodyBytes = new Uint8Array(0);
+        } else if (typeof body === "string") {
+            bodyBytes = new TextEncoder().encode(body);
+        } else if (body instanceof Uint8Array) {
+            bodyBytes = body;
+        } else if (body instanceof ArrayBuffer) {
+            bodyBytes = new Uint8Array(body);
+        } else if (Array.isArray(body)) {
+            bodyBytes = new Uint8Array(body);
+        } else if (body && typeof body === "object" && typeof body.byteLength === "number") {
+            bodyBytes = new Uint8Array(body.buffer || body, body.byteOffset || 0, body.byteLength);
+        } else {
+            // Best-effort coercion via String — matches fetch's behavior for
+            // miscellaneous body values (URLSearchParams, FormData not yet).
+            bodyBytes = new TextEncoder().encode(String(body));
+        }
+        if (!hasContentLength && bodyBytes.length > 0) {
+            headerList.push(["Content-Length", String(bodyBytes.length)]);
+        }
+
+        // Build request bytes via the codec.
+        const reqPath = url.pathname + (url.search || "");
+        const reqBytes = globalThis.HTTP.serializeRequest(method, reqPath, headerList, bodyBytes);
+
+        // Connect and send.
+        const sid = globalThis.TCP.connect(host + ":" + port);
+        try {
+            globalThis.TCP.writeAll(sid, reqBytes);
+            // Read until orderly close: accumulate chunks.
+            const chunks = [];
+            let total = 0;
+            while (true) {
+                const chunk = globalThis.TCP.read(sid, 65536);
+                if (chunk.length === 0) break;  // FIN
+                chunks.push(chunk);
+                total += chunk.length;
+                // Safety bound: 32 MB per response. Real fetch streams; this
+                // is the buffered-read path for the first iteration.
+                if (total > 32 * 1024 * 1024) {
+                    throw new RangeError("rusty-bun-host fetch: response exceeds 32 MB buffered limit");
+                }
+            }
+            // Concatenate.
+            const full = new Uint8Array(total);
+            let off = 0;
+            for (const c of chunks) { full.set(c, off); off += c.length; }
+            // Parse via codec.
+            const parsed = globalThis.HTTP.parseResponse(full);
+            // Build Response.
+            const respHeaders = new Headers();
+            for (const [n, v] of parsed.headers) respHeaders.append(n, v);
+            const resp = new Response(parsed.body, {
+                status: parsed.status,
+                statusText: parsed.reason,
+                headers: respHeaders,
+            });
+            // Per spec: Response.url is the final URL after redirects. We
+            // don't follow redirects in this round; set to the request URL.
+            resp._url = url.href;
+            return resp;
+        } finally {
+            try { globalThis.TCP.close(sid); } catch (_) {}
+        }
+    };
+    globalThis.fetch.__isRustyBunReal = true;
+}
 "#;
 
 fn install_fetch_api_classes_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {

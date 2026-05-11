@@ -1,0 +1,8 @@
+{
+  "name": "consumer-real-fetch-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #52: real-network fetch() composing http-codec + sockets. First Tier-Π1.1 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

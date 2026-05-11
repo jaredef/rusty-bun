@@ -9,7 +9,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-OUT=$(cargo test --release --workspace 2>&1)
+# --slow includes seed §A8.17 inner-loop-budget tests (bigint/EC/RSA suites
+# marked #[ignore] for the inner loop). Run with --slow at engagement-closure
+# milestones (Tier-Π phase closure, host-iteration completion).
+SLOW_ARGS=""
+for arg in "$@"; do
+    if [ "$arg" = "--slow" ]; then
+        SLOW_ARGS="-- --include-ignored"
+    fi
+done
+
+OUT=$(cargo test --release --workspace $SLOW_ARGS 2>&1)
 EXIT=$?
 
 # Aggregate the per-test-suite "test result:" lines.

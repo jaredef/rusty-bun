@@ -1,0 +1,8 @@
+{
+  "name": "consumer-deps-chain",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #22: vendored library-with-dependency chain. colorize imports ansi-styles internally — tests transitive bare-specifier resolution across packages.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

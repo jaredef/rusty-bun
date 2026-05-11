@@ -953,3 +953,41 @@ fn rsa_oaep_sha256_rejects_message_too_long() {
     assert!(rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &at_limit, b"", &seed, sha256_vec, 32).is_ok());
     let _ = k;
 }
+
+// ─────────────── RSA-PSS (RFC 8017 §8.1) ───────────────────────────
+
+#[test]
+fn rsa_pss_sha256_sign_verify_roundtrip() {
+    let (n, e, d) = test_rsa_2048();
+    let message = b"sign-this-message";
+    let salt = vec![0x55u8; 32];
+    let sig = rusty_web_crypto::rsa_pss_sign(&n, &d, message, &salt, sha256_vec, 32).unwrap();
+    assert_eq!(sig.len(), n.len());
+    rusty_web_crypto::rsa_pss_verify(&n, &e, message, &sig, 32, sha256_vec, 32).unwrap();
+}
+
+#[test]
+fn rsa_pss_verify_rejects_wrong_message() {
+    let (n, e, d) = test_rsa_2048();
+    let salt = vec![0x55u8; 32];
+    let sig = rusty_web_crypto::rsa_pss_sign(&n, &d, b"original", &salt, sha256_vec, 32).unwrap();
+    assert!(rusty_web_crypto::rsa_pss_verify(&n, &e, b"tampered", &sig, 32, sha256_vec, 32).is_err());
+}
+
+#[test]
+fn rsa_pss_verify_rejects_tampered_signature() {
+    let (n, e, d) = test_rsa_2048();
+    let salt = vec![0x55u8; 32];
+    let mut sig = rusty_web_crypto::rsa_pss_sign(&n, &d, b"msg", &salt, sha256_vec, 32).unwrap();
+    sig[10] ^= 0x01;
+    assert!(rusty_web_crypto::rsa_pss_verify(&n, &e, b"msg", &sig, 32, sha256_vec, 32).is_err());
+}
+
+#[test]
+fn rsa_pss_zero_salt_length_is_deterministic() {
+    let (n, e, d) = test_rsa_2048();
+    let sig1 = rusty_web_crypto::rsa_pss_sign(&n, &d, b"msg", &[], sha256_vec, 32).unwrap();
+    let sig2 = rusty_web_crypto::rsa_pss_sign(&n, &d, b"msg", &[], sha256_vec, 32).unwrap();
+    assert_eq!(sig1, sig2, "PSS with sLen=0 must be deterministic");
+    rusty_web_crypto::rsa_pss_verify(&n, &e, b"msg", &sig1, 0, sha256_vec, 32).unwrap();
+}

@@ -723,6 +723,42 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // RSA-PSS (RFC 8017 §8.1). Signing requires private key + salt;
+    // verify requires public key + signature + claimed salt length.
+    subtle.set(
+        "rsaPssSignBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, d: Vec<u8>, msg: Vec<u8>, salt: Vec<u8>, hash_name: String| -> JsResult<Vec<u8>> {
+            let r = match hash_name.as_str() {
+                "SHA-1"   => rusty_web_crypto::rsa_pss_sign(&n, &d, &msg, &salt,
+                                 |b| rusty_web_crypto::digest_sha1(b).to_vec(), 20),
+                "SHA-256" => rusty_web_crypto::rsa_pss_sign(&n, &d, &msg, &salt,
+                                 |b| rusty_web_crypto::digest_sha256(b).to_vec(), 32),
+                "SHA-384" => rusty_web_crypto::rsa_pss_sign(&n, &d, &msg, &salt,
+                                 |b| rusty_web_crypto::digest_sha384(b).to_vec(), 48),
+                "SHA-512" => rusty_web_crypto::rsa_pss_sign(&n, &d, &msg, &salt,
+                                 |b| rusty_web_crypto::digest_sha512(b).to_vec(), 64),
+                other => Err(format!("RSA-PSS: unsupported hash {}", other)),
+            };
+            r.map_err(|e| rquickjs::Error::new_from_js_message("RSA-PSS", "sign", e))
+        })?,
+    )?;
+    subtle.set(
+        "rsaPssVerifyBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, e: Vec<u8>, msg: Vec<u8>, sig: Vec<u8>, s_len: u32, hash_name: String| -> JsResult<bool> {
+            let r = match hash_name.as_str() {
+                "SHA-1"   => rusty_web_crypto::rsa_pss_verify(&n, &e, &msg, &sig, s_len as usize,
+                                 |b| rusty_web_crypto::digest_sha1(b).to_vec(), 20),
+                "SHA-256" => rusty_web_crypto::rsa_pss_verify(&n, &e, &msg, &sig, s_len as usize,
+                                 |b| rusty_web_crypto::digest_sha256(b).to_vec(), 32),
+                "SHA-384" => rusty_web_crypto::rsa_pss_verify(&n, &e, &msg, &sig, s_len as usize,
+                                 |b| rusty_web_crypto::digest_sha384(b).to_vec(), 48),
+                "SHA-512" => rusty_web_crypto::rsa_pss_verify(&n, &e, &msg, &sig, s_len as usize,
+                                 |b| rusty_web_crypto::digest_sha512(b).to_vec(), 64),
+                _ => return Ok(false),
+            };
+            Ok(r.is_ok())
+        })?,
+    )?;
     // RSA-OAEP (RFC 8017 §7.1). Public-key encryption with OAEP padding.
     // Caller supplies a 32-byte seed (for SHA-256) — JS-side generates
     // it from /dev/urandom via crypto.getRandomValues before calling.
@@ -938,7 +974,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
                 if (format === "jwk") {
                     const alg = normalizeAlg(algorithm);
-                    if (alg.name === "RSAOAEP") {
+                    if (alg.name === "RSAOAEP" || alg.name === "RSAPSS") {
+                        const specName = alg.name === "RSAOAEP" ? "RSA-OAEP" : "RSA-PSS";
                         if (!keyData || keyData.kty !== "RSA") throw new TypeError("JWK kty must be RSA");
                         const n = b64urlToBytes(keyData.n);
                         const e = b64urlToBytes(keyData.e);
@@ -952,18 +989,18 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                             const d = b64urlToBytes(keyData.d);
                             return {
                                 type: "private", extractable: !!extractable,
-                                algorithm: { name: "RSA-OAEP", modulusLength: n.length * 8,
+                                algorithm: { name: specName, modulusLength: n.length * 8,
                                              publicExponent: e, hash: { name: hashSpec } },
                                 usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                                _n: n, _e: e, _d: d, _hashSpec: hashSpec, _algName: "RSA-OAEP",
+                                _n: n, _e: e, _d: d, _hashSpec: hashSpec, _algName: specName,
                             };
                         }
                         return {
                             type: "public", extractable: !!extractable,
-                            algorithm: { name: "RSA-OAEP", modulusLength: n.length * 8,
+                            algorithm: { name: specName, modulusLength: n.length * 8,
                                          publicExponent: e, hash: { name: hashSpec } },
                             usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                            _n: n, _e: e, _hashSpec: hashSpec, _algName: "RSA-OAEP",
+                            _n: n, _e: e, _hashSpec: hashSpec, _algName: specName,
                         };
                     }
                     throw new Error("JWK importKey: unsupported algorithm " + alg.name);
@@ -1192,34 +1229,51 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             // sign(algorithm, key, data) → Promise<ArrayBuffer>
             subtle.sign = async function sign(algorithm, key, data) {
                 const alg = normalizeAlg(algorithm);
-                if (alg.name !== "HMAC") {
-                    throw new Error("Unsupported sign algorithm: " + alg.name);
-                }
-                if (!key || !Array.isArray(key._bytes)) {
-                    throw new TypeError("sign: key is not a valid HMAC key");
-                }
-                if (!key.usages.includes("sign")) {
+                if (!key || !key.usages.includes("sign")) {
                     throw new Error("Key not usable for sign");
                 }
-                const h = keyHash(key);
-                return toArrayBuffer(h.hmac(key._bytes, toBytes(data)));
+                if (alg.name === "HMAC") {
+                    if (!Array.isArray(key._bytes)) throw new TypeError("sign: key is not HMAC");
+                    const h = keyHash(key);
+                    return toArrayBuffer(h.hmac(key._bytes, toBytes(data)));
+                }
+                if (alg.name === "RSAPSS") {
+                    if (key._algName !== "RSA-PSS" || !key._d) {
+                        throw new TypeError("sign: key is not an RSA-PSS private key");
+                    }
+                    const sLen = algorithm.saltLength | 0;
+                    if (sLen < 0) throw new Error("RSA-PSS: saltLength must be ≥ 0");
+                    const hlen = { "SHA-1": 20, "SHA-256": 32, "SHA-384": 48, "SHA-512": 64 }[key._hashSpec];
+                    if (!hlen) throw new Error("RSA-PSS: unsupported hash " + key._hashSpec);
+                    const saltArr = new Uint8Array(sLen);
+                    if (sLen > 0) globalThis.crypto.getRandomValues(saltArr);
+                    return toArrayBuffer(subtle.rsaPssSignBytes(
+                        key._n, key._d, toBytes(data), Array.from(saltArr), key._hashSpec));
+                }
+                throw new Error("Unsupported sign algorithm: " + alg.name);
             };
 
             // verify(algorithm, key, signature, data) → Promise<boolean>
             subtle.verify = async function verify(algorithm, key, signature, data) {
                 const alg = normalizeAlg(algorithm);
-                if (alg.name !== "HMAC") {
-                    throw new Error("Unsupported verify algorithm: " + alg.name);
-                }
-                if (!key || !Array.isArray(key._bytes)) {
-                    throw new TypeError("verify: key is not a valid HMAC key");
-                }
-                if (!key.usages.includes("verify")) {
+                if (!key || !key.usages.includes("verify")) {
                     throw new Error("Key not usable for verify");
                 }
-                const h = keyHash(key);
-                const expected = h.hmac(key._bytes, toBytes(data));
-                return subtle.timingSafeEqualBytes(toBytes(signature), expected);
+                if (alg.name === "HMAC") {
+                    if (!Array.isArray(key._bytes)) throw new TypeError("verify: key is not HMAC");
+                    const h = keyHash(key);
+                    const expected = h.hmac(key._bytes, toBytes(data));
+                    return subtle.timingSafeEqualBytes(toBytes(signature), expected);
+                }
+                if (alg.name === "RSAPSS") {
+                    if (key._algName !== "RSA-PSS") {
+                        throw new TypeError("verify: key is not RSA-PSS");
+                    }
+                    const sLen = algorithm.saltLength | 0;
+                    return subtle.rsaPssVerifyBytes(
+                        key._n, key._e, toBytes(data), toBytes(signature), sLen, key._hashSpec);
+                }
+                throw new Error("Unsupported verify algorithm: " + alg.name);
             };
         })();
     "#)?;

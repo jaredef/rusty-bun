@@ -1,0 +1,8 @@
+{
+  "name": "consumer-rsa-pss-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #33: RSA-PSS sign/verify via crypto.subtle with JWK imported keys.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

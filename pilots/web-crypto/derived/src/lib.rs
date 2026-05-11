@@ -1018,6 +1018,121 @@ pub fn rsa_oaep_decrypt<F: Fn(&[u8]) -> Vec<u8> + Copy>(
     Ok(rest[sep + 1 ..].to_vec())
 }
 
+// ─────────────────────── RSA-PSS (RFC 8017 §8.1 + §9.1) ──────────
+//
+// Probabilistic Signature Scheme. RSASSA-PSS-SIGN wraps EMSA-PSS-ENCODE
+// + RSADP; RSASSA-PSS-VERIFY wraps RSAEP + EMSA-PSS-VERIFY.
+
+fn emsa_pss_encode<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    message: &[u8], em_bits: usize, salt: &[u8], hash_fn: F, hlen: usize,
+) -> Result<Vec<u8>, String> {
+    let em_len = (em_bits + 7) / 8;
+    let s_len = salt.len();
+    if em_len < hlen + s_len + 2 {
+        return Err("EMSA-PSS-ENCODE: encoding length too short".into());
+    }
+    let m_hash = hash_fn(message);
+    // M'' = (0x00)^8 || mHash || salt
+    let mut m_prime = Vec::with_capacity(8 + hlen + s_len);
+    m_prime.extend_from_slice(&[0u8; 8]);
+    m_prime.extend_from_slice(&m_hash);
+    m_prime.extend_from_slice(salt);
+    let h = hash_fn(&m_prime);
+    // DB = PS || 0x01 || salt
+    let mut db = Vec::with_capacity(em_len - hlen - 1);
+    db.extend(std::iter::repeat(0u8).take(em_len - s_len - hlen - 2));
+    db.push(0x01);
+    db.extend_from_slice(salt);
+    let db_mask = mgf1(&h, em_len - hlen - 1, hash_fn, hlen);
+    let mut masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    // Zero leftmost (8*emLen - emBits) bits of maskedDB.
+    let unused_bits = 8 * em_len - em_bits;
+    if unused_bits > 0 {
+        masked_db[0] &= 0xff >> unused_bits;
+    }
+    // EM = maskedDB || H || 0xbc
+    let mut em = Vec::with_capacity(em_len);
+    em.extend_from_slice(&masked_db);
+    em.extend_from_slice(&h);
+    em.push(0xbc);
+    Ok(em)
+}
+
+fn emsa_pss_verify<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    message: &[u8], em: &[u8], em_bits: usize, s_len: usize, hash_fn: F, hlen: usize,
+) -> Result<(), String> {
+    let em_len = (em_bits + 7) / 8;
+    if em.len() != em_len { return Err("EMSA-PSS-VERIFY: EM length mismatch".into()); }
+    if em_len < hlen + s_len + 2 { return Err("EMSA-PSS-VERIFY: inconsistent".into()); }
+    if *em.last().unwrap() != 0xbc { return Err("EMSA-PSS-VERIFY: missing 0xbc trailer".into()); }
+    let masked_db = &em[..em_len - hlen - 1];
+    let h = &em[em_len - hlen - 1 .. em_len - 1];
+    let unused_bits = 8 * em_len - em_bits;
+    if unused_bits > 0 {
+        let mask: u8 = (0xff_u16 << (8 - unused_bits)) as u8;
+        if masked_db[0] & mask != 0 {
+            return Err("EMSA-PSS-VERIFY: non-zero leftmost bits".into());
+        }
+    }
+    let db_mask = mgf1(h, em_len - hlen - 1, hash_fn, hlen);
+    let mut db: Vec<u8> = masked_db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    if unused_bits > 0 {
+        db[0] &= 0xff >> unused_bits;
+    }
+    // First emLen - hLen - sLen - 2 bytes must be 0x00, then 0x01.
+    let ps_len = em_len - hlen - s_len - 2;
+    for &b in &db[..ps_len] {
+        if b != 0 { return Err("EMSA-PSS-VERIFY: non-zero PS".into()); }
+    }
+    if db[ps_len] != 0x01 {
+        return Err("EMSA-PSS-VERIFY: missing 0x01 separator".into());
+    }
+    let salt = &db[ps_len + 1 ..];
+    let m_hash = hash_fn(message);
+    let mut m_prime = Vec::with_capacity(8 + hlen + salt.len());
+    m_prime.extend_from_slice(&[0u8; 8]);
+    m_prime.extend_from_slice(&m_hash);
+    m_prime.extend_from_slice(salt);
+    let h_prime = hash_fn(&m_prime);
+    if !timing_safe_equal(h, &h_prime) {
+        return Err("EMSA-PSS-VERIFY: H mismatch".into());
+    }
+    Ok(())
+}
+
+/// RSASSA-PSS-SIGN (RFC 8017 §8.1.1). `salt` must be `sLen` bytes of
+/// randomness (caller-supplied for testability).
+pub fn rsa_pss_sign<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    n_bytes: &[u8], d_bytes: &[u8], message: &[u8], salt: &[u8],
+    hash_fn: F, hlen: usize,
+) -> Result<Vec<u8>, String> {
+    let k = n_bytes.len();
+    let mod_bits = BigUInt::from_be_bytes(n_bytes).bit_len();
+    let em = emsa_pss_encode(message, mod_bits - 1, salt, hash_fn, hlen)?;
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let d = BigUInt::from_be_bytes(d_bytes);
+    let m_int = BigUInt::from_be_bytes(&em);
+    let s_int = rsadp(&n, &d, &m_int)?;
+    Ok(s_int.to_be_bytes(k))
+}
+
+/// RSASSA-PSS-VERIFY (RFC 8017 §8.1.2).
+pub fn rsa_pss_verify<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    n_bytes: &[u8], e_bytes: &[u8], message: &[u8], signature: &[u8],
+    s_len: usize, hash_fn: F, hlen: usize,
+) -> Result<(), String> {
+    let k = n_bytes.len();
+    if signature.len() != k { return Err("RSA-PSS-VERIFY: signature length mismatch".into()); }
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let e = BigUInt::from_be_bytes(e_bytes);
+    let mod_bits = n.bit_len();
+    let s_int = BigUInt::from_be_bytes(signature);
+    let m_int = rsaep(&n, &e, &s_int)?;
+    let em_len = (mod_bits - 1 + 7) / 8;
+    let em = m_int.to_be_bytes(em_len);
+    emsa_pss_verify(message, &em, mod_bits - 1, s_len, hash_fn, hlen)
+}
+
 // ─────────────────────── AES inverse cipher (FIPS 197 §5.3) ─────────
 
 const AES_INV_SBOX: [u8; 256] = [

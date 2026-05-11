@@ -359,6 +359,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_sockets(&ctx, &global)?;
     wire_dns(&ctx, &global)?;
     wire_compression(&ctx, &global)?;
+    wire_tls(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
     // install_dns_js extends globalThis.Bun.dns, so it MUST run after
@@ -938,6 +939,97 @@ fn json_str(s: &str) -> String {
 // caller is responsible for not blocking the main JS thread in a
 // production server (a higher-level Bun.listen async wrapper will land
 // in a follow-on round).
+
+fn wire_tls<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // Π1.4.h: TLS 1.3 client integration. globalThis.__tls.connect(host,
+    // port, trusted_certs_pem) → session_id; __tls.write/read/close(sid, ...)
+    // for application-data exchange. The fetch() HTTPS path routes
+    // through this namespace.
+    //
+    // Per seed §A8.16: TLS sessions are process-global state and must
+    // be guarded. A static `Mutex<HashMap<id, Session>>` registry serves;
+    // the JS-side handles are session IDs (u32).
+    //
+    // Per §A8.13 substrate-amortization: this round wires up the
+    // integration; Π1.4.i diagnoses the live-handshake recv-UnexpectedEnd
+    // surfaced in Π1.4.g and ships the Tier-J consumer-https-suite.
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+
+    struct TlsSessionState {
+        session: Option<rusty_tls::TlsSession<rusty_tls::TcpTlsTransport>>,
+        accumulator: Vec<u8>,
+    }
+    static SESSIONS: Mutex<Option<HashMap<u32, TlsSessionState>>> = Mutex::new(None);
+    static NEXT_ID: Mutex<u32> = Mutex::new(1);
+
+    fn alloc_id() -> u32 {
+        let mut g = NEXT_ID.lock().unwrap_or_else(|e| e.into_inner());
+        let id = *g;
+        *g = g.wrapping_add(1);
+        id
+    }
+
+    let ns = Object::new(ctx.clone())?;
+
+    ns.set("connect", Function::new(ctx.clone(),
+        |host: String, port: u32, trusted_ca_pem: String| -> JsResult<u32> {
+            let mut store = rusty_tls::TrustStore::new();
+            store.add_pem_bundle(&trusted_ca_pem)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "tls", "connect", format!("trust store: {}", e)))?;
+            let session = rusty_tls::tls_connect(&host, port as u16, &store)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "tls", "connect", format!("handshake: {}", e)))?;
+            let id = alloc_id();
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            if g.is_none() { *g = Some(HashMap::new()); }
+            g.as_mut().unwrap().insert(id, TlsSessionState {
+                session: Some(session), accumulator: Vec::new(),
+            });
+            Ok(id)
+        })?)?;
+
+    ns.set("write", Function::new(ctx.clone(),
+        |sid: u32, data: Vec<u8>| -> JsResult<()> {
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = g.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "write", "no sessions"))?;
+            let st = map.get_mut(&sid).ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "write", "invalid session id"))?;
+            let s = st.session.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "write", "session closed"))?;
+            s.send_application_data(&data)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "tls", "write", e.to_string()))
+        })?)?;
+
+    ns.set("read", Function::new(ctx.clone(),
+        |sid: u32| -> JsResult<Vec<u8>> {
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = g.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "read", "no sessions"))?;
+            let st = map.get_mut(&sid).ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "read", "invalid session id"))?;
+            let s = st.session.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "read", "session closed"))?;
+            s.receive_application_data(&mut st.accumulator)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "tls", "read", e.to_string()))
+        })?)?;
+
+    ns.set("close", Function::new(ctx.clone(),
+        |sid: u32| -> JsResult<()> {
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(map) = g.as_mut() {
+                map.remove(&sid);
+            }
+            Ok(())
+        })?)?;
+
+    global.set("__tls", ns)?;
+    Ok(())
+}
 
 fn wire_compression<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     // Tier-Π1.3 substrate: gzip + zlib + raw DEFLATE decode via the

@@ -285,11 +285,9 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Historical impact.** Tier-J fixtures had been silently bypassing the `process.stdout.write` first branch in their dual-path emission pattern; the fallback `globalThis.__esmResult` path was carrying the result, making the gap invisible from test outcomes until probed directly.
 - **CLOSED**: same commit closes via `wire_process` (Rust-side) covering argv/env/platform/arch/version/versions/cwd/exit/stdout.write/stderr.write plus `hrtime` and `hrtime.bigint`. `node:process` builtin resolution added to is_node_builtin + node_builtin_esm_source + CJS NODE_BUILTINS table for symmetric ESM/CJS support. consumer-cli-tool Tier-J fixture differentially verified.
 
-### E10. Set.prototype.union / .intersection / .difference (ES2025) absent from rusty-bun-host (basin boundary)
-- **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `Set.prototype.union`, `.intersection`, `.difference` as functions (ES2025 / TC39 proposal-set-methods Stage 4). rusty-bun-host has them as `undefined` — its embedded QuickJS predates the merge.
-- **Severity.** Apparatus-side scope-limit; engine-version-bounded.
-- **What it means.** Consumer code using ES2025 Set algebra methods will fail on rusty-bun-host. Easy to polyfill JS-side (~10 LOC per method).
-- **Re-open condition.** Either (i) polyfill the three methods via JS-side install (`Object.defineProperty(Set.prototype, "union", { value: function(other) { ... } })`); cheap, ~30 LOC total, no Rust changes. OR (ii) upgrade rquickjs to a QuickJS build with the methods.
+### E10. Set.prototype.union / .intersection / .difference (ES2025) absent from rusty-bun-host — CLOSED 2026-05-10
+- **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `Set.prototype.union`, `.intersection`, `.difference` as functions (ES2025 / TC39 proposal-set-methods Stage 4). rusty-bun-host had them as `undefined` — its embedded QuickJS predates the merge.
+- **CLOSED**: same commit closes via `install_set_methods_polyfill` (JS-side at host init) installing all seven ES2025 set-methods on Set.prototype: union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom. ~90 LOC JS, no Rust changes. consumer-set-algebra Tier-J fixture differentially verified 10/10 byte-identical.
 - **In-basin counterparts confirmed in same probe:** Promise.withResolvers (ES2024), Array.prototype.toSorted/toReversed/toSpliced/with (ES2023), Object.groupBy (ES2024), structuredClone on Uint8Array, Atomics.wait/notify all PRESENT.
 
 ## Category F — Fixture-author Mode-5 findings (rusty-bun engagement-internal)

@@ -293,6 +293,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_text_encoding(&ctx, &global)?;
     wire_buffer(&ctx, &global)?;
     install_buffer_class_js(&ctx)?;
+    install_set_methods_polyfill(&ctx)?;
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
@@ -836,6 +837,104 @@ const BUFFER_CLASS_JS: &str = r#"
 
 fn install_buffer_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(BUFFER_CLASS_JS)?;
+    Ok(())
+}
+
+// ─── Set.prototype ES2025 set-methods polyfill (closes E.10) ──────────
+//
+// Bun has these natively via JSC. rusty-bun-host's embedded QuickJS
+// predates the TC39 set-methods Stage 4 merge. The polyfill is ~30
+// LOC JS and brings the rusty-bun-host basin into alignment with Bun
+// on the ES2025 Set algebra surface.
+
+const SET_METHODS_POLYFILL_JS: &str = r#"
+(function() {
+    function toSetLike(other) {
+        // Per spec, accept anything with .has(), .keys() iterator, and .size.
+        // Simplification: accept Sets and iterables (collect into a fresh Set).
+        if (other instanceof Set) return other;
+        return new Set(other);
+    }
+    if (typeof Set.prototype.union !== "function") {
+        Object.defineProperty(Set.prototype, "union", {
+            value: function (other) {
+                const o = toSetLike(other);
+                const out = new Set(this);
+                for (const v of o) out.add(v);
+                return out;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.intersection !== "function") {
+        Object.defineProperty(Set.prototype, "intersection", {
+            value: function (other) {
+                const o = toSetLike(other);
+                const out = new Set();
+                for (const v of this) if (o.has(v)) out.add(v);
+                return out;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.difference !== "function") {
+        Object.defineProperty(Set.prototype, "difference", {
+            value: function (other) {
+                const o = toSetLike(other);
+                const out = new Set();
+                for (const v of this) if (!o.has(v)) out.add(v);
+                return out;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.symmetricDifference !== "function") {
+        Object.defineProperty(Set.prototype, "symmetricDifference", {
+            value: function (other) {
+                const o = toSetLike(other);
+                const out = new Set();
+                for (const v of this) if (!o.has(v)) out.add(v);
+                for (const v of o) if (!this.has(v)) out.add(v);
+                return out;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.isSubsetOf !== "function") {
+        Object.defineProperty(Set.prototype, "isSubsetOf", {
+            value: function (other) {
+                const o = toSetLike(other);
+                for (const v of this) if (!o.has(v)) return false;
+                return true;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.isSupersetOf !== "function") {
+        Object.defineProperty(Set.prototype, "isSupersetOf", {
+            value: function (other) {
+                const o = toSetLike(other);
+                for (const v of o) if (!this.has(v)) return false;
+                return true;
+            },
+            writable: true, configurable: true,
+        });
+    }
+    if (typeof Set.prototype.isDisjointFrom !== "function") {
+        Object.defineProperty(Set.prototype, "isDisjointFrom", {
+            value: function (other) {
+                const o = toSetLike(other);
+                for (const v of this) if (o.has(v)) return false;
+                return true;
+            },
+            writable: true, configurable: true,
+        });
+    }
+})();
+"#;
+
+fn install_set_methods_polyfill<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(SET_METHODS_POLYFILL_JS)?;
     Ok(())
 }
 

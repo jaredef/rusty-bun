@@ -1,0 +1,8 @@
+{
+  "name": "consumer-set-algebra",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #20: ES2025 Set algebra exercising the polyfill that closes E.10. union/intersection/difference/symmetricDifference/isSubsetOf/isSupersetOf/isDisjointFrom.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

@@ -162,6 +162,42 @@ Doc-tier corpus output:
 
 **The next session picks from the top.** Re-prioritization without a stated reason violates the protocol (per Doc 581 D3 / seed M1).
 
+### Tier-Π — Full plug-and-play parity trajectory (current top priority)
+
+Per seed §VII.A. The 2026-05-11 engagement run achieved curated-corpus parity (52 J.1.a fixtures byte-identical to Bun 1.3.11). Full plug-and-play parity (any arbitrary Bun consumer drops in unchanged) requires closing the hard-blocker list below. Estimated ~12-19 substantial M10-staged rounds.
+
+**Phase Π1 — Network completion (5-7 rounds; highest leverage; do first).**
+1. **Real fetch() wiring** — compose http-codec + sockets + URL into `fetch(url, init) → Promise<Response>`. M10 closure on existing substrate. 1-2 rounds. *Unblocks: every consumer doing `fetch("http://...")`.*
+2. **DNS resolution** — `Bun.dns` + `node:dns` minimum (resolve / lookup) via std::net::ToSocketAddrs. 1 round. *Unblocks: hostname-based fetch + connect.*
+3. **Compression** — gzip/deflate/brotli encode + decode pilot; wire Content-Encoding negotiation. 1-2 rounds. *Bottleneck-class: ~80% of HTTP responses are gzipped.*
+4. **TLS substrate** — ASN.1/DER parser → X.509 cert validation → TLS 1.2/1.3 record + handshake. 4-5 rounds substrate-amortization. *Unblocks: every HTTPS interaction. Largest single piece.*
+5. **WebSocket** — HTTP Upgrade handshake + RFC 6455 frame codec + Bun.serve `websocket:` integration. 1-2 rounds. *Composes on http-codec + sockets + crypto.subtle (SHA-1 for Sec-WebSocket-Accept).*
+
+**Phase Π2 — Runtime-model completion (2-3 rounds).**
+6. **Async-runtime auto-keep-alive** — host tracks pending async work (active listeners + timers + outstanding promises); process exits only when all settled. OR Bun.serve auto-spawns a setInterval-driven serve loop on construction. 1-2 rounds. *Closes the program-structure divergence (canonical Bun.serve usage works without explicit `await server.serve()`).*
+7. **process.* completeness** — stdin streaming, signal handlers (SIGINT/SIGTERM), process.on('exit'/'beforeExit'). 1 round.
+
+**Phase Π3 — node:* breadth (3-5 rounds).**
+8. **node:events** — EventEmitter class. Universal npm dependency. 1 round.
+9. **node:stream full** — Readable / Writable / Duplex / Transform with backpressure. 1-2 rounds.
+10. **node:util** — promisify, callbackify, format, inspect, types. 1 round.
+11. **node:querystring + node:url full** — fill gaps in current surface. 1 round.
+12. **node:tls / node:net** — node-style wrappers over the Tier-G + TLS substrate from Π1.4. 1 round (once Π1.4 lands).
+13. **Optional, based on consumer-corpus pull:** node:zlib (folded into Π1.3), node:child_process (atop Bun.spawn), node:readline / repl / tty / vm / perf_hooks / async_hooks / assert.
+
+**Phase Π4 — Bun-namespace breadth (2-3 rounds).**
+14. **Bun.password** — Argon2id wrapper. 1 round.
+15. **Bun.SQLite** — substantial; defer unless consumer-corpus requires.
+16. **Bun-namespace utilities** — Bun.write / connect / listen-async-shape / dns / fileURLToPath / pathToFileURL / deepEquals / inspect / Glob / YAML / CryptoHasher. 1-2 rounds.
+
+**Phase Π5 — Real-OSS differential basket (3-5 rounds, opportunistic).**
+17. **hono** — micro web framework, native Bun support. Run its tests under rusty-bun-host vs Bun.
+18. **jose** — production JWT library; heavy crypto.subtle user.
+19. **A real database driver / SQLite app** — depends on Π4 Bun.SQLite.
+20. **WPT runner adapter** — `wpt run` against integrated runtime; per-surface pass-rate as operational comparison.
+
+**Self-update discipline.** After each Tier-Π round: update seed §VII.A percentages + check off completed items + adjust downstream estimates. Mirror changes here in the §I done log.
+
 ### Tier-A — substrate pilots (unblock other queued items)
 
 1. ~~Streams pilot~~ — **DONE** 2026-05-10 (453 LOC, 38/38 tests, 11.2% naive ratio, first pilot where spec-extract layer dominated)

@@ -242,7 +242,13 @@ The trajectory's Deferred section lists items considered and explicitly *deferre
 
 ## VII. What completion looks like
 
-**Telos: the rusty-bun derivation is complete against Bun.** A real consumer can swap rusty-bun for Bun and run their JS-using application without regression, against the cited consumer corpus and against Web Platform Tests for spec'd surfaces. Per C1 (plug-and-play interoperability with no regressions), but at the **runtime level**, not just the surface-API level.
+**Telos: full plug-and-play parity.** An arbitrary real-world Bun consumer (npm packages, frameworks, applications) can swap `bun` for `rusty-bun-host` in their command line and run unchanged, against the cited consumer corpus + against Web Platform Tests for spec'd surfaces. Per C1 (plug-and-play interoperability with no regressions), at the **runtime level**, not just the surface-API level.
+
+The engagement run through 2026-05-11 (commit `fbe6e41`) achieved a strictly weaker form: **curated-corpus parity**. For 52 J.1.a fixtures of growing diversity (production-shape vendored libraries + real HTTP server + real WebCrypto + full algorithmic surface), rusty-bun-host's output is byte-identical to Bun 1.3.11. The curated corpus demonstrates the apparatus works; it does not demonstrate that any arbitrary Bun app drops in.
+
+The gap from curated-corpus parity to full plug-and-play parity is **substantive**, not polish. The remaining hard blockers — TLS, real-network fetch, compression, DNS, WebSocket, async-runtime-model auto-listen, node:* breadth — collectively require roughly 12-19 substantial rounds (another engagement's worth of work, comparable in scope to what's been done so far).
+
+Sub-criteria below carry both their **current status** (against curated parity, in parens) and their **status against full parity** (the trailing assessment). The trajectory's queue is updated to chart the trajectory toward full parity.
 
 This is a much larger commitment than the prior framing. The engagement's prior milestone — apparatus saturation at 16 pilots / 8 architectural classes (Doc 708) — is a **necessary** precondition for completion but not sufficient. Saturation establishes that the apparatus' methodology works; completion requires applying the methodology across Bun's full runtime API surface, integrating with a JS engine, and demonstrating differential equivalence against actual Bun-using applications.
 
@@ -257,15 +263,33 @@ The completion telos has five sub-criteria, in dependency order:
 **Sub-criterion 1 — Apparatus saturation.** ✓ MET (Doc 708, 2026-05-10).
 Sixteen pilots × eight architectural classes × five cybernetic modes × ~3% aggregate LOC ratio. The methodology is empirically anchored and ready for application.
 
-**Sub-criterion 2 — Surface-API completeness.** Every Bun runtime API has a pilot anchor with verifier + consumer-regression closure. Estimated ~50-80 additional pilots beyond the current 16 to cover:
-- Web Crypto full (subtle.generateKey/deriveKey/importKey/exportKey/sign/verify, HMAC, AES, RSA, ECDSA, Ed25519, HKDF, PBKDF2, SHA-384/512)
-- Streams full (BYOB reads, async iterator protocol, transferable streams, pipeTo/pipeThrough automation)
-- Node-compat: net, tls, dgram, dns, zlib, stream (Node), events, os, cluster, worker_threads, vm, perf_hooks, async_hooks, readline, repl, tty, assert, timers, inspector, module
-- Bun-namespace: Bun.password, Bun.SQLite, bun:redis, bun:s3, Bun.Cookie, Bun.JSONL, Bun.Image, Bun.Archive, Bun.Terminal, Bun.cron, Bun.Glob, Bun.YAML, Bun.CryptoHasher, Bun.deepEquals, Bun.inspect, Bun.write, Bun.connect, Bun.listen, Bun.dns, Bun.fileURLToPath, Bun.pathToFileURL, etc.
+**Sub-criterion 2 — Surface-API completeness.** Every Bun runtime API has a pilot anchor with verifier + consumer-regression closure.
+- **Current state (curated):** WebCrypto fully closed (SHA-1/256/384/512 digest + HMAC + PBKDF2 + HKDF + AES-GCM/CBC/CTR/KW + RSA-OAEP/PSS/PKCS1-v1_5 + ECDSA + ECDH over P-256/P-384/P-521); node:fs/path/os/crypto/http(data)/process/buffer/url wired; Bun.serve (in-process + listen-extension)/file/spawn wired; URLSearchParams/TextEncoder/TextDecoder/Blob/Request/Response/Headers/AbortController wired; ReadableStream/WritableStream with tee; Set ES2025 polyfill; Atomics/SharedArrayBuffer.
+- **Full-parity remaining (hard blockers):**
+  - **TLS / HTTPS** — no pilot. Blocks every HTTPS fetch + every HTTPS server. ASN.1/DER → X.509 cert validation → TLS 1.2/1.3 record + handshake. Estimated 4-5 rounds substrate-amortization.
+  - **Real fetch()** — current fetch-api pilot wires Request/Response/Headers classes in-process; `fetch(externalUrl)` does not currently traverse the sockets + http-codec stack to the network. 1-2 rounds to wire properly atop the just-landed Tier-G substrate.
+  - **Compression** — no gzip/deflate/brotli. ~80% of HTTP responses are gzipped; consumers see raw compressed bytes. 1-2 rounds (zlib bindings + Content-Encoding negotiation).
+  - **DNS** — no Bun.dns or node:dns. fetch on hostnames requires OS resolver integration. 1 round (std::net or trust-dns wrapper).
+  - **WebSocket** — Bun.serve's `websocket: {message, open, close}` upgrade path not implemented. 1-2 rounds (HTTP Upgrade handshake + RFC 6455 frame codec + Bun.serve integration).
+  - **node:* breadth** — currently wired: fs/path/os/crypto/http(data)/process/buffer/url. Missing: events / stream (full) / util / tls / net / dns / querystring / zlib / child_process / readline / repl / tty / assert / module / vm / perf_hooks / async_hooks. Estimated 3-5 rounds for the load-bearing subset.
+  - **Bun-namespace breadth** — beyond Bun.serve/file/spawn currently wired: Bun.password / Bun.SQLite / bun:redis / bun:s3 / Bun.Cookie / Bun.JSONL / Bun.Image / Bun.Archive / Bun.Terminal / Bun.cron / Bun.Glob / Bun.YAML / Bun.CryptoHasher / Bun.deepEquals / Bun.inspect / Bun.write / Bun.connect / Bun.listen-async-shape / Bun.dns / Bun.fileURLToPath / Bun.pathToFileURL. Most are opt-in for specific consumer classes; 2-3 rounds for the commonly-used subset.
+- **Out-of-scope deferrals (for full-parity v1):** ECDSA/ECDH keypair *generation* (import is supported); WebAssembly (would need a separate WASM engine — QuickJS doesn't include one); HTTP/2 (HTTP/1.1 fallback works for almost all servers); Workers / BroadcastChannel; Bun.bundle / Bun.build.
 
-**Sub-criterion 3 — Transport-layer pilots.** The data-layer-only pilots (fetch-api, Bun.serve, Bun.spawn, node-http) lift to wire-format pilots. Includes HTTP/1.1 + HTTP/2 wire parsing, socket binding, TLS handshake, WebSocket upgrade, IPC channels, streaming stdio. Required for any of these surfaces to function as runtime API.
+**Sub-criterion 3 — Transport-layer pilots.** The data-layer-only pilots lift to wire-format pilots.
+- **Current state (~98%):** http-codec pilot (RFC 7230 HTTP/1.1 wire format); sockets pilot (TCP primitives + async-listener via thread-per-listener + mpsc + main-thread poll, std-only, matches Bun's architectural pattern per deepwiki research); Bun.serve facade with listen()/tick()/serve() composing both. End-to-end real HTTP-over-TCP demonstrated byte-identical to Bun (consumer-http-over-tcp-suite, consumer-async-http-server-suite, consumer-bun-serve-facade-suite).
+- **Full-parity remaining:**
+  - **TLS substrate** (overlaps with sub-2) — the substantial missing piece.
+  - **HTTP/2 multiplexing** — separate frame-layer binary protocol; lower-priority since HTTP/1.1 fallback works.
+  - **WebSocket frame codec** — overlaps with sub-2 websocket entry.
+  - **IPC channels / Bun.spawn full stdio streaming** — partial; some consumers depend on stdin streaming, signal-driven coordination.
 
-**Sub-criterion 4 — JS host integration.** Embed a JS engine (QuickJS or Boa) and expose all pilots to JS code via FFI. Includes module loader / resolver, console + global setup, the `globalThis` shape Bun provides. Without this, no JS code can execute against the derived runtime; with it, rusty-bun becomes a runtime in the operational sense. SUBSTANTIALLY MET 2026-05-10: rquickjs embedded; 19 pilot families wired; CommonJS + ESM module loaders both honor relative + bare-specifier resolution with node_modules walk-up + `node:*` builtin scheme; timers + queueMicrotask + performance + URL globals wired; Buffer wrapped as Bun-portable Uint8Array subclass.
+**Sub-criterion 4 — JS host integration.** Embed a JS engine (QuickJS or Boa) and expose all pilots to JS code via FFI.
+- **Current state (~85%):** rquickjs embedded; 20+ pilot families wired; CommonJS + ESM module loaders both honor relative + bare-specifier resolution with node_modules walk-up + `node:*` builtin scheme; timers + queueMicrotask + performance + URL globals wired; Buffer wrapped as Bun-portable Uint8Array subclass.
+- **Full-parity remaining:**
+  - **Async-runtime model divergence (BLOCKING).** Real Bun: `Bun.serve({port:3000, fetch})` returns a server that listens in the background; the consumer's main script returns naturally; the process keeps running because the runtime tracks pending async work. Ours: `Bun.serve()` returns; without explicit `await server.serve()`, the process exits before serving. This is a structural API divergence that breaks the canonical Bun program shape (one of the most common). Two paths to close: (a) integrate a "keep alive while pending async" loop into the host (substantial, requires the host to know about pending listeners + timers + outstanding promises), or (b) Bun.serve auto-spawns a setInterval-driven serve loop on construction (lighter, std-only). 1-2 rounds.
+  - **WebAssembly** — QuickJS doesn't natively support WASM; needs a separate WASM engine (wasmtime / wasmer integration) or a different JS engine entirely. Out of scope for full-parity v1.
+  - **import.meta.* completeness** — most properties wired; some Bun-specific ones (import.meta.dir, .main, .resolveSync, .require) need verification.
+  - **process.* completeness** — argv, env, exit, cwd, hrtime wired; stdin streaming, signal handlers (SIGINT etc.), process.on, child_process integration not yet.
 
 **Sub-criterion 5 — Differential testing against Bun-using applications.** The operational form of plug-and-play. For a representative basket of Bun-using applications (frameworks like Hono / Elysia, real-world apps): run `npm test` under Bun → record P_bun. Run under integrated rusty-bun → record P_drv. Diff. **Zero regressions across the basket** = real plug-and-play.
 
@@ -273,9 +297,50 @@ Closure of this sub-criterion is **per-fixture differential**: a fixture counts 
 
 This is what makes the criterion non-deferrable. Each fixture not yet in J.1.a is a permanent ratchet against the eventual count; new fixtures cannot be built atop unreconciled divergences without inheriting the misalignment (the plank metaphor in §IV.M8). M8 enforces the rule at the round level; sub-criterion 5 enforces it at the telos level.
 
+- **Current state (~40% against full parity):** 52 J.1.a fixtures byte-identical to Bun 1.3.11 across the major non-network production-library shape catalog (8 orthogonal vendored-library axes + WebCrypto closure + Tier-G HTTP/TCP/async-bridge). All differential-verified; sub-criterion 5 J.1.a count is the live progress metric.
+- **Full-parity remaining:** the basket needs to extend to real third-party OSS packages (not engagement-authored shims): hono, elysia, drizzle-orm, prisma-client, jose (the real library), pino, etc. Each adds another set of axes the apparatus hasn't yet been exercised against. Once the hard-blocker sub-2/sub-3/sub-4 items above land, the basket-expansion is largely mechanical at ~1 fixture/round. Estimated 30-50 additional fixtures to reach "any of the top-200 Bun-compatible npm packages drops in unchanged."
+
 A complementary signal: run Web Platform Tests against the integrated runtime via `wpt run` adapter. WPT pass-rate per surface is a published number for browser engines and Bun itself; rusty-bun's WPT pass-rate becomes an operational comparison.
 
 **The trajectory holds the per-surface pilot list, the transport-layer queue, the JS-host integration plan, and the differential-test basket.** The seed names the criterion; the trajectory holds the work.
+
+### VII.A. Trajectory toward full parity (concrete roadmap)
+
+Estimated ~12-19 substantial M10-staged rounds to close the hard-blocker list above. Approximate ordering reflects dependency + leverage:
+
+**Phase Π1 — Network completion (5-7 rounds, highest leverage).**
+1. **Real fetch() wiring** — compose http-codec + sockets + URL parsing into a `fetch(url, init) → Promise<Response>` that traverses the just-landed Tier-G stack. Unlocks every consumer doing `fetch("http://...")` (HTTPS comes in Π1.4). M10 closure on existing substrate. Estimated 1-2 rounds.
+2. **DNS resolution** — std::net::ToSocketAddrs wrapper exposed via `Bun.dns` + `node:dns` minimum surface (resolve / lookup). Unlocks hostname-based fetch + connect. 1 round.
+3. **Compression** — gzip/deflate/brotli encode + decode pilot; wire Content-Encoding negotiation in fetch + response serialization. Most HTTP responses are gzipped; this is bottleneck-class. 1-2 rounds. (flate2 crate or hand-rolled DEFLATE — keeper decides std-only vs new-dep policy.)
+4. **TLS substrate** — the largest single piece. ASN.1/DER parser → X.509 cert validation against system root store → TLS 1.2/1.3 record layer + handshake. Heaviest substrate-introduction round of the engagement. Unlocks every HTTPS interaction. 4-5 rounds (substrate-amortization: ASN.1 → certs → TLS records → handshake → integration with sockets pilot).
+5. **WebSocket** — HTTP Upgrade handshake + RFC 6455 frame codec + Bun.serve `websocket:` integration. Composes on http-codec + sockets + crypto.subtle (for Sec-WebSocket-Accept SHA-1). 1-2 rounds.
+
+**Phase Π2 — Runtime-model completion (2-3 rounds).**
+6. **Async-runtime auto-keep-alive** — host learns to track pending async work (active listeners + timers + outstanding promises) and only exits when all are settled. OR Bun.serve auto-spawns a setInterval-driven serve loop on construction. Closes the program-structure divergence. 1-2 rounds.
+7. **process.* completeness** — stdin streaming, signal handlers (SIGINT/SIGTERM via signal-hook crate or std::signal_hook), process.on('exit'/'beforeExit'). 1 round.
+
+**Phase Π3 — node:* breadth (3-5 rounds).**
+8. **node:events** — EventEmitter class. Universal dependency for npm packages. 1 round.
+9. **node:stream full** — Readable / Writable / Duplex / Transform with backpressure. Many packages depend on this. 1-2 rounds.
+10. **node:util** — promisify, callbackify, format, inspect, types. 1 round.
+11. **node:querystring + node:url full** — partial; need full surface. 1 round (often bundled).
+12. **node:tls / node:net** — node-style wrappers over the Tier-G + TLS substrate from Π1.4. 1 round once Π1.4 lands.
+13. **Optional based on consumer-corpus needs:** node:zlib (folded into Π1.3), node:child_process (atop Bun.spawn), node:dns (folded into Π1.2), node:readline / repl / tty / vm / perf_hooks / async_hooks / assert.
+
+**Phase Π4 — Bun-namespace breadth (2-3 rounds).**
+14. **Bun.password** — Argon2id wrapper. Pure Rust; one focused pilot.
+15. **Bun.SQLite** — wraps sqlite via rusqlite or hand-rolled SQLite ABI. Substantial; defer unless consumer-corpus requires.
+16. **Bun-namespace small utilities** — Bun.write, Bun.connect, Bun.listen-async-shape, Bun.dns, Bun.fileURLToPath, Bun.pathToFileURL, Bun.deepEquals, Bun.inspect, Bun.Glob, Bun.YAML, Bun.CryptoHasher. Many are thin wrappers; 1-2 rounds for the load-bearing subset.
+
+**Phase Π5 — Real-OSS differential basket (3-5 rounds, opportunistic).**
+17. **First real package: hono** — micro web framework, native Bun support. Vendor it unchanged, run its tests under rusty-bun-host vs Bun. Any divergence is sub-2 work.
+18. **Production JWT library: jose** — the canonical JOSE library. Heavy crypto.subtle user. Already-closed surface; should drop in cleanly.
+19. **A real database driver / SQLite app** — depends on Π4 Bun.SQLite.
+20. **WPT runner adapter** — `wpt run` against the integrated runtime; track pass-rate per surface.
+
+**Estimated cumulative cost.** ~12-19 substantial rounds for Phase Π1-Π4 hard-blockers; ~3-5 additional for Π5 real-OSS demonstration. Total roughly an engagement's worth of work comparable in scope to what's been done so far (the 2026-05-10/05-11 run produced ~12 substantial rounds across crypto/Tier-G).
+
+**Self-update discipline.** After each round in Phase Π1-Π5, update this section's percentages + check off the completed item + adjust estimates for downstream items based on what was learned. The trajectory section of trajectory.md mirrors this list and tracks actual round-by-round progress.
 
 A list of which surfaces are "load-bearing" lives in the trajectory and is updated as new ones surface. The four criteria from the prior framing of completion (coverage of architectural classes / aggregate-ratio holding / consumer-corpus closure / doc-tier production) collapse into Sub-criterion 1 (apparatus saturation) under the new telos. Doc 708 records that sub-criterion as met.
 

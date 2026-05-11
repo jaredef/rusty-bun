@@ -657,6 +657,32 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::hmac_sha512(&key, &data).to_vec()
         })?,
     )?;
+    // PBKDF2 (RFC 2898 / RFC 6070). Key-derivation surface adjacent to the
+    // HMAC family — feeds JS-side crypto.subtle.deriveBits({name:"PBKDF2",...}).
+    subtle.set(
+        "pbkdf2HmacSha1Bytes",
+        Function::new(ctx.clone(), |password: Vec<u8>, salt: Vec<u8>, iterations: u32, dk_len: u32| -> Vec<u8> {
+            rusty_web_crypto::pbkdf2_hmac_sha1(&password, &salt, iterations, dk_len as usize)
+        })?,
+    )?;
+    subtle.set(
+        "pbkdf2HmacSha256Bytes",
+        Function::new(ctx.clone(), |password: Vec<u8>, salt: Vec<u8>, iterations: u32, dk_len: u32| -> Vec<u8> {
+            rusty_web_crypto::pbkdf2_hmac_sha256(&password, &salt, iterations, dk_len as usize)
+        })?,
+    )?;
+    subtle.set(
+        "pbkdf2HmacSha384Bytes",
+        Function::new(ctx.clone(), |password: Vec<u8>, salt: Vec<u8>, iterations: u32, dk_len: u32| -> Vec<u8> {
+            rusty_web_crypto::pbkdf2_hmac_sha384(&password, &salt, iterations, dk_len as usize)
+        })?,
+    )?;
+    subtle.set(
+        "pbkdf2HmacSha512Bytes",
+        Function::new(ctx.clone(), |password: Vec<u8>, salt: Vec<u8>, iterations: u32, dk_len: u32| -> Vec<u8> {
+            rusty_web_crypto::pbkdf2_hmac_sha512(&password, &salt, iterations, dk_len as usize)
+        })?,
+    )?;
     // Constant-time comparison helper for verify.
     subtle.set(
         "timingSafeEqualBytes",
@@ -718,21 +744,25 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     spec: "SHA-256",
                     digest: (b) => subtle.digestSha256Bytes(b),
                     hmac: (k, b) => subtle.hmacSha256Bytes(k, b),
+                    pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha256Bytes(p, s, i, l),
                 },
                 "SHA1": {
                     spec: "SHA-1",
                     digest: (b) => subtle.digestSha1Bytes(b),
                     hmac: (k, b) => subtle.hmacSha1Bytes(k, b),
+                    pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha1Bytes(p, s, i, l),
                 },
                 "SHA384": {
                     spec: "SHA-384",
                     digest: (b) => subtle.digestSha384Bytes(b),
                     hmac: (k, b) => subtle.hmacSha384Bytes(k, b),
+                    pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha384Bytes(p, s, i, l),
                 },
                 "SHA512": {
                     spec: "SHA-512",
                     digest: (b) => subtle.digestSha512Bytes(b),
                     hmac: (k, b) => subtle.hmacSha512Bytes(k, b),
+                    pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha512Bytes(p, s, i, l),
                 },
             };
 
@@ -753,6 +783,17 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     throw new Error("Unsupported key format: " + format);
                 }
                 const alg = normalizeAlg(algorithm);
+                if (alg.name === "PBKDF2") {
+                    const bytes = toBytes(keyData);
+                    return {
+                        type: "secret",
+                        extractable: !!extractable,
+                        algorithm: { name: "PBKDF2" },
+                        usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                        _bytes: bytes,
+                        _algName: "PBKDF2",
+                    };
+                }
                 if (alg.name !== "HMAC") {
                     throw new Error("Unsupported key algorithm: " + alg.name);
                 }
@@ -766,7 +807,35 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
                     _bytes: bytes,
                     _hashName: alg.hash,  // implementation-private; pinned at import
+                    _algName: "HMAC",
                 };
+            };
+
+            // deriveBits(algorithm, baseKey, length) → Promise<ArrayBuffer>
+            // Pilot scope: algorithm = {name:"PBKDF2", hash, salt, iterations}.
+            subtle.deriveBits = async function deriveBits(algorithm, baseKey, length) {
+                if (!algorithm || String(algorithm.name).toUpperCase() !== "PBKDF2") {
+                    throw new Error("Unsupported deriveBits algorithm");
+                }
+                if (!baseKey || baseKey._algName !== "PBKDF2") {
+                    throw new TypeError("deriveBits: baseKey is not a PBKDF2 key");
+                }
+                if (!baseKey.usages.includes("deriveBits") && !baseKey.usages.includes("deriveKey")) {
+                    throw new Error("Key not usable for deriveBits");
+                }
+                const hashName = typeof algorithm.hash === "string"
+                    ? algorithm.hash.toUpperCase().replace(/-/g, "")
+                    : String(algorithm.hash.name).toUpperCase().replace(/-/g, "");
+                const h = HASHES[hashName];
+                if (!h || !h.pbkdf2) throw new Error("Unsupported PBKDF2 hash: " + hashName);
+                const iterations = algorithm.iterations >>> 0;
+                if (iterations === 0) throw new Error("PBKDF2 iterations must be > 0");
+                if (typeof length !== "number" || length <= 0 || length % 8 !== 0) {
+                    throw new Error("PBKDF2 length must be a positive multiple of 8");
+                }
+                const salt = toBytes(algorithm.salt);
+                const out = h.pbkdf2(baseKey._bytes, salt, iterations, length / 8);
+                return toArrayBuffer(out);
             };
 
             function keyHash(key) {

@@ -429,6 +429,66 @@ pub fn hmac_sha384(key: &[u8], message: &[u8]) -> [u8; 48] {
     digest_sha384(&outer_input)
 }
 
+// ───────────────────────── PBKDF2 ─────────────────────────────────────
+// RFC 8018 / RFC 2898 §5.2. PBKDF2(P, S, c, dkLen) where PRF is HMAC.
+//
+//   T_1 = F(P, S, c, 1)
+//   T_2 = F(P, S, c, 2)
+//   ...
+//   T_l = F(P, S, c, l)
+//   F(P, S, c, i) = U_1 XOR U_2 XOR ... XOR U_c
+//   U_1 = PRF(P, S || INT(i))      (INT(i) is i encoded as 32-bit big-endian)
+//   U_j = PRF(P, U_{j-1})           for j > 1
+//
+// Output is the first dkLen bytes of T_1 || T_2 || ... || T_l where
+// l = ceil(dkLen / hLen) and hLen is the HMAC output length.
+
+fn pbkdf2_inner<F, const H: usize>(
+    prf: F,
+    password: &[u8],
+    salt: &[u8],
+    iterations: u32,
+    dk_len: usize,
+) -> Vec<u8>
+where
+    F: Fn(&[u8], &[u8]) -> [u8; H],
+{
+    if iterations == 0 || dk_len == 0 { return Vec::new(); }
+    let l = (dk_len + H - 1) / H;  // number of blocks
+    let mut out = Vec::with_capacity(l * H);
+    let mut salt_with_index = Vec::with_capacity(salt.len() + 4);
+    for i in 1..=l {
+        salt_with_index.clear();
+        salt_with_index.extend_from_slice(salt);
+        salt_with_index.extend_from_slice(&(i as u32).to_be_bytes());
+        let mut u = prf(password, &salt_with_index);
+        let mut t = u;
+        for _ in 1..iterations {
+            u = prf(password, &u);
+            for k in 0..H { t[k] ^= u[k]; }
+        }
+        out.extend_from_slice(&t);
+    }
+    out.truncate(dk_len);
+    out
+}
+
+pub fn pbkdf2_hmac_sha1(password: &[u8], salt: &[u8], iterations: u32, dk_len: usize) -> Vec<u8> {
+    pbkdf2_inner::<_, 20>(hmac_sha1, password, salt, iterations, dk_len)
+}
+
+pub fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32, dk_len: usize) -> Vec<u8> {
+    pbkdf2_inner::<_, 32>(hmac_sha256, password, salt, iterations, dk_len)
+}
+
+pub fn pbkdf2_hmac_sha384(password: &[u8], salt: &[u8], iterations: u32, dk_len: usize) -> Vec<u8> {
+    pbkdf2_inner::<_, 48>(hmac_sha384, password, salt, iterations, dk_len)
+}
+
+pub fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iterations: u32, dk_len: usize) -> Vec<u8> {
+    pbkdf2_inner::<_, 64>(hmac_sha512, password, salt, iterations, dk_len)
+}
+
 // ───────────────────────── crypto.subtle stub ─────────────────────────
 
 pub mod subtle {

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-pbkdf2-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #28: PBKDF2 key derivation via crypto.subtle.deriveBits over SHA-1/256/384/512.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

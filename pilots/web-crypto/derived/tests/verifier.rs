@@ -373,3 +373,64 @@ fn hmac_sha512_rfc4231_test2() {
     for b in &out { hex.push_str(&format!("{:02x}", b)); }
     assert_eq!(hex, "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737");
 }
+
+// PBKDF2 — RFC 6070 known-answer vectors.
+
+#[test]
+fn pbkdf2_hmac_sha1_rfc6070_test1() {
+    // P = "password" (8 octets), S = "salt" (4 octets), c = 1, dkLen = 20
+    // DK = 0c 60 c8 0f 96 1f 0e 71 f3 a9 b5 24 af 60 12 06 2f e0 37 a6
+    let out = rusty_web_crypto::pbkdf2_hmac_sha1(b"password", b"salt", 1, 20);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "0c60c80f961f0e71f3a9b524af6012062fe037a6");
+}
+
+#[test]
+fn pbkdf2_hmac_sha1_rfc6070_test2() {
+    // P = "password", S = "salt", c = 2, dkLen = 20
+    // DK = ea 6c 01 4d c7 2d 6f 8c cd 1e d9 2a ce 1d 41 f0 d8 de 89 57
+    let out = rusty_web_crypto::pbkdf2_hmac_sha1(b"password", b"salt", 2, 20);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957");
+}
+
+#[test]
+fn pbkdf2_hmac_sha1_rfc6070_test3() {
+    // P = "password", S = "salt", c = 4096, dkLen = 20
+    // DK = 4b 00 79 01 b7 65 48 9a be ad 49 d9 26 f7 21 d0 65 a4 29 c1
+    let out = rusty_web_crypto::pbkdf2_hmac_sha1(b"password", b"salt", 4096, 20);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "4b007901b765489abead49d926f721d065a429c1");
+}
+
+#[test]
+fn pbkdf2_hmac_sha256_rfc7914_test_vector() {
+    // RFC 7914 (scrypt context) shows PBKDF2-HMAC-SHA-256 known answer:
+    // P = "passwd", S = "salt", c = 1, dkLen = 64
+    // DK = 55 ac 04 6e 56 e3 08 9f ec 16 91 c2 25 44 b6 05
+    //      f9 41 85 21 6d de 04 65 e6 8b 9d 57 c2 0d ac bc
+    //      49 ca 9c cc f1 79 b6 45 99 16 64 b3 9d 77 ef 31
+    //      7c 71 b8 45 b1 e3 0b d5 09 11 20 41 d3 a1 97 83
+    let out = rusty_web_crypto::pbkdf2_hmac_sha256(b"passwd", b"salt", 1, 64);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783");
+}
+
+#[test]
+fn pbkdf2_dk_len_shorter_than_block() {
+    // dkLen=16, SHA-256 hLen=32 — output is just the first 16 bytes of T_1.
+    let full = rusty_web_crypto::pbkdf2_hmac_sha256(b"password", b"salt", 100, 32);
+    let half = rusty_web_crypto::pbkdf2_hmac_sha256(b"password", b"salt", 100, 16);
+    assert_eq!(&full[..16], &half[..]);
+}
+
+#[test]
+fn pbkdf2_dk_len_spans_multiple_blocks() {
+    // dkLen > hLen exercises the multi-block T_1 || T_2 || ... path.
+    let out = rusty_web_crypto::pbkdf2_hmac_sha256(b"password", b"salt", 100, 100);
+    assert_eq!(out.len(), 100);
+}

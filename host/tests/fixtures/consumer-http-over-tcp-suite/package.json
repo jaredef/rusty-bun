@@ -1,0 +1,8 @@
+{
+  "name": "consumer-http-over-tcp-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #49: full HTTP-over-TCP client stack. Composes globalThis.TCP + globalThis.HTTP to send a real HTTP/1.1 request through a real socket and parse the real response.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

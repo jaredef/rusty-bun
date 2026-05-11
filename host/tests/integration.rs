@@ -2880,6 +2880,112 @@ fn with_echo_server<F: FnOnce()>(f: F) {
     let _ = server_thread.join();
 }
 
+// HTTP-over-TCP harness: spawn an in-process HTTP/1.1 server that handles
+// /health → 200 JSON, /echo → 200 echo body, anything else → 404. Used by
+// the http-over-tcp fixture to validate the full client-side HTTP stack.
+fn with_http_server<F: FnOnce()>(f: F) {
+    use std::net::TcpListener;
+    use std::io::{Read, Write};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(false).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Drop-stopping pattern: fixture connects 4 times. After 4 successful
+    // accepts, the thread exits cleanly. If the fixture aborts early, we
+    // shut down via a side-channel set_nonblocking + accept loop. Simpler:
+    // bound the accept loop to exactly 4 iterations, which matches the
+    // fixture's known connection count.
+    let server_thread = std::thread::spawn(move || {
+        for _ in 0..4 {
+            match listener.accept() {
+                Ok((mut sock, _)) => {
+                    let mut buf = vec![0u8; 8192];
+                    loop {
+                        let n = match sock.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(_) => break,
+                        };
+                        let req_bytes = &buf[..n];
+                        let req_str = String::from_utf8_lossy(req_bytes);
+                        // Parse the request-line (first line only).
+                        let first_line = req_str.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split(' ').collect();
+                        let method = parts.first().copied().unwrap_or("");
+                        let path = parts.get(1).copied().unwrap_or("");
+                        let close = req_str.to_ascii_lowercase().contains("connection: close");
+                        // Extract body if Content-Length set (find double CRLF).
+                        let body_start = req_str.find("\r\n\r\n").map(|i| i + 4).unwrap_or(req_str.len());
+                        let body = if body_start < req_bytes.len() {
+                            &req_bytes[body_start..]
+                        } else { &b""[..] };
+                        let response: Vec<u8> = if path == "/health" && method == "GET" {
+                            let body = b"{\"ok\":true}";
+                            let mut r = Vec::new();
+                            r.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
+                            r.extend_from_slice(b"content-type: application/json\r\n");
+                            r.extend_from_slice(format!("content-length: {}\r\n", body.len()).as_bytes());
+                            r.extend_from_slice(b"\r\n");
+                            r.extend_from_slice(body);
+                            r
+                        } else if path == "/echo" && method == "POST" {
+                            let mut r = Vec::new();
+                            r.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
+                            r.extend_from_slice(format!("content-length: {}\r\n", body.len()).as_bytes());
+                            r.extend_from_slice(b"\r\n");
+                            r.extend_from_slice(body);
+                            r
+                        } else {
+                            let mut r = Vec::new();
+                            r.extend_from_slice(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
+                            r
+                        };
+                        if sock.write_all(&response).is_err() { break; }
+                        if close { break; }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    std::env::set_var("HTTP_OVER_TCP_PORT", port.to_string());
+    f();
+    std::env::remove_var("HTTP_OVER_TCP_PORT");
+    let _ = server_thread.join();
+}
+
+#[test]
+fn js_consumer_http_over_tcp_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-http-over-tcp-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_http_server(|| {
+        let r = eval_esm_module(&path).unwrap();
+        assert!(r.starts_with("8/8"), "http-over-tcp-suite failed: {}", r);
+    });
+}
+
+#[test]
+fn js_differential_consumer_http_over_tcp_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-http-over-tcp-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    let rb = {
+        let mut out = String::new();
+        with_http_server(|| { out = eval_esm_module(&path).unwrap(); });
+        out
+    };
+    // Bun: no TCP / HTTP namespaces; fixture takes all-skipped path → "8/8".
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "http-over-tcp-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
 #[test]
 fn js_consumer_sockets_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

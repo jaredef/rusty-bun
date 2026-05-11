@@ -1,0 +1,9 @@
+{
+  "name": "consumer-msgpack-mini-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #45: vendored msgpack-mini binary-protocol codec exercising Uint8Array + DataView + bit-level encoding.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "msgpack-mini": "^0.1.0" }
+}

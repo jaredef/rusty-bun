@@ -304,6 +304,10 @@ name = "rusty-abort-controller"
 version = "0.1.0"
 
 [[package]]
+name = "rusty-asn1-der"
+version = "0.1.0"
+
+[[package]]
 name = "rusty-blob"
 version = "0.1.0"
 
@@ -329,14 +333,17 @@ dependencies = [
  "rusty-bun-file",
  "rusty-bun-serve",
  "rusty-bun-spawn",
+ "rusty-compression",
  "rusty-fetch-api",
  "rusty-http-codec",
  "rusty-node-fs",
  "rusty-node-path",
  "rusty-sockets",
  "rusty-textencoder",
+ "rusty-tls",
  "rusty-urlsearchparams",
  "rusty-web-crypto",
+ "rusty-websocket",
  "serde_json",
 ]
 
@@ -349,6 +356,10 @@ dependencies = [
 
 [[package]]
 name = "rusty-bun-spawn"
+version = "0.1.0"
+
+[[package]]
+name = "rusty-compression"
 version = "0.1.0"
 
 [[package]]
@@ -395,12 +406,36 @@ name = "rusty-textencoder"
 version = "0.1.0"
 
 [[package]]
+name = "rusty-tls"
+version = "0.1.0"
+dependencies = [
+ "rusty-asn1-der",
+ "rusty-web-crypto",
+ "rusty-x509",
+]
+
+[[package]]
 name = "rusty-urlsearchparams"
 version = "0.1.0"
 
 [[package]]
 name = "rusty-web-crypto"
 version = "0.1.0"
+
+[[package]]
+name = "rusty-websocket"
+version = "0.1.0"
+dependencies = [
+ "rusty-web-crypto",
+]
+
+[[package]]
+name = "rusty-x509"
+version = "0.1.0"
+dependencies = [
+ "rusty-asn1-der",
+ "rusty-web-crypto",
+]
 
 [[package]]
 name = "same-file"

@@ -1353,3 +1353,21 @@ fn blake2b_rejects_invalid_length() {
     let too_long_key = vec![0u8; 65];
     assert!(rusty_web_crypto::blake2b(b"", &too_long_key, 32).is_err());
 }
+
+// ════════════════════ Argon2id (RFC 9106) ════════════════════
+// Reference produced via the upstream `argon2` npm package (Bun runtime),
+// type=argon2id, version=0x13, p=1, salt="saltsaltsalt", time_cost=2,
+// memory=64 KiB, hash_length=32.
+
+#[test]
+fn argon2id_matches_upstream_p1_64kib_t2() {
+    let out = argon2id_hash(
+        b"pw", b"saltsaltsalt",
+        &Argon2idParams { t_cost: 2, m_kib: 64, parallelism: 1, tau: 32 },
+    ).expect("argon2id hash");
+    let hex: String = out.iter().map(|b| format!("{:02x}", b)).collect();
+    assert_eq!(
+        hex,
+        "b0ddad2961449e96dff7178275dd29b31c535d00ae5b75a107d2df6cb443f733"
+    );
+}

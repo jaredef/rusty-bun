@@ -2226,3 +2226,277 @@ pub fn blake2b(input: &[u8], key: &[u8], out_len: usize) -> Result<Vec<u8>, Stri
     Ok(out)
 }
 
+
+// ──────────────────────── Argon2id (RFC 9106) ──────────────────────
+// Single-lane (p=1) implementation. Hybrid indexing: Argon2i for pass 0
+// slices 0 and 1; Argon2d after. Composes on the Blake2b primitive above.
+
+const ARGON2_VERSION: u32 = 0x13;
+const ARGON2ID_TYPE: u32 = 2;
+const ARGON2_BLOCK_SIZE: usize = 1024;
+const ARGON2_QWORDS: usize = 128;
+const ARGON2_SYNC_POINTS: usize = 4;
+
+#[derive(Debug, Clone)]
+pub struct Argon2idParams {
+    pub t_cost: u32,      // iterations
+    pub m_kib: u32,       // memory in KiB (each block = 1 KiB)
+    pub parallelism: u32, // must be 1 here
+    pub tau: u32,         // output length in bytes
+}
+
+#[derive(Debug)]
+pub enum Argon2Error { InvalidParam(&'static str), Crypto(String) }
+impl std::fmt::Display for Argon2Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Argon2Error::InvalidParam(s) => write!(f, "argon2: {}", s),
+            Argon2Error::Crypto(s) => write!(f, "argon2 crypto: {}", s),
+        }
+    }
+}
+impl std::error::Error for Argon2Error {}
+
+type Block = [u64; ARGON2_QWORDS];
+#[inline] fn block_zero() -> Block { [0u64; ARGON2_QWORDS] }
+fn block_from_bytes(b: &[u8]) -> Block {
+    let mut r = block_zero();
+    for (i, c) in b.chunks_exact(8).enumerate().take(ARGON2_QWORDS) {
+        r[i] = u64::from_le_bytes(c.try_into().unwrap());
+    }
+    r
+}
+fn block_to_bytes(b: &Block) -> Vec<u8> {
+    let mut o = Vec::with_capacity(ARGON2_BLOCK_SIZE);
+    for &w in b { o.extend_from_slice(&w.to_le_bytes()); }
+    o
+}
+fn block_xor(a: &Block, b: &Block) -> Block {
+    let mut r = block_zero();
+    for i in 0..ARGON2_QWORDS { r[i] = a[i] ^ b[i]; }
+    r
+}
+
+/// Variable-length BLAKE2b "H' " per RFC 9106 §3.3.
+pub fn argon2_h_prime(input: &[u8], tau: u32) -> Result<Vec<u8>, Argon2Error> {
+    let mut tagged = Vec::with_capacity(4 + input.len());
+    tagged.extend_from_slice(&tau.to_le_bytes());
+    tagged.extend_from_slice(input);
+    if tau <= 64 {
+        return blake2b(&tagged, &[], tau as usize).map_err(Argon2Error::Crypto);
+    }
+    let r = ((tau + 31) / 32) as usize - 2;
+    let mut out = Vec::with_capacity(tau as usize);
+    let mut v = blake2b(&tagged, &[], 64).map_err(Argon2Error::Crypto)?;
+    out.extend_from_slice(&v[..32]);
+    for _ in 1..r {
+        v = blake2b(&v, &[], 64).map_err(Argon2Error::Crypto)?;
+        out.extend_from_slice(&v[..32]);
+    }
+    let final_len = (tau as usize) - 32 * r;
+    let vf = blake2b(&v, &[], final_len).map_err(Argon2Error::Crypto)?;
+    out.extend_from_slice(&vf);
+    Ok(out)
+}
+
+/// BLAKE2b-style G with multiplication step (RFC 9106 §3.5).
+#[inline]
+fn gb(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize) {
+    let add = |x: u64, y: u64| {
+        let lx = x & 0xFFFFFFFF; let ly = y & 0xFFFFFFFF;
+        x.wrapping_add(y).wrapping_add(2u64.wrapping_mul(lx).wrapping_mul(ly))
+    };
+    v[a] = add(v[a], v[b]); v[d] = (v[d] ^ v[a]).rotate_right(32);
+    v[c] = add(v[c], v[d]); v[b] = (v[b] ^ v[c]).rotate_right(24);
+    v[a] = add(v[a], v[b]); v[d] = (v[d] ^ v[a]).rotate_right(16);
+    v[c] = add(v[c], v[d]); v[b] = (v[b] ^ v[c]).rotate_right(63);
+}
+
+/// Permutation P (RFC 9106 §3.5) over 16 u64s.
+fn permute_p(v: &mut [u64; 16]) {
+    gb(v, 0, 4,  8, 12);
+    gb(v, 1, 5,  9, 13);
+    gb(v, 2, 6, 10, 14);
+    gb(v, 3, 7, 11, 15);
+    gb(v, 0, 5, 10, 15);
+    gb(v, 1, 6, 11, 12);
+    gb(v, 2, 7,  8, 13);
+    gb(v, 3, 4,  9, 14);
+}
+
+/// G(X, Y) compression. R = X^Y, apply P to 8 rows then 8 columns of R,
+/// final = result ^ R.
+fn compress_g(x: &Block, y: &Block) -> Block {
+    let r = block_xor(x, y);
+    let mut z = r;
+    // 8 rows of 16 u64s each.
+    for row in 0..8 {
+        let off = row * 16;
+        let mut v = [0u64; 16];
+        v.copy_from_slice(&z[off..off + 16]);
+        permute_p(&mut v);
+        z[off..off + 16].copy_from_slice(&v);
+    }
+    // 8 columns: column c spans 16 u64s, taking 2 consecutive words from each row.
+    for col in 0..8 {
+        let mut v = [0u64; 16];
+        for row in 0..8 {
+            v[row * 2] = z[row * 16 + col * 2];
+            v[row * 2 + 1] = z[row * 16 + col * 2 + 1];
+        }
+        permute_p(&mut v);
+        for row in 0..8 {
+            z[row * 16 + col * 2] = v[row * 2];
+            z[row * 16 + col * 2 + 1] = v[row * 2 + 1];
+        }
+    }
+    block_xor(&z, &r)
+}
+
+/// Build an Argon2i address block (RFC 9106 §3.4.1.2). The block at
+/// `counter` provides 128 (J1, J2) pseudo-random pairs.
+fn argon2i_address_block(
+    pass: u64, lane: u64, slice: u64, total_blocks: u64,
+    total_passes: u64, ty: u64, counter: u64,
+) -> Block {
+    let zero = block_zero();
+    let mut input = block_zero();
+    input[0] = pass;
+    input[1] = lane;
+    input[2] = slice;
+    input[3] = total_blocks;
+    input[4] = total_passes;
+    input[5] = ty;
+    input[6] = counter;
+    // First G with zero||input, then G(zero, first) to randomize.
+    let first = compress_g(&zero, &input);
+    compress_g(&zero, &first)
+}
+
+/// Map a 32-bit pseudo-random J1 onto [0, ref_area) using the
+/// non-uniform mapping of RFC 9106 §3.4.
+fn map_index(j1: u32, ref_area_size: usize) -> usize {
+    let x = ((j1 as u64).wrapping_mul(j1 as u64)) >> 32;
+    let y = ((ref_area_size as u64).wrapping_mul(x)) >> 32;
+    (ref_area_size as u64).wrapping_sub(1).wrapping_sub(y) as usize
+}
+
+/// Argon2id KDF per RFC 9106 — single lane.
+pub fn argon2id_hash(
+    password: &[u8], salt: &[u8], params: &Argon2idParams,
+) -> Result<Vec<u8>, Argon2Error> {
+    if params.parallelism != 1 { return Err(Argon2Error::InvalidParam("p=1 only")); }
+    if params.t_cost < 1 { return Err(Argon2Error::InvalidParam("t >= 1")); }
+    if params.tau < 4 { return Err(Argon2Error::InvalidParam("tau >= 4")); }
+    if salt.len() < 8 { return Err(Argon2Error::InvalidParam("salt >= 8")); }
+    if params.m_kib < 8 { return Err(Argon2Error::InvalidParam("m >= 8")); }
+
+    let p = params.parallelism;
+    let tau = params.tau;
+    let t = params.t_cost;
+    // m' = 4 * p * floor(m / (4*p))
+    let m_prime = 4 * p * (params.m_kib / (4 * p));
+    let q = (m_prime / p) as usize;
+    let segment_length = q / ARGON2_SYNC_POINTS;
+
+    // H₀
+    let mut h0_in = Vec::new();
+    h0_in.extend_from_slice(&p.to_le_bytes());
+    h0_in.extend_from_slice(&tau.to_le_bytes());
+    h0_in.extend_from_slice(&params.m_kib.to_le_bytes());
+    h0_in.extend_from_slice(&t.to_le_bytes());
+    h0_in.extend_from_slice(&ARGON2_VERSION.to_le_bytes());
+    h0_in.extend_from_slice(&ARGON2ID_TYPE.to_le_bytes());
+    h0_in.extend_from_slice(&(password.len() as u32).to_le_bytes());
+    h0_in.extend_from_slice(password);
+    h0_in.extend_from_slice(&(salt.len() as u32).to_le_bytes());
+    h0_in.extend_from_slice(salt);
+    h0_in.extend_from_slice(&0u32.to_le_bytes()); // |K|
+    h0_in.extend_from_slice(&0u32.to_le_bytes()); // |X|
+    let h0 = blake2b(&h0_in, &[], 64).map_err(Argon2Error::Crypto)?;
+
+    // Memory buffer.
+    let mut mem: Vec<Block> = vec![block_zero(); q];
+
+    // Initial two blocks of the lane.
+    let mut ext = h0.clone();
+    ext.extend_from_slice(&0u32.to_le_bytes());
+    ext.extend_from_slice(&0u32.to_le_bytes());
+    mem[0] = block_from_bytes(&argon2_h_prime(&ext, ARGON2_BLOCK_SIZE as u32)?);
+    let mut ext = h0.clone();
+    ext.extend_from_slice(&1u32.to_le_bytes());
+    ext.extend_from_slice(&0u32.to_le_bytes());
+    mem[1] = block_from_bytes(&argon2_h_prime(&ext, ARGON2_BLOCK_SIZE as u32)?);
+
+    for pass in 0..t as u64 {
+        for slice in 0..ARGON2_SYNC_POINTS as u64 {
+            // Argon2id: Argon2i indexing iff (pass == 0 && slice < 2).
+            let use_argon2i = pass == 0 && slice < 2;
+            let seg_start = (slice as usize) * segment_length;
+
+            // For Argon2i, prepare a rolling address block; refresh every 128 blocks.
+            let mut addr_block = block_zero();
+            let mut addr_counter: u64 = 0;
+            if use_argon2i {
+                addr_counter = 1;
+                addr_block = argon2i_address_block(
+                    pass, 0, slice, q as u64, t as u64, ARGON2ID_TYPE as u64, addr_counter,
+                );
+            }
+
+            let start_in_seg = if pass == 0 && slice == 0 { 2 } else { 0 };
+            for idx_in_seg in start_in_seg..segment_length {
+                let j_abs = seg_start + idx_in_seg;
+                // Refresh Argon2i address block every 128 entries.
+                if use_argon2i && idx_in_seg > 0 && idx_in_seg % ARGON2_QWORDS == 0 {
+                    addr_counter += 1;
+                    addr_block = argon2i_address_block(
+                        pass, 0, slice, q as u64, t as u64, ARGON2ID_TYPE as u64, addr_counter,
+                    );
+                }
+                let prev_idx = if j_abs == 0 { q - 1 } else { j_abs - 1 };
+                let prev_block = mem[prev_idx];
+
+                // Pseudo-random word.
+                let pseudo = if use_argon2i {
+                    addr_block[idx_in_seg % ARGON2_QWORDS]
+                } else {
+                    prev_block[0]
+                };
+                let j1 = (pseudo & 0xFFFFFFFF) as u32;
+                // J2 (lane selector) ignored for p=1.
+
+                // Reference area: all blocks already computed in the lane,
+                // excluding the previous block.
+                let ref_area_size: usize = if pass == 0 {
+                    j_abs - 1
+                } else {
+                    // Whole lane minus current segment, plus already-computed
+                    // blocks in current segment, minus 1.
+                    q - segment_length + idx_in_seg - 1
+                };
+                if ref_area_size == 0 { continue; }
+
+                let rel = map_index(j1, ref_area_size);
+                let ref_index = if pass == 0 {
+                    rel
+                } else {
+                    let start = ((slice as usize + 1) * segment_length) % q;
+                    (start + rel) % q
+                };
+                let ref_block = mem[ref_index];
+
+                let new_block = compress_g(&prev_block, &ref_block);
+                if pass == 0 {
+                    mem[j_abs] = new_block;
+                } else {
+                    mem[j_abs] = block_xor(&mem[j_abs], &new_block);
+                }
+            }
+        }
+    }
+
+    // Final = B[lane=0][q-1]; tag = H'(C, tau).
+    let c_bytes = block_to_bytes(&mem[q - 1]);
+    argon2_h_prime(&c_bytes, tau)
+}

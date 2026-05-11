@@ -1,0 +1,9 @@
+{
+  "name": "consumer-mini-router-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #44: vendored mini-router with middleware exercising Request/Response/Headers + URL parsing + middleware composition.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "mini-router": "^0.1.0" }
+}

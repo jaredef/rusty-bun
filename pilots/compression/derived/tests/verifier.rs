@@ -140,3 +140,64 @@ fn http_deflate_accepts_both_wrappings() {
         }
     }
 }
+
+// ════════════════════ Stored-block encoders (Π1.3.b) ════════════════════
+
+#[test]
+fn deflate_stored_roundtrip_short() {
+    let input = b"Hello, world!";
+    let encoded = rusty_compression::deflate_stored(input);
+    let decoded = inflate(&encoded).expect("inflate stored");
+    assert_eq!(&decoded, input);
+}
+
+#[test]
+fn deflate_stored_roundtrip_empty() {
+    let input = b"";
+    let encoded = rusty_compression::deflate_stored(input);
+    let decoded = inflate(&encoded).expect("inflate empty stored");
+    assert_eq!(&decoded, input);
+}
+
+#[test]
+fn deflate_stored_roundtrip_large() {
+    // Forces multiple stored blocks (each cap 65535).
+    let input: Vec<u8> = (0..200_000u32).map(|i| (i & 0xFF) as u8).collect();
+    let encoded = rusty_compression::deflate_stored(&input);
+    let decoded = inflate(&encoded).expect("inflate large stored");
+    assert_eq!(decoded, input);
+}
+
+#[test]
+fn zlib_deflate_stored_roundtrip() {
+    let input = b"the quick brown fox jumps over the lazy dog";
+    let encoded = rusty_compression::zlib_deflate_stored(input);
+    let decoded = zlib_inflate(&encoded).expect("zlib inflate stored");
+    assert_eq!(&decoded, input);
+}
+
+#[test]
+fn gzip_deflate_stored_roundtrip() {
+    let input = b"compressible-or-not, gzip wraps it the same way";
+    let encoded = rusty_compression::gzip_deflate_stored(input);
+    let decoded = gunzip(&encoded).expect("gunzip stored");
+    assert_eq!(&decoded, input);
+}
+
+#[test]
+fn gzip_deflate_stored_decodes_under_system_gunzip() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let input = b"system-gunzip must accept our stored-block output";
+    let encoded = rusty_compression::gzip_deflate_stored(input);
+    let mut child = Command::new("gzip")
+        .arg("-cd")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("gzip missing");
+    child.stdin.as_mut().unwrap().write_all(&encoded).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "gunzip failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(&out.stdout, input);
+}

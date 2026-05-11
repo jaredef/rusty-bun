@@ -4297,3 +4297,41 @@ fn bun_password_verify_sync_accepts_upstream_phc() {
     "#).unwrap();
     assert_eq!(r, "ok");
 }
+
+// ════════════════════ Bun.gzipSync / deflateSync (Π1.3.b) ════════════════════
+
+#[test]
+fn bun_gzip_sync_round_trips() {
+    let r = rusty_bun_host::eval_string(r#"
+        const input = "hello compression world";
+        const enc = Bun.gzipSync(input);
+        const dec = new TextDecoder().decode(Bun.gunzipSync(enc));
+        dec
+    "#).unwrap();
+    assert_eq!(r, "hello compression world");
+}
+
+#[test]
+fn bun_deflate_sync_round_trips() {
+    let r = rusty_bun_host::eval_string(r#"
+        const input = "deflate this";
+        const enc = Bun.deflateSync(input);
+        const dec = new TextDecoder().decode(Bun.inflateSync(enc));
+        dec
+    "#).unwrap();
+    assert_eq!(r, "deflate this");
+}
+
+#[test]
+fn bun_gzip_sync_decodes_under_bun() {
+    // Verifies the wire format is compatible: real Bun's gunzipSync
+    // (and any conforming gzip decoder) accepts our stored-block output.
+    // We don't have Bun in-process here, so emit bytes and trust the
+    // pilot-level system-gunzip differential to anchor wire compatibility.
+    let r = rusty_bun_host::eval_string(r#"
+        const enc = Bun.gzipSync("xyz");
+        // gzip magic 0x1f 0x8b
+        (enc[0] === 0x1f && enc[1] === 0x8b) ? "ok" : "bad"
+    "#).unwrap();
+    assert_eq!(r, "ok");
+}

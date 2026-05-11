@@ -485,3 +485,88 @@ pub fn http_deflate_inflate(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
         Err(_) => inflate(data),
     }
 }
+
+// ──────────────────── Stored-block encoders (Π1.3.b) ────────────────────
+//
+// Real DEFLATE encoders use LZ77 + dynamic Huffman, which is a significant
+// implementation lift. For wire-format parity with Bun.deflateSync /
+// Bun.gzipSync we only need to produce *valid* output that any conforming
+// decoder accepts — including our own inflate(), node's zlib, and Bun's
+// libdeflate. RFC 1951 §3.2.4 defines a "stored" block type: literal
+// uncompressed bytes with a 5-byte header per block. Each stored block
+// can carry up to 65535 bytes (0xFFFF); larger inputs split across blocks.
+//
+// This trades compression ratio (1.0) for full format compatibility with
+// any consumer that decodes deflate/gzip/zlib. The LZ77 path is tracked
+// for follow-on once a real-world bottleneck demands it.
+
+const STORED_MAX: usize = 0xFFFF;
+
+/// Encode `data` as a sequence of DEFLATE stored blocks (RFC 1951 §3.2.4).
+pub fn deflate_stored(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 5 * (data.len() / STORED_MAX + 1));
+    if data.is_empty() {
+        // Empty input: one final stored block of length 0.
+        out.push(0x01); // BFINAL=1, BTYPE=00
+        out.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+        return out;
+    }
+    let mut i = 0;
+    while i < data.len() {
+        let chunk_len = std::cmp::min(STORED_MAX, data.len() - i);
+        let is_final = i + chunk_len == data.len();
+        // Stored-block header is byte-aligned. First byte: BFINAL(1) | BTYPE(00).
+        out.push(if is_final { 0x01 } else { 0x00 });
+        let len = chunk_len as u16;
+        out.push((len & 0xFF) as u8);
+        out.push((len >> 8) as u8);
+        out.push((!len & 0xFF) as u8);
+        out.push((!len >> 8) as u8);
+        out.extend_from_slice(&data[i..i + chunk_len]);
+        i += chunk_len;
+    }
+    out
+}
+
+/// zlib wrapper (RFC 1950) around a stored-block deflate stream.
+pub fn zlib_deflate_stored(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 11);
+    // CMF: CM=8 (deflate), CINFO=7 (32K window).
+    out.push(0x78);
+    // FLG: FLEVEL=0 (fastest), no FDICT. FCHECK chosen so that
+    // (CMF*256 + FLG) % 31 == 0. 0x78 * 256 = 30720; (30720 + FLG) % 31 == 0.
+    // FLG with FLEVEL=0 and FDICT=0: FCHECK = 31 - (30720 % 31) = 31 - 30 = 1.
+    out.push(0x01);
+    out.extend_from_slice(&deflate_stored(data));
+    let a = adler32(data);
+    out.push((a >> 24) as u8);
+    out.push((a >> 16) as u8);
+    out.push((a >>  8) as u8);
+    out.push((a >>  0) as u8);
+    out
+}
+
+/// gzip wrapper (RFC 1952) around a stored-block deflate stream.
+pub fn gzip_deflate_stored(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 18);
+    out.extend_from_slice(&[
+        0x1f, 0x8b,       // ID1, ID2
+        0x08,             // CM = deflate
+        0x00,             // FLG: no fields
+        0x00, 0x00, 0x00, 0x00, // MTIME = 0
+        0x00,             // XFL
+        0xff,             // OS = unknown
+    ]);
+    out.extend_from_slice(&deflate_stored(data));
+    let c = crc32(data);
+    out.push((c >>  0) as u8);
+    out.push((c >>  8) as u8);
+    out.push((c >> 16) as u8);
+    out.push((c >> 24) as u8);
+    let isize_le = (data.len() as u32) & 0xFFFFFFFF;
+    out.push((isize_le >>  0) as u8);
+    out.push((isize_le >>  8) as u8);
+    out.push((isize_le >> 16) as u8);
+    out.push((isize_le >> 24) as u8);
+    out
+}

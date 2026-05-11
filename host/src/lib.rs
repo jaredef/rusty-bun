@@ -1149,6 +1149,17 @@ fn wire_compression<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsRe
             .map_err(|e| rquickjs::Error::new_from_js_message(
                 "compression", "http_deflate_inflate", e.to_string()))
     })?)?;
+    // Π1.3.b: stored-block encoders. Trade compression ratio for format
+    // compatibility; any conforming inflater accepts the output.
+    ns.set("deflate_stored", Function::new(ctx.clone(), |bytes: Vec<u8>| -> Vec<u8> {
+        rusty_compression::deflate_stored(&bytes)
+    })?)?;
+    ns.set("zlib_deflate_stored", Function::new(ctx.clone(), |bytes: Vec<u8>| -> Vec<u8> {
+        rusty_compression::zlib_deflate_stored(&bytes)
+    })?)?;
+    ns.set("gzip_deflate_stored", Function::new(ctx.clone(), |bytes: Vec<u8>| -> Vec<u8> {
+        rusty_compression::gzip_deflate_stored(&bytes)
+    })?)?;
     global.set("__compression", ns)?;
     Ok(())
 }
@@ -7010,7 +7021,9 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
             Bun.Glob = Glob;
 
             // Bun.gunzipSync / Bun.inflateSync — compose on Π1.3 decode.
-            // Bun.gzipSync / Bun.deflateSync deferred until encode lands.
+            // Bun.gzipSync / Bun.deflateSync compose on Π1.3.b stored-block
+            // encoders — wire-format compatible (any inflater accepts), with
+            // compression ratio 1.0 until the LZ77+Huffman encoder lands.
             Bun.gunzipSync = function gunzipSync(input) {
                 const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
                 return new Uint8Array(globalThis.__compression.gunzip(Array.from(bytes)));
@@ -7018,6 +7031,19 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
             Bun.inflateSync = function inflateSync(input) {
                 const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
                 return new Uint8Array(globalThis.__compression.http_deflate_inflate(Array.from(bytes)));
+            };
+            Bun.gzipSync = function gzipSync(input) {
+                const bytes = (typeof input === "string")
+                    ? new TextEncoder().encode(input)
+                    : (input instanceof Uint8Array ? input : new Uint8Array(input));
+                return new Uint8Array(globalThis.__compression.gzip_deflate_stored(Array.from(bytes)));
+            };
+            Bun.deflateSync = function deflateSync(input) {
+                const bytes = (typeof input === "string")
+                    ? new TextEncoder().encode(input)
+                    : (input instanceof Uint8Array ? input : new Uint8Array(input));
+                // Bun.deflateSync produces zlib-wrapped output by default (matches Node zlib.deflateSync).
+                return new Uint8Array(globalThis.__compression.zlib_deflate_stored(Array.from(bytes)));
             };
 
             // Bun.escapeHTML — common micro-helper.

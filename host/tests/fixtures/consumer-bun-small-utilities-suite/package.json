@@ -1,0 +1,8 @@
+{
+  "name": "consumer-bun-small-utilities-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #61: Bun namespace small utilities. Tier-Π4 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

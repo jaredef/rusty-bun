@@ -861,6 +861,46 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "close", e.to_string()))
         })?,
     )?;
+    // Async listener primitives (engagement option A; std-only equivalent of
+    // Bun's WorkPool + concurrent_tasks + Waker pattern).
+    ns.set(
+        "listenerBindAsyncJson",
+        Function::new(ctx.clone(), |addr: String| -> JsResult<String> {
+            let (id, addr) = rusty_sockets::listener_bind_async(&addr)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "bindAsync", e.to_string()))?;
+            Ok(format!("{{\"id\":{},\"addr\":{}}}", id, json_str(&addr)))
+        })?,
+    )?;
+    ns.set(
+        "listenerPollJson",
+        Function::new(ctx.clone(), |id: f64, max_wait_ms: f64| -> JsResult<String> {
+            let ev = rusty_sockets::listener_poll(id as u64, max_wait_ms as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "poll", e.to_string()))?;
+            Ok(match ev {
+                None => "null".to_string(),
+                Some(rusty_sockets::AsyncEvent::Connection { stream_id, peer }) =>
+                    format!("{{\"type\":\"connection\",\"streamId\":{},\"peer\":{}}}", stream_id, json_str(&peer)),
+                Some(rusty_sockets::AsyncEvent::Closed) =>
+                    "{\"type\":\"closed\"}".to_string(),
+                Some(rusty_sockets::AsyncEvent::Error(s)) =>
+                    format!("{{\"type\":\"error\",\"message\":{}}}", json_str(&s)),
+            })
+        })?,
+    )?;
+    ns.set(
+        "listenerStopAsync",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<()> {
+            rusty_sockets::listener_stop_async(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "stopAsync", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "asyncListenerAddr",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            rusty_sockets::async_listener_addr(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "asyncListenerAddr", e.to_string()))
+        })?,
+    )?;
     ns.set(
         "handleKind",
         Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
@@ -895,6 +935,14 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 localAddr(id) { return raw.streamLocalAddr(id); },
                 close(id) { raw.handleClose(id); },
                 kind(id) { return raw.handleKind(id); },
+                // Async-listener primitives (option A; see seed §V Tier-G).
+                bindAsync(addr) { return JSON.parse(raw.listenerBindAsyncJson(addr)); },
+                poll(id, maxWaitMs) {
+                    const r = JSON.parse(raw.listenerPollJson(id, maxWaitMs));
+                    return r;  // null | {type:"connection",streamId,peer} | {type:"closed"} | {type:"error",message}
+                },
+                stopAsync(id) { raw.listenerStopAsync(id); },
+                asyncListenerAddr(id) { return raw.asyncListenerAddr(id); },
             };
         })();
     "#)?;

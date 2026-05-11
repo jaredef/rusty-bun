@@ -1,0 +1,8 @@
+{
+  "name": "consumer-async-http-server-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #50: async-listener-driven HTTP server pattern. Demonstrates the Bun.serve-shape async-bridge: bind, poll for connections, dispatch to handlers, all in a single JS thread interleaving with the TCP client via the kernel's listen backlog.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

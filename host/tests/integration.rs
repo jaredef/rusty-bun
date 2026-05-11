@@ -2883,6 +2883,30 @@ fn with_echo_server<F: FnOnce()>(f: F) {
 // HTTP-over-TCP harness: spawn an in-process HTTP/1.1 server that handles
 // /health → 200 JSON, /echo → 200 echo body, anything else → 404. Used by
 // the http-over-tcp fixture to validate the full client-side HTTP stack.
+#[test]
+fn js_consumer_async_http_server_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-async-http-server-suite/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    assert!(r.starts_with("8/8"), "async-http-server-suite failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_async_http_server_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-async-http-server-suite/src/main.js");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun").arg(fixture.to_str().unwrap()).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "async-http-server-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
 fn with_http_server<F: FnOnce()>(f: F) {
     use std::net::TcpListener;
     use std::io::{Read, Write};

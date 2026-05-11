@@ -1,0 +1,8 @@
+{
+  "name": "consumer-validator",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #19: data validator. Proxy multi-trap (set/has/deleteProperty/defineProperty) + Reflect.construct/apply + Number parseInt/parseFloat radix + String fromCharCode/codePointAt + Date.parse / toISOString roundtrip. M9.bis-native.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

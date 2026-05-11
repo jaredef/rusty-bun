@@ -4592,3 +4592,24 @@ fn consumer_ms_app_byte_identical_to_bun() {
     let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
+
+#[test]
+fn consumer_mini_app_byte_identical_to_bun() {
+    // Composed mini API server: 6 vendored OSS libs in one process via
+    // Bun.serve + Π2.6.b self-fetch. Strongest single composition
+    // telos validator the engagement has produced.
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-mini-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}

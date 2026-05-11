@@ -1114,3 +1114,35 @@ fn debug_p256_mod_consistency() {
     let r2 = pm1.modulo(&p);
     assert_eq!(r2.to_be_bytes(32), pm1.to_be_bytes(32), "(p-1) mod p ≠ p-1");
 }
+
+// ─────────────── ECDH P-256 (SEC 1 §3.3.1) ─────────────────────────
+
+#[test]
+fn ecdh_p256_diffie_hellman_property() {
+    // Two parties: Alice has (d_A, Q_A), Bob has (d_B, Q_B).
+    // Shared secret = d_A · Q_B = d_B · Q_A.
+    // Use the same test key as ECDSA for Alice, and derive Bob's keys.
+    let (d_a, qax, qay) = test_ecdsa_p256();
+    // Bob: generated separately with Bun.
+    let d_b  = hex_decode("4242424242424242424242424242424242424242424242424242424242424242");
+    let q_b = rusty_web_crypto::p256_scalar_mul(
+        &rusty_web_crypto::BigUInt::from_be_bytes(&d_b),
+        &rusty_web_crypto::p256_g(),
+    );
+    let (qbx, qby) = if let rusty_web_crypto::P256Point::Affine { x, y } = q_b {
+        (x.to_be_bytes(32), y.to_be_bytes(32))
+    } else { panic!("Bob's public key is identity"); };
+    // Shared secret from each side.
+    let s_a = rusty_web_crypto::ecdh_p256(&d_a, &qbx, &qby).unwrap();
+    let s_b = rusty_web_crypto::ecdh_p256(&d_b, &qax, &qay).unwrap();
+    assert_eq!(s_a, s_b, "ECDH shared secrets must agree");
+    assert_eq!(s_a.len(), 32);
+}
+
+#[test]
+fn ecdh_p256_rejects_off_curve_peer() {
+    let (d, _, _) = test_ecdsa_p256();
+    let bad_qx = vec![0x00u8; 32];
+    let bad_qy = vec![0x00u8; 32];
+    assert!(rusty_web_crypto::ecdh_p256(&d, &bad_qx, &bad_qy).is_err());
+}

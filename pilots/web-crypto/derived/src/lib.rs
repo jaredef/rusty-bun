@@ -1113,6 +1113,40 @@ pub fn ecdsa_p256_sha256_verify(
     else { Err("ECDSA: signature mismatch".into()) }
 }
 
+// ─────────────────────── ECDH over P-256 (SEC 1 §3.3.1) ────────────
+//
+// Pure ECDH: derive a shared secret as the x-coordinate of (d_A · Q_B),
+// returned as a 32-byte big-endian octet string. WebCrypto's
+// deriveBits({name:"ECDH"}, priv, bitLen) returns the leftmost
+// bitLen/8 bytes of this.
+
+pub fn ecdh_p256(d_bytes: &[u8], qx_bytes: &[u8], qy_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use std::cmp::Ordering;
+    let n = p256_n();
+    let d = BigUInt::from_be_bytes(d_bytes);
+    if d.is_zero() || d.cmp(&n) != Ordering::Less {
+        return Err("ECDH: private scalar out of range".into());
+    }
+    let p = p256_p();
+    let three = BigUInt::from_be_bytes(&[3]);
+    let qx = BigUInt::from_be_bytes(qx_bytes);
+    let qy = BigUInt::from_be_bytes(qy_bytes);
+    // Validate Q on curve.
+    let lhs = mod_mul(&qy, &qy, &p);
+    let x3 = mod_mul(&mod_mul(&qx, &qx, &p), &qx, &p);
+    let neg3x = mod_mul(&three, &qx, &p);
+    let rhs = mod_sub(&mod_add(&x3, &p256_b(), &p), &neg3x, &p);
+    if lhs.cmp(&rhs) != Ordering::Equal {
+        return Err("ECDH: peer public key not on curve".into());
+    }
+    let q = P256Point::Affine { x: qx, y: qy };
+    let shared = p256_scalar_mul(&d, &q);
+    match shared {
+        P256Point::Identity => Err("ECDH: derived point is identity (peer key invalid)".into()),
+        P256Point::Affine { x, .. } => Ok(x.to_be_bytes(32)),
+    }
+}
+
 // ─────────────────────── MGF1 + RSA-OAEP (RFC 8017) ───────────────
 //
 // MGF1: mask generation function based on a hash. RFC 8017 §B.2.1.

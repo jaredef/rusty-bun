@@ -1,0 +1,8 @@
+{
+  "name": "consumer-ecdh-p256-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #35: ECDH P-256 deriveBits via crypto.subtle.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

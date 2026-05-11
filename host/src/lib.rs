@@ -723,6 +723,14 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // ECDH over P-256 (SEC 1 §3.3.1). x-coordinate of d·Q.
+    subtle.set(
+        "ecdhP256Bytes",
+        Function::new(ctx.clone(), |d: Vec<u8>, qx: Vec<u8>, qy: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::ecdh_p256(&d, &qx, &qy)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDH", "derive", e))
+        })?,
+    )?;
     // ECDSA over P-256 with SHA-256 (FIPS 186-4 §6.4). Signature
     // format: r ‖ s (P1363 / WebCrypto raw), 64 bytes total. Caller
     // provides a 32-byte k from /dev/urandom for sign; verify is
@@ -991,7 +999,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
                 if (format === "jwk") {
                     const alg = normalizeAlg(algorithm);
-                    if (alg.name === "ECDSA") {
+                    if (alg.name === "ECDSA" || alg.name === "ECDH") {
+                        const specName = alg.name === "ECDSA" ? "ECDSA" : "ECDH";
                         // JWK EC: {kty:"EC", crv:"P-256", x, y, d?}
                         if (!keyData || keyData.kty !== "EC") throw new TypeError("JWK kty must be EC");
                         if (keyData.crv !== "P-256") {
@@ -1003,16 +1012,16 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                             const d = b64urlToBytes(keyData.d);
                             return {
                                 type: "private", extractable: !!extractable,
-                                algorithm: { name: "ECDSA", namedCurve: "P-256" },
+                                algorithm: { name: specName, namedCurve: "P-256" },
                                 usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                                _x: x, _y: y, _d: d, _algName: "ECDSA", _curve: "P-256",
+                                _x: x, _y: y, _d: d, _algName: specName, _curve: "P-256",
                             };
                         }
                         return {
                             type: "public", extractable: !!extractable,
                             algorithm: { name: "ECDSA", namedCurve: "P-256" },
                             usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                            _x: x, _y: y, _algName: "ECDSA", _curve: "P-256",
+                            _x: x, _y: y, _algName: specName, _curve: "P-256",
                         };
                     }
                     if (alg.name === "RSAOAEP" || alg.name === "RSAPSS") {
@@ -1132,6 +1141,26 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     if (iterations === 0) throw new Error("PBKDF2 iterations must be > 0");
                     const salt = toBytes(algorithm.salt);
                     return toArrayBuffer(h.pbkdf2(baseKey._bytes, salt, iterations, length / 8));
+                }
+                if (algName === "ECDH") {
+                    if (baseKey._algName !== "ECDH" || !baseKey._d) {
+                        throw new TypeError("deriveBits: baseKey is not an ECDH private key");
+                    }
+                    if (!algorithm.public || algorithm.public._algName !== "ECDH") {
+                        throw new TypeError("deriveBits: algorithm.public must be an ECDH public key");
+                    }
+                    if (baseKey._curve !== "P-256" || algorithm.public._curve !== "P-256") {
+                        throw new Error("ECDH pilot scope: P-256 only");
+                    }
+                    const fullSecret = subtle.ecdhP256Bytes(
+                        baseKey._d, algorithm.public._x, algorithm.public._y);
+                    // Truncate to requested bit-length (must be ≤ 256 bits for P-256
+                    // x-coordinate). length is in bits, in multiples of 8.
+                    const byteLen = length / 8;
+                    if (byteLen > fullSecret.length) {
+                        throw new Error("ECDH P-256: length must be ≤ 256 bits");
+                    }
+                    return toArrayBuffer(fullSecret.slice(0, byteLen));
                 }
                 if (algName === "HKDF") {
                     if (baseKey._algName !== "HKDF") {

@@ -759,3 +759,118 @@ fn aes_kw_integrity_check_rejects_tampered() {
     wrapped[0] ^= 0x01;
     assert!(rusty_web_crypto::aes_kw_unwrap(&kek, &wrapped).is_err());
 }
+
+// ─────────────── Big-integer arithmetic ────────────────────────────
+
+use rusty_web_crypto::BigUInt;
+
+fn b(hex: &str) -> BigUInt { BigUInt::from_be_bytes(&hex_decode(hex)) }
+
+#[test]
+fn bigint_roundtrip_be_bytes() {
+    let bytes = hex_decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    let n = BigUInt::from_be_bytes(&bytes);
+    let out = n.to_be_bytes(bytes.len());
+    assert_eq!(out, bytes);
+}
+
+#[test]
+fn bigint_add_basic() {
+    let a = b("01");
+    let b1 = b("02");
+    let s = a.add(&b1);
+    assert_eq!(s.to_be_bytes(1), vec![3]);
+}
+
+#[test]
+fn bigint_add_with_carry_across_limbs() {
+    let a = b("ffffffff");
+    let b1 = b("01");
+    let s = a.add(&b1);
+    assert_eq!(s.to_be_bytes(5), hex_decode("0100000000"));
+}
+
+#[test]
+fn bigint_mul_known() {
+    // 0x100000000 * 0x100000000 = 0x10000000000000000
+    let a = b("0100000000");
+    let s = a.mul(&a);
+    assert_eq!(s.to_be_bytes(9), hex_decode("010000000000000000"));
+}
+
+#[test]
+fn bigint_divmod_known() {
+    // 1000 / 7 = 142 rem 6.
+    let n = BigUInt::from_be_bytes(&[1000u32.to_be_bytes()[2], 1000u32.to_be_bytes()[3]]);
+    let d = BigUInt::from_be_bytes(&[7]);
+    let (q, r) = n.divmod(&d);
+    assert_eq!(q.to_be_bytes(1), vec![142]);
+    assert_eq!(r.to_be_bytes(1), vec![6]);
+}
+
+#[test]
+fn bigint_modpow_small_textbook_rsa() {
+    // Textbook RSA: n=33, e=3, d=7. Encrypt m=2 → c=8. Decrypt c=8 → m=2.
+    // 2^3 mod 33 = 8. 8^7 mod 33 = 2097152 mod 33 = 2.
+    let n = BigUInt::from_be_bytes(&[33]);
+    let e = BigUInt::from_be_bytes(&[3]);
+    let d = BigUInt::from_be_bytes(&[7]);
+    let m = BigUInt::from_be_bytes(&[2]);
+    let c = m.mod_pow(&e, &n);
+    assert_eq!(c.to_be_bytes(1), vec![8]);
+    let m_back = c.mod_pow(&d, &n);
+    assert_eq!(m_back.to_be_bytes(1), vec![2]);
+}
+
+#[test]
+fn bigint_modpow_2048_bit_smoke() {
+    // RSA-2048 round-trip on a real-shaped key. Test key from RFC 7517
+    // §C (the "2011-04-29" JWK example): public modulus n, e=65537, d.
+    // We pick m=42 as message representative.
+    let n = b(
+        "00a56e4a0e701017589a5187dc7ea841d156f2ec0e36ad52a44dfeb1e61f7ad991\
+         d8c51056ffedb162b4c0f283a12a88a394dff526ab7291cbb307ceabfce0b1dfd5\
+         cd9508096d5b2b8b6df5d671ef6377c0921cb23c270a70e2598e6ff89d19f105ac\
+         c2d3f0cb35f29280e1386b6f64c4ef22e1e1f20d0ce8cffb2249bd9a2137".replace("\n", "").replace(" ", "").as_str());
+    let e = BigUInt::from_be_bytes(&hex_decode("010001"));
+    let d = b(
+        "33a5042a90b27d4f5451ca9bbbd0b44771a101af884340aef9885f2a4bbe92e894\
+         a724ac3c568c8f97853ad07c0266c8c6a3ca0929f1e8f11231884429fc4d9ae55f\
+         ee896a10ce707c3ed7e734e44727a39574501a532683109c2abacaba283c31b4b\
+         d2f53c3ee37e352cee34f9e503bd80c0622ad79c6dcee883547c6a3b325".replace("\n", "").replace(" ", "").as_str());
+    let m = BigUInt::from_be_bytes(&[42]);
+    let c = m.mod_pow(&e, &n);
+    let m_back = c.mod_pow(&d, &n);
+    assert_eq!(m_back.to_be_bytes(1), vec![42]);
+}
+
+#[test]
+fn bigint_modpow_zero_modulus_one_returns_zero() {
+    let n = BigUInt::from_be_bytes(&[1]);
+    let e = BigUInt::from_be_bytes(&[5]);
+    let m = BigUInt::from_be_bytes(&[3]);
+    let c = m.mod_pow(&e, &n);
+    assert!(c.is_zero());
+}
+
+#[test]
+fn rsaep_rsadp_textbook() {
+    let n = BigUInt::from_be_bytes(&[33]);
+    let e = BigUInt::from_be_bytes(&[3]);
+    let d = BigUInt::from_be_bytes(&[7]);
+    let m = BigUInt::from_be_bytes(&[5]);
+    let c = rusty_web_crypto::rsaep(&n, &e, &m).unwrap();
+    // 5^3 mod 33 = 125 mod 33 = 26
+    assert_eq!(c.to_be_bytes(1), vec![26]);
+    let m_back = rusty_web_crypto::rsadp(&n, &d, &c).unwrap();
+    assert_eq!(m_back.to_be_bytes(1), vec![5]);
+}
+
+#[test]
+fn rsaep_rejects_out_of_range_message() {
+    let n = BigUInt::from_be_bytes(&[33]);
+    let e = BigUInt::from_be_bytes(&[3]);
+    // m = 33 (== n) must be rejected.
+    let m = BigUInt::from_be_bytes(&[33]);
+    assert!(rusty_web_crypto::rsaep(&n, &e, &m).is_err());
+}

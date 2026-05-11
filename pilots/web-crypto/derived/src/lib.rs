@@ -664,6 +664,234 @@ pub fn aes_encrypt_block_with_key(key: &[u8], block: &[u8; 16]) -> [u8; 16] {
     aes_encrypt_block(block, &w)
 }
 
+// ─────────────────────── Big-integer arithmetic ───────────────────
+//
+// Minimal big-unsigned-integer impl for RSA. Little-endian Vec<u32>
+// limb representation; all operations are constant-time-friendly only
+// where it matters for security (modexp doesn't leak via timing here
+// because we don't promise side-channel resistance — this is a
+// reference implementation for correctness verification against Bun).
+//
+// Scope: enough for RSA-OAEP / RSA-PSS over 2048/3072/4096-bit keys.
+
+#[derive(Clone, Debug)]
+pub struct BigUInt(Vec<u32>);  // limbs[0] = least significant
+
+impl BigUInt {
+    pub fn zero() -> Self { BigUInt(vec![0]) }
+    pub fn one() -> Self { BigUInt(vec![1]) }
+
+    pub fn from_be_bytes(b: &[u8]) -> Self {
+        // Strip leading zeros; not strictly necessary but keeps trim() cheap.
+        let n_limbs = (b.len() + 3) / 4;
+        let mut limbs = vec![0u32; n_limbs];
+        for (i, byte) in b.iter().rev().enumerate() {
+            limbs[i / 4] |= (*byte as u32) << ((i % 4) * 8);
+        }
+        let mut r = BigUInt(limbs);
+        r.trim();
+        r
+    }
+
+    pub fn to_be_bytes(&self, len: usize) -> Vec<u8> {
+        let mut out = vec![0u8; len];
+        for i in 0..len {
+            let limb = self.0.get(i / 4).copied().unwrap_or(0);
+            let byte = (limb >> ((i % 4) * 8)) & 0xff;
+            out[len - 1 - i] = byte as u8;
+        }
+        out
+    }
+
+    fn trim(&mut self) {
+        while self.0.len() > 1 && *self.0.last().unwrap() == 0 {
+            self.0.pop();
+        }
+    }
+
+    pub fn is_zero(&self) -> bool { self.0.iter().all(|&l| l == 0) }
+
+    pub fn bit_len(&self) -> usize {
+        for i in (0..self.0.len()).rev() {
+            if self.0[i] != 0 {
+                return i * 32 + (32 - self.0[i].leading_zeros() as usize);
+            }
+        }
+        0
+    }
+
+    pub fn bit(&self, i: usize) -> bool {
+        let limb = i / 32;
+        let bit = i % 32;
+        self.0.get(limb).copied().unwrap_or(0) & (1u32 << bit) != 0
+    }
+
+    fn cmp(&self, other: &BigUInt) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        // Compare limbs from most-significant down.
+        let la = self.0.len();
+        let lb = other.0.len();
+        let la_eff = (0..la).rev().find(|&i| self.0[i] != 0).map(|i| i + 1).unwrap_or(0);
+        let lb_eff = (0..lb).rev().find(|&i| other.0[i] != 0).map(|i| i + 1).unwrap_or(0);
+        if la_eff != lb_eff { return la_eff.cmp(&lb_eff); }
+        for i in (0..la_eff).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                Ordering::Equal => continue,
+                ord => return ord,
+            }
+        }
+        Ordering::Equal
+    }
+
+    pub fn add(&self, other: &BigUInt) -> BigUInt {
+        let n = self.0.len().max(other.0.len()) + 1;
+        let mut out = vec![0u32; n];
+        let mut carry: u64 = 0;
+        for i in 0..n {
+            let a = self.0.get(i).copied().unwrap_or(0) as u64;
+            let b = other.0.get(i).copied().unwrap_or(0) as u64;
+            let sum = a + b + carry;
+            out[i] = (sum & 0xffffffff) as u32;
+            carry = sum >> 32;
+        }
+        let mut r = BigUInt(out);
+        r.trim();
+        r
+    }
+
+    /// Returns self - other. Caller must ensure self >= other.
+    pub fn sub(&self, other: &BigUInt) -> BigUInt {
+        let n = self.0.len();
+        let mut out = vec![0u32; n];
+        let mut borrow: i64 = 0;
+        for i in 0..n {
+            let a = self.0[i] as i64;
+            let b = other.0.get(i).copied().unwrap_or(0) as i64;
+            let diff = a - b - borrow;
+            if diff < 0 {
+                out[i] = (diff + (1i64 << 32)) as u32;
+                borrow = 1;
+            } else {
+                out[i] = diff as u32;
+                borrow = 0;
+            }
+        }
+        let mut r = BigUInt(out);
+        r.trim();
+        r
+    }
+
+    pub fn mul(&self, other: &BigUInt) -> BigUInt {
+        // Schoolbook O(n^2). For RSA-4096 this is ~16k u32-muls per
+        // multiplication — fine for correctness-first verification.
+        let n = self.0.len() + other.0.len();
+        let mut out = vec![0u64; n];
+        for i in 0..self.0.len() {
+            for j in 0..other.0.len() {
+                let p = (self.0[i] as u64) * (other.0[j] as u64);
+                out[i + j] += p & 0xffffffff;
+                out[i + j + 1] += p >> 32;
+            }
+        }
+        // Propagate carries across the u64 accumulator into u32 limbs.
+        let mut limbs = vec![0u32; n + 1];
+        let mut carry: u64 = 0;
+        for i in 0..n {
+            let s = out[i] + carry;
+            limbs[i] = (s & 0xffffffff) as u32;
+            carry = s >> 32;
+        }
+        limbs[n] = carry as u32;
+        let mut r = BigUInt(limbs);
+        r.trim();
+        r
+    }
+
+    fn shl1(&self) -> BigUInt {
+        let mut out = vec![0u32; self.0.len() + 1];
+        let mut carry: u32 = 0;
+        for (i, &l) in self.0.iter().enumerate() {
+            out[i] = (l << 1) | carry;
+            carry = l >> 31;
+        }
+        out[self.0.len()] = carry;
+        let mut r = BigUInt(out);
+        r.trim();
+        r
+    }
+
+    /// Returns (quotient, remainder) using binary long division.
+    /// Slow but correct; adequate for the pilot's scope.
+    pub fn divmod(&self, divisor: &BigUInt) -> (BigUInt, BigUInt) {
+        use std::cmp::Ordering;
+        assert!(!divisor.is_zero(), "BigUInt divmod by zero");
+        let bits = self.bit_len();
+        let mut q_limbs = vec![0u32; (bits + 31) / 32 + 1];
+        let mut r = BigUInt::zero();
+        for i in (0..bits).rev() {
+            r = r.shl1();
+            if self.bit(i) {
+                // OR in 1.
+                if r.0.is_empty() { r.0.push(0); }
+                r.0[0] |= 1;
+            }
+            if r.cmp(divisor) != Ordering::Less {
+                r = r.sub(divisor);
+                q_limbs[i / 32] |= 1u32 << (i % 32);
+            }
+        }
+        let mut q = BigUInt(q_limbs);
+        q.trim();
+        r.trim();
+        (q, r)
+    }
+
+    pub fn modulo(&self, m: &BigUInt) -> BigUInt {
+        self.divmod(m).1
+    }
+
+    /// Square-and-multiply modular exponentiation. Returns self^e mod m.
+    /// Pilot scope: not constant-time; correctness only.
+    pub fn mod_pow(&self, e: &BigUInt, m: &BigUInt) -> BigUInt {
+        if m.cmp(&BigUInt::one()) == std::cmp::Ordering::Equal {
+            return BigUInt::zero();
+        }
+        let mut result = BigUInt::one();
+        let mut base = self.modulo(m);
+        let bits = e.bit_len();
+        for i in 0..bits {
+            if e.bit(i) {
+                result = result.mul(&base).modulo(m);
+            }
+            base = base.mul(&base).modulo(m);
+        }
+        result
+    }
+}
+
+// ─────────────────────── RSA primitives (RFC 8017 §5) ──────────────
+//
+// RSAEP: c = m^e mod n  (encryption / verification)
+// RSADP: m = c^d mod n  (decryption / signing)
+//
+// Plain RSA — no padding. OAEP / PSS padding wrap these. Pilot scope:
+// public-key-with-(n,e) and private-key-with-(n,d). CRT-form private
+// keys (n,e,d,p,q,dp,dq,qi) deferred to a follow-on round.
+
+pub fn rsaep(n: &BigUInt, e: &BigUInt, m: &BigUInt) -> Result<BigUInt, String> {
+    if m.cmp(n) != std::cmp::Ordering::Less {
+        return Err("RSAEP: message representative out of range".to_string());
+    }
+    Ok(m.mod_pow(e, n))
+}
+
+pub fn rsadp(n: &BigUInt, d: &BigUInt, c: &BigUInt) -> Result<BigUInt, String> {
+    if c.cmp(n) != std::cmp::Ordering::Less {
+        return Err("RSADP: ciphertext representative out of range".to_string());
+    }
+    Ok(c.mod_pow(d, n))
+}
+
 // ─────────────────────── AES inverse cipher (FIPS 197 §5.3) ─────────
 
 const AES_INV_SBOX: [u8; 256] = [

@@ -2559,3 +2559,27 @@ fn js_differential_consumer_binary_decoder_matches_bun() {
     let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bs, "binary-decoder mismatch:\nrb={}\nbun={}", rb, bs);
 }
+
+#[test]
+fn js_consumer_vendored_pkg_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-vendored-pkg/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    assert!(r.starts_with("10/10"), "vendored-pkg failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_vendored_pkg_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-vendored-pkg/src/main.js");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun").arg(fixture.to_str().unwrap()).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "vendored-pkg mismatch:\nrb={}\nbun={}", rb, bs);
+}

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-vendored-pkg",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #15: vendored real-shape npm package. clsx-equivalent class-name composer, MIT, dependency-free. Verifies node_modules resolution + package.json parsing + a third-party-style library running identically across runtimes.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

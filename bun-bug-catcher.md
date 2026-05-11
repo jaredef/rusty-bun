@@ -296,6 +296,12 @@ Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixtu
 - **What it attests.** Bun is spec-correct on the toPrimitive hint protocol — the failure was the author's misunderstanding of which hint `+` uses.
 - **Author rule.** When writing `Symbol.toPrimitive(hint)`, `"default"` should typically return the same as `"number"` (most consumer code wants numeric coercion for `+`); reserve `"string"` for the template-literal/String-conversion path. The branch order matters: handle `"string"` first, then numeric for the rest.
 
+### F3. Library-semantics misread without reading source
+- **Source.** consumer-vendored-pkg fixture initial Bun run, 2026-05-10. Author expected `clsx(1, 2, 3) === "123"` (concatenation). Actual: `clsx(1, 2, 3) === "1 2 3"` (space-joined per the library's top-level arg loop).
+- **Spec.** clsx's documented behavior: each truthy argument's toVal output is space-separated from the running string. The author's "concatenation" assumption was a misread of the library's semantics.
+- **What it attests.** Both Bun and rusty-bun-host execute clsx identically to its documented semantics. The failure was the fixture author's expectation, not either runtime.
+- **Author rule.** When vendoring third-party code, write expected values by *running the library and copying the actual output*, not by inferring semantics from the function name. The library's source is authoritative; one's intuition about what `clsx` "should do" is not.
+
 ### F1. BigInt-arithmetic operand-type strictness
 - **Source.** consumer-batch-loader fixture initial Bun run, 2026-05-10. Author wrote `id % 2 === 0n` (mixing Number `2` with BigInt `id`). Bun threw `TypeError: Invalid mix of BigInt and other type in remainder.`
 - **Spec.** ECMAScript spec: BigInt operators require both operands BigInt; no implicit coercion.

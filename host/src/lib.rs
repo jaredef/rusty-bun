@@ -5250,6 +5250,14 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                     try {
                         this._open(u, protocols);
                         this._readyState = 1;  // OPEN
+                        // Π1.5.e: register in __keepAlive so the eval loop
+                        // auto-pumps the receive path between microtasks.
+                        // Real Bun runs this in a background task; we
+                        // simulate by hooking into the existing keep-alive
+                        // registry (Π2.6 infrastructure). The consumer
+                        // pattern `ws.onmessage = cb; ...` now works without
+                        // explicit pump() calls.
+                        if (globalThis.__keepAlive) globalThis.__keepAlive.add(this);
                         queueMicrotask(() => this._dispatch("open", { type: "open" }));
                     } catch (e) {
                         this._readyState = 3;  // CLOSED
@@ -5435,6 +5443,7 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                     } catch (_) {}
                     this._teardownTransport();
                     this._readyState = 3;  // CLOSED
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
                     queueMicrotask(() => {
                         this._dispatch("close", {
                             type: "close", code: code || 1000, reason: reason || "", wasClean: true,
@@ -5470,6 +5479,12 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 // host's single-threaded model has the consumer call this
                 // explicitly (or the eval loop's keep-alive registry can pump
                 // it; future Π1.5.d wires that).
+                // __tick(): called by the eval loop's __keepAlive pump
+                // between microtasks. Returns true if a frame was dispatched
+                // (signals "did work" to the keep-alive scheduler).
+                __tick(_maxWaitMs) {
+                    return this.pump() > 0;
+                }
                 pump() {
                     if (this._readyState !== 1 && this._readyState !== 2) return 0;
                     let dispatched = 0;
@@ -5501,6 +5516,7 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                         } else if (f.opcode === 0x8 /* Close */) {
                             this._teardownTransport();
                             this._readyState = 3;
+                            if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
                             this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean: true });
                             break;
                         } else if (f.opcode === 0x9 /* Ping */) {

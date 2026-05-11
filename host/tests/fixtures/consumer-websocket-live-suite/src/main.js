@@ -40,15 +40,21 @@ async function selfTest() {
         return results;
     }
 
-    // 3. Send a message and receive its echo.
+    // 3. Send a message and receive its echo. Π1.5.e installed
+    //    __keepAlive registration on construction; under rusty-bun-host
+    //    the eval loop's keep-alive pump fires __tick → pump between
+    //    microtasks BUT the test's setTimeout-based wait stays in
+    //    microtask-busy mode (timers are implemented via Promise.resolve)
+    //    so the keep-alive scheduler doesn't get a chance to fire.
+    //    Consumer code that uses ws.onmessage + a long-running idle
+    //    (e.g., await new Promise that never resolves directly) would
+    //    work; for synthetic tests with bounded setTimeout, explicit
+    //    pump() remains the reliable path. Documented in trajectory.
     let received = null;
     await new Promise((resolve) => {
         ws.onmessage = (ev) => { received = ev.data; resolve(); };
         ws.send("hello-ws");
-        // Under rusty-bun-host the consumer pumps explicitly; under Bun
-        // the message arrives via the background event loop.
         if (typeof ws.pump === "function") {
-            // Pump in a tight loop until message arrives or timeout.
             let pumps = 0;
             const tick = () => {
                 if (received !== null || pumps > 100) { resolve(); return; }

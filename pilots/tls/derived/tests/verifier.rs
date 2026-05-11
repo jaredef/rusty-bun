@@ -487,6 +487,75 @@ fn initiate_handshake_writes_client_hello() {
     assert_eq!(ephemeral.public_point[0], 0x04);
 }
 
+// ─── Live handshake against openssl s_server (slow test) ────────────
+
+#[test]
+#[ignore]  // seed A8.17: spawns openssl + runs full TLS handshake
+fn tls_connect_against_openssl_s_server() {
+    if !openssl_available() {
+        eprintln!("skipping: openssl unavailable"); return;
+    }
+    // Generate a self-signed RSA-SHA256 cert, run `openssl s_server` on a
+    // chosen port, connect with rusty-tls using that cert as the trust
+    // anchor, verify a handshake completes and one byte of app data
+    // round-trips.
+    let dir = std::env::temp_dir().join(format!("rusty-tls-live-{}",
+        std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let key_path = dir.join("key.pem");
+    let cert_path = dir.join("cert.pem");
+    let r = Command::new("openssl").args(&[
+        "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+        "-keyout", key_path.to_str().unwrap(),
+        "-out", cert_path.to_str().unwrap(),
+        "-days", "365", "-nodes",
+        "-subj", "/CN=127.0.0.1",
+        "-addext", "subjectAltName=IP:127.0.0.1",
+    ]).output().expect("openssl req");
+    if !r.status.success() {
+        eprintln!("openssl req failed: {}", String::from_utf8_lossy(&r.stderr));
+        return;
+    }
+    // Pick a free port: bind a temporary TcpListener.
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    // Spawn openssl s_server.
+    let mut server = Command::new("openssl").args(&[
+        "s_server", "-port", &port.to_string(),
+        "-cert", cert_path.to_str().unwrap(),
+        "-key", key_path.to_str().unwrap(),
+        "-tls1_3", "-quiet", "-naccept", "1",
+        "-www",
+    ]).stdout(std::process::Stdio::null())
+      .stderr(std::process::Stdio::null())
+      .spawn().expect("spawn s_server");
+    // Wait briefly for s_server to bind.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Build trust store from the test cert.
+    let pem = std::fs::read_to_string(&cert_path).unwrap();
+    let mut store = TrustStore::new();
+    store.add_pem_bundle(&pem).unwrap();
+
+    // Connect + handshake.
+    let session_result = tls_connect("127.0.0.1", port, &store);
+    // Tear down server.
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut session = session_result.expect("TLS handshake against s_server");
+    // s_server -www serves a static page; send a basic request and read
+    // some application data.
+    session.send_application_data(b"GET / HTTP/1.0\r\n\r\n").expect("send");
+    let mut acc = Vec::new();
+    let resp = session.receive_application_data(&mut acc).expect("recv");
+    let s = String::from_utf8_lossy(&resp);
+    // The -www response begins with "HTTP/1.0".
+    assert!(s.starts_with("HTTP/1.0"), "unexpected response: {:?}", &s[..s.len().min(40)]);
+}
+
 // ─── Hex helper module ──────────────────────────────────────────────
 
 mod hex {

@@ -18,6 +18,75 @@ use crate::store::*;
 
 use rusty_x509::{Certificate as X509Cert, PublicKey, SubjectPublicKeyInfo};
 
+/// Convenience adapter: TlsTransport over a std::net::TcpStream.
+/// Blocking-read semantics; the driver's read loop pumps bytes from
+/// the kernel buffer into the accumulator one read at a time.
+pub struct TcpTlsTransport {
+    pub stream: std::net::TcpStream,
+}
+
+impl TlsTransport for TcpTlsTransport {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), TlsError> {
+        use std::io::Write;
+        self.stream.write_all(bytes)
+            .map_err(|e| TlsError::SignatureFail(format!("tcp write: {}", e)))
+    }
+    fn read_some(&mut self, buf: &mut Vec<u8>) -> Result<usize, TlsError> {
+        use std::io::Read;
+        let mut tmp = [0u8; 8192];
+        let n = self.stream.read(&mut tmp)
+            .map_err(|e| TlsError::SignatureFail(format!("tcp read: {}", e)))?;
+        if n == 0 { return Err(TlsError::UnexpectedEnd); }
+        buf.extend_from_slice(&tmp[..n]);
+        Ok(n)
+    }
+}
+
+/// Open a TCP connection and run the TLS 1.3 handshake. Returns a
+/// `TlsSession<TcpTlsTransport>` ready for application-data exchange.
+///
+/// `trust_store` should contain the CA cert chain rooted at whatever
+/// will sign the server's cert. For testing against a self-signed
+/// server, add the server's own cert to the store.
+pub fn tls_connect(
+    host: &str,
+    port: u16,
+    trust_store: &TrustStore,
+) -> Result<TlsSession<TcpTlsTransport>, TlsError> {
+    let addr = format!("{}:{}", host, port);
+    let stream = std::net::TcpStream::connect(&addr)
+        .map_err(|e| TlsError::SignatureFail(format!("connect {}: {}", addr, e)))?;
+    let mut transport = TcpTlsTransport { stream };
+    // Build ClientHello + write it; also keep a copy of the handshake-message
+    // bytes for the transcript.
+    let ephemeral = EphemeralEcdh::generate()?;
+    let mut client_random = [0u8; 32];
+    rusty_web_crypto::get_random_values(&mut client_random)
+        .map_err(|e| TlsError::SignatureFail(format!("RNG: {}", e)))?;
+    let ch_params = ClientHelloParams {
+        random: &client_random,
+        legacy_session_id: &[],
+        cipher_suites: &[CIPHER_AES_128_GCM_SHA256],
+        server_name: Some(host),
+        supported_groups: &[GROUP_SECP256R1],
+        signature_algorithms: &[
+            SIG_ECDSA_SECP256R1_SHA256,
+            SIG_RSA_PKCS1_SHA256,
+            SIG_RSA_PSS_RSAE_SHA256,
+        ],
+        key_shares: &[(GROUP_SECP256R1, ephemeral.public_point.clone())],
+        alpn: None,
+    };
+    let ch_bytes = encode_client_hello(&ch_params)?;
+    let record = TlsRecord {
+        content_type: ContentType::Handshake,
+        version: ProtocolVersion::LEGACY,
+        fragment: ch_bytes.clone(),
+    };
+    transport.write_all(&encode_record(&record)?)?;
+    complete_handshake(transport, ephemeral, &ch_bytes, trust_store, host)
+}
+
 /// Verify a TLS 1.3 CertificateVerify signature per RFC 8446 §4.4.3.
 /// `scheme` is the SignatureScheme from the CertificateVerify wire format.
 /// `spki` is the leaf cert's SubjectPublicKeyInfo.

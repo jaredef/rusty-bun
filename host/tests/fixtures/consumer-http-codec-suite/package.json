@@ -1,0 +1,8 @@
+{
+  "name": "consumer-http-codec-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #46: HTTP/1.1 wire-format codec — RFC 7230 parse + serialize at byte fidelity.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

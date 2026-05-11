@@ -304,6 +304,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_headers_static(&ctx, &global)?;
     wire_response_static(&ctx, &global)?;
     install_fetch_api_classes_js(&ctx)?;
+    wire_http_codec(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
     wire_bun_serve_static(&ctx, &global)?;
@@ -585,6 +586,180 @@ fn wire_path<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()
     p.set("delimiter", ":")?;
     global.set("path", p)?;
     Ok(())
+}
+
+// ─────────────────── HTTP/1.1 wire codec (Tier-G substrate) ──────────
+
+fn wire_http_codec<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // Exposed under globalThis.__httpCodec — a Bun-portable namespace for
+    // wire-format parsing + serialization. Real consumer code (Bun.serve
+    // implementations, HTTP proxies, mock servers) shapes around this
+    // primitive. FFI returns JSON strings (rquickjs closures can't carry
+    // a Ctx); the JS-side facade installed below parses them into
+    // structured objects with Uint8Array bodies.
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "parseRequestJson",
+        Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<String> {
+            let r = rusty_http_codec::parse_request(&bytes)
+                .map_err(|e| rquickjs::Error::new_from_js_message("http-codec", "parseRequest", e.to_string()))?;
+            // Encode as JSON manually (no serde dependency in codec pilot).
+            let mut s = String::from("{");
+            s.push_str(&format!("\"method\":{}", json_str(&r.method)));
+            s.push_str(&format!(",\"target\":{}", json_str(&r.target)));
+            s.push_str(&format!(",\"version\":{}", json_str(&r.version)));
+            s.push_str(",\"headers\":[");
+            for (i, (n, v)) in r.headers.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&format!("[{},{}]", json_str(n), json_str(v)));
+            }
+            s.push_str("],\"body\":[");
+            for (i, b) in r.body.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&b.to_string());
+            }
+            s.push_str("]}");
+            Ok(s)
+        })?,
+    )?;
+    ns.set(
+        "parseResponseJson",
+        Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<String> {
+            let r = rusty_http_codec::parse_response(&bytes)
+                .map_err(|e| rquickjs::Error::new_from_js_message("http-codec", "parseResponse", e.to_string()))?;
+            let mut s = String::from("{");
+            s.push_str(&format!("\"version\":{}", json_str(&r.version)));
+            s.push_str(&format!(",\"status\":{}", r.status));
+            s.push_str(&format!(",\"reason\":{}", json_str(&r.reason)));
+            s.push_str(",\"headers\":[");
+            for (i, (n, v)) in r.headers.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&format!("[{},{}]", json_str(n), json_str(v)));
+            }
+            s.push_str("],\"body\":[");
+            for (i, b) in r.body.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&b.to_string());
+            }
+            s.push_str("]}");
+            Ok(s)
+        })?,
+    )?;
+    ns.set(
+        "serializeRequest",
+        Function::new(ctx.clone(),
+            |method: String, target: String, headers: Vec<Vec<String>>, body: Vec<u8>| -> Vec<u8> {
+            let hs: Vec<(String, String)> = headers.into_iter()
+                .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+                .collect();
+            rusty_http_codec::serialize_request(&method, &target, &hs, &body)
+        })?,
+    )?;
+    ns.set(
+        "serializeResponse",
+        Function::new(ctx.clone(),
+            |status: u32, reason: String, headers: Vec<Vec<String>>, body: Vec<u8>| -> Vec<u8> {
+            let hs: Vec<(String, String)> = headers.into_iter()
+                .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+                .collect();
+            rusty_http_codec::serialize_response(status as u16, &reason, &hs, &body)
+        })?,
+    )?;
+    ns.set(
+        "chunkedEncodeFlat",
+        Function::new(ctx.clone(), |flat: Vec<u8>, lengths: Vec<u32>| -> Vec<u8> {
+            // JS-side flattens chunks into a single byte array + per-chunk
+            // lengths. We slice them out here and pass &[&[u8]] to the codec.
+            let mut chunks: Vec<&[u8]> = Vec::with_capacity(lengths.len());
+            let mut off = 0usize;
+            for len in &lengths {
+                let n = *len as usize;
+                chunks.push(&flat[off..off + n]);
+                off += n;
+            }
+            rusty_http_codec::chunked_encode(&chunks)
+        })?,
+    )?;
+    ns.set(
+        "chunkedDecode",
+        Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_http_codec::chunked_decode(&bytes)
+                .map_err(|e| rquickjs::Error::new_from_js_message("http-codec", "chunkedDecode", e.to_string()))
+        })?,
+    )?;
+    global.set("__httpCodec", ns)?;
+    // JS-side facade: globalThis.HTTP.parseRequest / parseResponse return
+    // structured objects (auto-parse the JSON the FFI emits).
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const raw = globalThis.__httpCodec;
+            // The rquickjs Vec<u8> binding does not accept Uint8Array directly;
+            // a plain JS Array of numbers is required. Direct iteration is more
+            // robust than Array.from for typed-array inputs in this runtime.
+            function toByteArray(b) {
+                if (b == null) return [];
+                if (typeof b === "string") b = new TextEncoder().encode(b);
+                else if (b instanceof ArrayBuffer) b = new Uint8Array(b);
+                const arr = new Array(b.length);
+                for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                return arr;
+            }
+            globalThis.HTTP = {
+                parseRequest(bytes) {
+                    const json = raw.parseRequestJson(toByteArray(bytes));
+                    const p = JSON.parse(json);
+                    return { ...p, body: new Uint8Array(p.body), headers: p.headers };
+                },
+                parseResponse(bytes) {
+                    const json = raw.parseResponseJson(toByteArray(bytes));
+                    const p = JSON.parse(json);
+                    return { ...p, body: new Uint8Array(p.body), headers: p.headers };
+                },
+                serializeRequest(method, target, headers, body) {
+                    return new Uint8Array(raw.serializeRequest(
+                        method, target, headers || [], toByteArray(body)));
+                },
+                serializeResponse(status, reason, headers, body) {
+                    return new Uint8Array(raw.serializeResponse(
+                        status, reason || "", headers || [], toByteArray(body)));
+                },
+                chunkedEncode(chunks) {
+                    const flat = [];
+                    const lengths = [];
+                    for (const c of chunks) {
+                        const u8 = typeof c === "string" ? new TextEncoder().encode(c) : c;
+                        for (let i = 0; i < u8.length; i++) flat.push(u8[i]);
+                        lengths.push(u8.length);
+                    }
+                    return new Uint8Array(raw.chunkedEncodeFlat(flat, lengths));
+                },
+                chunkedDecode(bytes) {
+                    return new Uint8Array(raw.chunkedDecode(toByteArray(bytes)));
+                },
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+// JSON-encode a string with the minimum-necessary escapes for the
+// rusty-http-codec FFI emit path. Real serde would be cleaner but
+// the codec pilot has no serde dependency.
+fn json_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 // ─────────────────── crypto + crypto.subtle ──────────────────────────

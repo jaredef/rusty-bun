@@ -330,6 +330,7 @@ dependencies = [
  "rusty-bun-serve",
  "rusty-bun-spawn",
  "rusty-fetch-api",
+ "rusty-http-codec",
  "rusty-node-fs",
  "rusty-node-path",
  "rusty-textencoder",
@@ -359,6 +360,10 @@ version = "0.1.0"
 dependencies = [
  "rusty-blob",
 ]
+
+[[package]]
+name = "rusty-http-codec"
+version = "0.1.0"
 
 [[package]]
 name = "rusty-node-fs"

@@ -414,6 +414,54 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
     Some(s)
 }
 
+/// Pre-eval source transform that renames bare class-field declarations
+/// whose name is a reserved word (`get;`, `set;`, `delete;`). QuickJS's
+/// parser interprets `get;` inside a class body as a malformed accessor
+/// declaration rather than an ES2022 field declaration with a reserved-
+/// word name. Modern V8 + JSC accept the syntax. TypeScript output
+/// commonly emits these as type-hint placeholders (hono v4, many other
+/// libs); they have no runtime effect, so renaming to `_get` / `_set` /
+/// `_delete` is semantically transparent.
+///
+/// Match shape: `^(\s+)(get|set|delete)\s*;\s*$` (anchored, indented).
+/// Risk of false positives: a bare `get;` / `set;` / `delete;` statement
+/// outside a class body would also be renamed. In practice these are
+/// either invalid syntax (`delete;` standalone) or vanishingly rare
+/// (`get;` as variable reference statement). Recorded as E.12 closure.
+fn strip_reserved_class_field_decls(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        // Strip the trailing newline for the match, keep it for emit.
+        let (body, nl) = match line.strip_suffix('\n') {
+            Some(b) => (b, "\n"),
+            None => (line, ""),
+        };
+        let trimmed = body.trim_end();
+        let (indent_end, rest) = match trimmed.find(|c: char| !c.is_whitespace()) {
+            Some(i) => trimmed.split_at(i),
+            None => { out.push_str(line); continue; }
+        };
+        if (rest == "get;" || rest == "set;" || rest == "delete;")
+            && !indent_end.is_empty()
+        {
+            let renamed = match rest {
+                "get;" => "_get;",
+                "set;" => "_set;",
+                "delete;" => "_delete;",
+                _ => unreachable!(),
+            };
+            out.push_str(indent_end);
+            out.push_str(renamed);
+            // Preserve original trailing whitespace + newline.
+            out.push_str(&body[indent_end.len() + rest.len()..]);
+            out.push_str(nl);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 #[derive(Default, Clone, Copy)]
 struct FsLoader;
 
@@ -424,6 +472,7 @@ impl Loader for FsLoader {
         }
         let source = std::fs::read_to_string(name)
             .map_err(|_| JsErr::new_loading(name))?;
+        let source = strip_reserved_class_field_decls(&source);
         Module::declare(ctx.clone(), name, source)
     }
 }

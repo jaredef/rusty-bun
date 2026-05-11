@@ -4452,3 +4452,24 @@ fn consumer_dayjs_app_byte_identical_to_bun() {
     let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
+
+#[test]
+fn consumer_stack_app_byte_identical_to_bun() {
+    // Composed fixture: itty-router + zod + jose on Bun.serve + same-process
+    // fetch via Π2.6.b. Strongest single piece of telos evidence — multiple
+    // vendored OSS libs orchestrated in one process matching Bun byte-for-byte.
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-stack-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}

@@ -2149,6 +2149,29 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 return typedArray;
             };
 
+            // Node-API crypto.randomBytes(n) -> Buffer. Many libraries
+            // (ulid, several JWT impls, mongoose ObjectId) get crypto via
+            // `require("crypto")` then call randomBytes — distinct from
+            // Web Crypto's getRandomValues. Returns a Buffer (Uint8Array
+            // subclass) with readUInt8 etc methods inherited from Buffer.
+            globalThis.crypto.randomBytes = function randomBytes(n) {
+                if (typeof n !== "number" || n < 0) {
+                    throw new TypeError("crypto.randomBytes: n must be a non-negative number");
+                }
+                const bytes = globalThis.crypto.getRandomBytes(n);
+                return typeof Buffer !== "undefined" ? Buffer.from(bytes) : new Uint8Array(bytes);
+            };
+            globalThis.crypto.randomFillSync = function randomFillSync(typedArray, offset = 0, size) {
+                if (!typedArray || typeof typedArray.byteLength !== "number") {
+                    throw new TypeError("crypto.randomFillSync: argument must be a typed array");
+                }
+                const len = size !== undefined ? size : typedArray.byteLength - offset;
+                const bytes = globalThis.crypto.getRandomBytes(len);
+                const u8 = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
+                for (let i = 0; i < bytes.length; i++) u8[offset + i] = bytes[i];
+                return typedArray;
+            };
+
             // Normalize WebCrypto data inputs (string / ArrayBuffer / TypedArray
             // / DataView / Array) to a plain byte array for the FFI.
             function toBytes(data) {
@@ -2846,6 +2869,41 @@ const BUFFER_CLASS_JS: &str = r#"
             if (enc === "base64") return S.encodeBase64(arr);
             if (enc === "hex") return S.encodeHex(arr);
             throw new Error("Unsupported encoding: " + encoding);
+        }
+        // Node Buffer numeric readers — ulid + many bincode-shape libs
+        // rely on these. Defaults to offset 0; throws on out-of-range
+        // per Node convention (unless noAssert is true, deprecated).
+        readUInt8(offset = 0) {
+            if (offset >= this.length) throw new RangeError("readUInt8: offset out of range");
+            return this[offset];
+        }
+        readInt8(offset = 0) {
+            if (offset >= this.length) throw new RangeError("readInt8: offset out of range");
+            const v = this[offset];
+            return v >= 0x80 ? v - 0x100 : v;
+        }
+        readUInt16LE(offset = 0) {
+            return this[offset] | (this[offset + 1] << 8);
+        }
+        readUInt16BE(offset = 0) {
+            return (this[offset] << 8) | this[offset + 1];
+        }
+        readUInt32LE(offset = 0) {
+            return (this[offset] | (this[offset + 1] << 8) |
+                    (this[offset + 2] << 16) | (this[offset + 3] << 24)) >>> 0;
+        }
+        readUInt32BE(offset = 0) {
+            return ((this[offset] << 24) | (this[offset + 1] << 16) |
+                    (this[offset + 2] << 8) | this[offset + 3]) >>> 0;
+        }
+        writeUInt8(value, offset = 0) {
+            this[offset] = value & 0xff;
+            return offset + 1;
+        }
+        equals(other) {
+            if (this.length !== other.length) return false;
+            for (let i = 0; i < this.length; i++) if (this[i] !== other[i]) return false;
+            return true;
         }
     }
     globalThis.Buffer = Buffer;
@@ -5471,6 +5529,33 @@ const COMMONJS_LOADER_JS: &str = r#"
     };
     // Expose resolution + cache for tests/diagnostics.
     globalThis.__cjs = { resolvePath, moduleCache, loadModule };
+
+    // Top-level globalThis.require — Bun exposes require() in ESM modules
+    // for compatibility with libraries that conditionally use either
+    // import or require (e.g., ulid checks `typeof window` then falls
+    // through to `require("crypto")`). Bare specifiers matching node:
+    // builtins resolve via NODE_BUILTINS; other paths route through
+    // loadModule from the cwd.
+    globalThis.require = function require(spec) {
+        if (typeof spec !== "string") {
+            throw new TypeError("require: spec must be a string");
+        }
+        // Node-builtin shortcut.
+        if (Object.prototype.hasOwnProperty.call(NODE_BUILTINS, spec)) {
+            return NODE_BUILTINS[spec]();
+        }
+        // Resolve from cwd. ESM modules have no caller-dir context; cwd
+        // is the only sane default.
+        const cwd = (globalThis.process && globalThis.process.cwd && globalThis.process.cwd()) || "/";
+        const resolved = resolvePath(spec, cwd);
+        return loadModule(resolved);
+    };
+    globalThis.require.cache = moduleCache;
+    globalThis.require.resolve = function (spec) {
+        if (Object.prototype.hasOwnProperty.call(NODE_BUILTINS, spec)) return spec;
+        const cwd = (globalThis.process && globalThis.process.cwd && globalThis.process.cwd()) || "/";
+        return resolvePath(spec, cwd);
+    };
 })();
 "#;
 

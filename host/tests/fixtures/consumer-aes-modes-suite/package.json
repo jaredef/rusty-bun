@@ -1,0 +1,8 @@
+{
+  "name": "consumer-aes-modes-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #31: AES-CBC + AES-CTR + AES-KW via crypto.subtle.encrypt/decrypt/wrapKey/unwrapKey.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

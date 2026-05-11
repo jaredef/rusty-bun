@@ -620,3 +620,142 @@ fn hkdf_sha512_roundtrip_smoke() {
     let okm3 = rusty_web_crypto::hkdf_sha512(b"ikm", b"salt", b"info2", 128).unwrap();
     assert_ne!(okm, okm3);
 }
+
+// ─────────────── AES inverse cipher (FIPS 197 §C) ─────────────────
+
+#[test]
+fn aes128_decrypt_inverts_encrypt_appendix_c1() {
+    // FIPS 197 §C.1 inverse direction.
+    let key = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let ct: [u8; 16] = hex_decode("69c4e0d86a7b0430d8cdb78070b4c55a").try_into().unwrap();
+    let pt = rusty_web_crypto::aes_decrypt_block_with_key(&key, &ct);
+    assert_eq!(hex_encode(&pt), "00112233445566778899aabbccddeeff");
+}
+
+#[test]
+fn aes256_decrypt_inverts_encrypt_appendix_c3() {
+    let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    let ct: [u8; 16] = hex_decode("8ea2b7ca516745bfeafc49904b496089").try_into().unwrap();
+    let pt = rusty_web_crypto::aes_decrypt_block_with_key(&key, &ct);
+    assert_eq!(hex_encode(&pt), "00112233445566778899aabbccddeeff");
+}
+
+// ─────────────── AES-CBC (SP 800-38A Appendix F.2) ─────────────────
+
+#[test]
+fn aes128_cbc_sp800_38a_f21_no_padding() {
+    // F.2.1 plaintext is exactly four blocks (64 bytes), but WebCrypto
+    // AES-CBC always PKCS#7-pads, so the encrypted output is 5 blocks.
+    // Decrypt of the 5-block output gives back the 64-byte plaintext.
+    let key = hex_decode("2b7e151628aed2a6abf7158809cf4f3c");
+    let iv  = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let pt  = hex_decode(
+        "6bc1bee22e409f96e93d7e117393172a\
+         ae2d8a571e03ac9c9eb76fac45af8e51\
+         30c81c46a35ce411e5fbc1191a0a52ef\
+         f69f2445df4f9b17ad2b417be66c3710");
+    let ct = rusty_web_crypto::aes_cbc_encrypt(&key, &iv, &pt).unwrap();
+    assert_eq!(ct.len(), 80);  // 64 + 16 (PKCS#7-padded full block)
+    let dec = rusty_web_crypto::aes_cbc_decrypt(&key, &iv, &ct).unwrap();
+    assert_eq!(dec, pt);
+}
+
+#[test]
+fn aes_cbc_roundtrip_arbitrary_length() {
+    let key = hex_decode("2b7e151628aed2a6abf7158809cf4f3c");
+    let iv  = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let pt = b"short message that is not block-aligned";
+    let ct = rusty_web_crypto::aes_cbc_encrypt(&key, &iv, pt).unwrap();
+    assert_eq!(ct.len() % 16, 0);
+    let dec = rusty_web_crypto::aes_cbc_decrypt(&key, &iv, &ct).unwrap();
+    assert_eq!(&dec, pt);
+}
+
+#[test]
+fn aes_cbc_bad_padding_rejected() {
+    let key = hex_decode("2b7e151628aed2a6abf7158809cf4f3c");
+    let iv  = hex_decode("000102030405060708090a0b0c0d0e0f");
+    // 16-byte plaintext → 32 bytes ciphertext (data block + pad block).
+    let pt = b"AAAAAAAAAAAAAAAA";
+    let mut ct = rusty_web_crypto::aes_cbc_encrypt(&key, &iv, pt).unwrap();
+    let n = ct.len();
+    ct[n - 1] ^= 0x01;  // Flips last plaintext byte (the padding value).
+    let r = rusty_web_crypto::aes_cbc_decrypt(&key, &iv, &ct);
+    assert!(r.is_err());
+}
+
+// ─────────────── AES-CTR (SP 800-38A Appendix F.5) ─────────────────
+
+#[test]
+fn aes128_ctr_sp800_38a_f51() {
+    // SP 800-38A F.5.1 CTR-AES128 with the canonical counter starting at
+    // f0f1...fe ff and the F.5 plaintext.
+    let key = hex_decode("2b7e151628aed2a6abf7158809cf4f3c");
+    let counter = hex_decode("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+    let pt = hex_decode(
+        "6bc1bee22e409f96e93d7e117393172a\
+         ae2d8a571e03ac9c9eb76fac45af8e51\
+         30c81c46a35ce411e5fbc1191a0a52ef\
+         f69f2445df4f9b17ad2b417be66c3710");
+    let ct = rusty_web_crypto::aes_ctr_xor_with_key(&key, &counter, 128, &pt).unwrap();
+    assert_eq!(hex_encode(&ct),
+        "874d6191b620e3261bef6864990db6ce\
+         9806f66b7970fdff8617187bb9fffdff\
+         5ae4df3edbd5d35e5b4f09020db03eab\
+         1e031dda2fbe03d1792170a0f3009cee".replace("\n", "").replace(" ", ""));
+}
+
+#[test]
+fn aes_ctr_roundtrip() {
+    let key = hex_decode("2b7e151628aed2a6abf7158809cf4f3c");
+    let counter = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let pt = b"AES-CTR round-trip test of arbitrary length not 16-aligned";
+    let ct = rusty_web_crypto::aes_ctr_xor_with_key(&key, &counter, 64, pt).unwrap();
+    let dec = rusty_web_crypto::aes_ctr_xor_with_key(&key, &counter, 64, &ct).unwrap();
+    assert_eq!(&dec, pt);
+}
+
+// ─────────────── AES-KW (RFC 3394 §4) ──────────────────────────────
+
+#[test]
+fn aes_kw_rfc3394_test_4_1() {
+    // §4.1: Wrap 128 bits of Key Data with a 128-bit KEK.
+    let kek = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let key_data = hex_decode("00112233445566778899aabbccddeeff");
+    let wrapped = rusty_web_crypto::aes_kw_wrap(&kek, &key_data).unwrap();
+    assert_eq!(hex_encode(&wrapped),
+        "1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5");
+    let unwrapped = rusty_web_crypto::aes_kw_unwrap(&kek, &wrapped).unwrap();
+    assert_eq!(unwrapped, key_data);
+}
+
+#[test]
+fn aes_kw_rfc3394_test_4_3() {
+    // §4.3: Wrap 128 bits of Key Data with a 256-bit KEK.
+    let kek = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    let key_data = hex_decode("00112233445566778899aabbccddeeff");
+    let wrapped = rusty_web_crypto::aes_kw_wrap(&kek, &key_data).unwrap();
+    assert_eq!(hex_encode(&wrapped),
+        "64e8c3f9ce0f5ba263e9777905818a2a93c8191e7d6e8ae7");
+}
+
+#[test]
+fn aes_kw_rfc3394_test_4_6() {
+    // §4.6: Wrap 256 bits of Key Data with a 256-bit KEK.
+    let kek = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    let key_data = hex_decode("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f");
+    let wrapped = rusty_web_crypto::aes_kw_wrap(&kek, &key_data).unwrap();
+    assert_eq!(hex_encode(&wrapped),
+        "28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21");
+    let unwrapped = rusty_web_crypto::aes_kw_unwrap(&kek, &wrapped).unwrap();
+    assert_eq!(unwrapped, key_data);
+}
+
+#[test]
+fn aes_kw_integrity_check_rejects_tampered() {
+    let kek = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let key_data = hex_decode("00112233445566778899aabbccddeeff");
+    let mut wrapped = rusty_web_crypto::aes_kw_wrap(&kek, &key_data).unwrap();
+    wrapped[0] ^= 0x01;
+    assert!(rusty_web_crypto::aes_kw_unwrap(&kek, &wrapped).is_err());
+}

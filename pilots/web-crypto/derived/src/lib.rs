@@ -664,6 +664,288 @@ pub fn aes_encrypt_block_with_key(key: &[u8], block: &[u8; 16]) -> [u8; 16] {
     aes_encrypt_block(block, &w)
 }
 
+// ─────────────────────── AES inverse cipher (FIPS 197 §5.3) ─────────
+
+const AES_INV_SBOX: [u8; 256] = [
+    0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+    0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+    0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+    0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
+    0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
+    0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
+    0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
+    0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
+    0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
+    0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
+    0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
+    0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
+    0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+    0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
+    0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
+    0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
+];
+
+fn aes_inv_sub_bytes(state: &mut [u8; 16]) {
+    for b in state.iter_mut() { *b = AES_INV_SBOX[*b as usize]; }
+}
+
+fn aes_inv_shift_rows(state: &mut [u8; 16]) {
+    let s = *state;
+    for r in 1..4 {
+        for c in 0..4 {
+            // inverse: column c gets value from column (c + 4 - r) % 4
+            state[r * 4 + c] = s[r * 4 + (c + 4 - r) % 4];
+        }
+    }
+}
+
+fn gf_mul(mut a: u8, mut b: u8) -> u8 {
+    let mut p = 0u8;
+    for _ in 0..8 {
+        if b & 1 != 0 { p ^= a; }
+        let hi = a & 0x80;
+        a <<= 1;
+        if hi != 0 { a ^= 0x1b; }
+        b >>= 1;
+    }
+    p
+}
+
+fn aes_inv_mix_columns(state: &mut [u8; 16]) {
+    for c in 0..4 {
+        let s0 = state[c]; let s1 = state[4 + c];
+        let s2 = state[8 + c]; let s3 = state[12 + c];
+        state[c]      = gf_mul(0x0e, s0) ^ gf_mul(0x0b, s1) ^ gf_mul(0x0d, s2) ^ gf_mul(0x09, s3);
+        state[4 + c]  = gf_mul(0x09, s0) ^ gf_mul(0x0e, s1) ^ gf_mul(0x0b, s2) ^ gf_mul(0x0d, s3);
+        state[8 + c]  = gf_mul(0x0d, s0) ^ gf_mul(0x09, s1) ^ gf_mul(0x0e, s2) ^ gf_mul(0x0b, s3);
+        state[12 + c] = gf_mul(0x0b, s0) ^ gf_mul(0x0d, s1) ^ gf_mul(0x09, s2) ^ gf_mul(0x0e, s3);
+    }
+}
+
+fn aes_decrypt_block(block: &[u8; 16], w: &[u32]) -> [u8; 16] {
+    let nr = w.len() / 4 - 1;
+    let mut state = [0u8; 16];
+    for c in 0..4 {
+        for r in 0..4 { state[r * 4 + c] = block[4 * c + r]; }
+    }
+    aes_add_round_key(&mut state, &w[4 * nr .. 4 * nr + 4]);
+    for round in (1..nr).rev() {
+        aes_inv_shift_rows(&mut state);
+        aes_inv_sub_bytes(&mut state);
+        aes_add_round_key(&mut state, &w[4 * round .. 4 * round + 4]);
+        aes_inv_mix_columns(&mut state);
+    }
+    aes_inv_shift_rows(&mut state);
+    aes_inv_sub_bytes(&mut state);
+    aes_add_round_key(&mut state, &w[0..4]);
+    let mut out = [0u8; 16];
+    for c in 0..4 {
+        for r in 0..4 { out[4 * c + r] = state[r * 4 + c]; }
+    }
+    out
+}
+
+pub fn aes_decrypt_block_with_key(key: &[u8], block: &[u8; 16]) -> [u8; 16] {
+    let w = aes_key_expansion(key);
+    aes_decrypt_block(block, &w)
+}
+
+// ─────────────────────── AES-CBC (SP 800-38A §6.2) ──────────────────
+//
+// PKCS#7 padding per RFC 5652 §6.3 — matches WebCrypto AES-CBC.
+
+pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    if key.len() != 16 && key.len() != 24 && key.len() != 32 {
+        return Err(format!("AES-CBC: invalid key length {}", key.len()));
+    }
+    if iv.len() != 16 { return Err("AES-CBC: IV must be 16 bytes".to_string()); }
+    let w = aes_key_expansion(key);
+    let pad = 16 - (plaintext.len() % 16);
+    let mut padded = plaintext.to_vec();
+    padded.extend(std::iter::repeat(pad as u8).take(pad));
+    let mut prev = [0u8; 16];
+    prev.copy_from_slice(iv);
+    let mut out = Vec::with_capacity(padded.len());
+    for chunk in padded.chunks(16) {
+        let mut block = [0u8; 16];
+        for i in 0..16 { block[i] = chunk[i] ^ prev[i]; }
+        let c = aes_encrypt_block(&block, &w);
+        out.extend_from_slice(&c);
+        prev = c;
+    }
+    Ok(out)
+}
+
+pub fn aes_cbc_decrypt(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    if key.len() != 16 && key.len() != 24 && key.len() != 32 {
+        return Err(format!("AES-CBC: invalid key length {}", key.len()));
+    }
+    if iv.len() != 16 { return Err("AES-CBC: IV must be 16 bytes".to_string()); }
+    if ciphertext.is_empty() || ciphertext.len() % 16 != 0 {
+        return Err("AES-CBC: ciphertext must be a positive multiple of 16 bytes".to_string());
+    }
+    let w = aes_key_expansion(key);
+    let mut prev = [0u8; 16];
+    prev.copy_from_slice(iv);
+    let mut out = Vec::with_capacity(ciphertext.len());
+    for chunk in ciphertext.chunks(16) {
+        let mut block = [0u8; 16];
+        block.copy_from_slice(chunk);
+        let d = aes_decrypt_block(&block, &w);
+        let mut plain = [0u8; 16];
+        for i in 0..16 { plain[i] = d[i] ^ prev[i]; }
+        out.extend_from_slice(&plain);
+        prev = block;
+    }
+    // PKCS#7 unpad.
+    let pad = *out.last().ok_or("AES-CBC: empty output")? as usize;
+    if pad == 0 || pad > 16 { return Err("AES-CBC: bad padding".to_string()); }
+    if out.len() < pad { return Err("AES-CBC: bad padding".to_string()); }
+    let n = out.len();
+    for &b in &out[n - pad ..] {
+        if b as usize != pad { return Err("AES-CBC: bad padding".to_string()); }
+    }
+    out.truncate(n - pad);
+    Ok(out)
+}
+
+// ─────────────────────── AES-CTR (SP 800-38A §6.5) ──────────────────
+//
+// WebCrypto AES-CTR uses a 16-byte counter block where the last
+// `length` bits are the counter (incremented per block) and the rest
+// is the nonce prefix.
+
+pub fn aes_ctr_xor_with_key(key: &[u8], counter0: &[u8], counter_bits: u32, data: &[u8]) -> Result<Vec<u8>, String> {
+    if key.len() != 16 && key.len() != 24 && key.len() != 32 {
+        return Err(format!("AES-CTR: invalid key length {}", key.len()));
+    }
+    if counter0.len() != 16 { return Err("AES-CTR: counter must be 16 bytes".to_string()); }
+    if counter_bits == 0 || counter_bits > 128 {
+        return Err("AES-CTR: length must be in 1..=128".to_string());
+    }
+    let w = aes_key_expansion(key);
+    let mut counter = [0u8; 16];
+    counter.copy_from_slice(counter0);
+    let mut out = Vec::with_capacity(data.len());
+    let total_blocks = (data.len() + 15) / 16;
+    let mut block_idx = 0u64;
+    for chunk in data.chunks(16) {
+        let ks = aes_encrypt_block(&counter, &w);
+        for (i, b) in chunk.iter().enumerate() {
+            out.push(b ^ ks[i]);
+        }
+        block_idx += 1;
+        if block_idx as usize == total_blocks { break; }
+        // Increment the low `counter_bits` of the counter block per
+        // SP 800-38A §B.1. Modulo 2^counter_bits, wrap allowed.
+        counter_inc(&mut counter, counter_bits as usize);
+    }
+    Ok(out)
+}
+
+fn counter_inc(counter: &mut [u8; 16], bits: usize) {
+    // counter occupies the low `bits` bits of the 128-bit block (the
+    // tail end of the byte array). Increment modulo 2^bits.
+    let mut remaining = bits;
+    let mut idx = 15;
+    let mut carry: u16 = 1;
+    while remaining > 0 && carry != 0 {
+        let take = remaining.min(8);
+        let mask: u16 = if take == 8 { 0xff } else { (1u16 << take) - 1 };
+        let low = (counter[idx] as u16) & mask;
+        let high = (counter[idx] as u16) & !mask;
+        let sum = low + carry;
+        let new_low = sum & mask;
+        counter[idx] = (high | new_low) as u8;
+        carry = sum >> take;
+        remaining -= take;
+        if idx == 0 { break; }
+        idx -= 1;
+    }
+}
+
+// ─────────────────────── AES-KW (RFC 3394) ──────────────────────────
+//
+// AES Key Wrap — the symmetric KEK-wrapping algorithm used in JWE
+// A128KW / A256KW. Requires the wrapped key length to be a positive
+// multiple of 8 bytes (64 bits) and ≥ 8 bytes.
+
+const AES_KW_IV: [u8; 8] = [0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6];
+
+pub fn aes_kw_wrap(kek: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    if kek.len() != 16 && kek.len() != 24 && kek.len() != 32 {
+        return Err(format!("AES-KW: invalid KEK length {}", kek.len()));
+    }
+    if plaintext.len() % 8 != 0 || plaintext.is_empty() {
+        return Err("AES-KW: plaintext must be a positive multiple of 8 bytes".to_string());
+    }
+    let n = plaintext.len() / 8;
+    let w = aes_key_expansion(kek);
+    let mut a = AES_KW_IV;
+    let mut r: Vec<[u8; 8]> = (0..n)
+        .map(|i| {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&plaintext[i * 8 .. (i + 1) * 8]);
+            b
+        })
+        .collect();
+    for j in 0..6 {
+        for i in 0..n {
+            let mut b = [0u8; 16];
+            b[..8].copy_from_slice(&a);
+            b[8..].copy_from_slice(&r[i]);
+            let enc = aes_encrypt_block(&b, &w);
+            a.copy_from_slice(&enc[..8]);
+            let t = ((n * j) + i + 1) as u64;
+            let t_be = t.to_be_bytes();
+            for k in 0..8 { a[k] ^= t_be[k]; }
+            r[i].copy_from_slice(&enc[8..]);
+        }
+    }
+    let mut out = Vec::with_capacity(8 * (n + 1));
+    out.extend_from_slice(&a);
+    for block in &r { out.extend_from_slice(block); }
+    Ok(out)
+}
+
+pub fn aes_kw_unwrap(kek: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    if kek.len() != 16 && kek.len() != 24 && kek.len() != 32 {
+        return Err(format!("AES-KW: invalid KEK length {}", kek.len()));
+    }
+    if ciphertext.len() % 8 != 0 || ciphertext.len() < 16 {
+        return Err("AES-KW: ciphertext must be a multiple of 8 bytes ≥ 16".to_string());
+    }
+    let n = ciphertext.len() / 8 - 1;
+    let w = aes_key_expansion(kek);
+    let mut a = [0u8; 8];
+    a.copy_from_slice(&ciphertext[..8]);
+    let mut r: Vec<[u8; 8]> = (0..n)
+        .map(|i| {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&ciphertext[8 + i * 8 .. 8 + (i + 1) * 8]);
+            b
+        })
+        .collect();
+    for j in (0..6).rev() {
+        for i in (0..n).rev() {
+            let t = ((n * j) + i + 1) as u64;
+            let t_be = t.to_be_bytes();
+            let mut b = [0u8; 16];
+            for k in 0..8 { b[k] = a[k] ^ t_be[k]; }
+            b[8..].copy_from_slice(&r[i]);
+            let dec = aes_decrypt_block(&b, &w);
+            a.copy_from_slice(&dec[..8]);
+            r[i].copy_from_slice(&dec[8..]);
+        }
+    }
+    if !timing_safe_equal(&a, &AES_KW_IV) {
+        return Err("AES-KW: integrity check failed".to_string());
+    }
+    let mut out = Vec::with_capacity(8 * n);
+    for block in &r { out.extend_from_slice(block); }
+    Ok(out)
+}
+
 // ─────────────────────── AES-GCM (SP 800-38D) ───────────────────────
 //
 // Galois/Counter Mode authenticated encryption. Uses AES-CTR for the

@@ -714,6 +714,44 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // AES-CBC (SP 800-38A §6.2 + PKCS#7 padding per RFC 5652 §6.3).
+    subtle.set(
+        "aesCbcEncryptBytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, iv: Vec<u8>, pt: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_cbc_encrypt(&key, &iv, &pt)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-CBC", "encrypt", e))
+        })?,
+    )?;
+    subtle.set(
+        "aesCbcDecryptBytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, iv: Vec<u8>, ct: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_cbc_decrypt(&key, &iv, &ct)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-CBC", "decrypt", e))
+        })?,
+    )?;
+    // AES-CTR (SP 800-38A §6.5).
+    subtle.set(
+        "aesCtrXorBytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, counter: Vec<u8>, length: u32, data: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_ctr_xor_with_key(&key, &counter, length, &data)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-CTR", "crypt", e))
+        })?,
+    )?;
+    // AES-KW (RFC 3394).
+    subtle.set(
+        "aesKwWrapBytes",
+        Function::new(ctx.clone(), |kek: Vec<u8>, pt: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_kw_wrap(&kek, &pt)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-KW", "wrap", e))
+        })?,
+    )?;
+    subtle.set(
+        "aesKwUnwrapBytes",
+        Function::new(ctx.clone(), |kek: Vec<u8>, ct: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_kw_unwrap(&kek, &ct)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-KW", "unwrap", e))
+        })?,
+    )?;
     // AES-GCM (FIPS 197 + SP 800-38D). WebCrypto encrypt/decrypt with
     // authenticated encryption, 12-byte IV (pilot scope), 16-byte tag.
     // Output layout: ciphertext || tag (matches WebCrypto / Bun).
@@ -857,18 +895,22 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         _algName: "HKDF",
                     };
                 }
-                if (alg.name === "AESGCM") {
+                if (alg.name === "AESGCM" || alg.name === "AESCBC" || alg.name === "AESCTR" || alg.name === "AESKW") {
                     const bytes = toBytes(keyData);
                     if (bytes.length !== 16 && bytes.length !== 24 && bytes.length !== 32) {
-                        throw new Error("AES-GCM key must be 128/192/256 bits");
+                        throw new Error(alg.name + " key must be 128/192/256 bits");
                     }
+                    const specName = {
+                        "AESGCM": "AES-GCM", "AESCBC": "AES-CBC",
+                        "AESCTR": "AES-CTR", "AESKW": "AES-KW",
+                    }[alg.name];
                     return {
                         type: "secret",
                         extractable: !!extractable,
-                        algorithm: { name: "AES-GCM", length: bytes.length * 8 },
+                        algorithm: { name: specName, length: bytes.length * 8 },
                         usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
                         _bytes: bytes,
-                        _algName: "AES-GCM",
+                        _algName: specName,
                     };
                 }
                 if (alg.name !== "HMAC") {
@@ -931,47 +973,93 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             // Pilot scope: algorithm = {name:"AES-GCM", iv, additionalData?, tagLength?}.
             subtle.encrypt = async function encrypt(algorithm, key, data) {
                 const alg = normalizeAlg(algorithm);
-                if (alg.name !== "AESGCM") {
-                    throw new Error("Unsupported encrypt algorithm: " + alg.name);
-                }
-                if (!key || key._algName !== "AES-GCM") {
-                    throw new TypeError("encrypt: key is not an AES-GCM key");
-                }
-                if (!key.usages.includes("encrypt")) {
+                if (!key || !key.usages.includes("encrypt")) {
                     throw new Error("Key not usable for encrypt");
                 }
-                if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
-                const iv = toBytes(algorithm.iv);
-                const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
-                const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
-                if (tagLength !== 128) {
-                    throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                if (alg.name === "AESGCM") {
+                    if (key._algName !== "AES-GCM") throw new TypeError("encrypt: key is not AES-GCM");
+                    if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
+                    const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
+                    if (tagLength !== 128) throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                    const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
+                    return toArrayBuffer(subtle.aesGcmEncryptBytes(
+                        key._bytes, toBytes(algorithm.iv), aad, toBytes(data)));
                 }
-                const out = subtle.aesGcmEncryptBytes(key._bytes, iv, aad, toBytes(data));
-                return toArrayBuffer(out);
+                if (alg.name === "AESCBC") {
+                    if (key._algName !== "AES-CBC") throw new TypeError("encrypt: key is not AES-CBC");
+                    if (!algorithm.iv) throw new TypeError("AES-CBC: iv required");
+                    return toArrayBuffer(subtle.aesCbcEncryptBytes(
+                        key._bytes, toBytes(algorithm.iv), toBytes(data)));
+                }
+                if (alg.name === "AESCTR") {
+                    if (key._algName !== "AES-CTR") throw new TypeError("encrypt: key is not AES-CTR");
+                    if (!algorithm.counter) throw new TypeError("AES-CTR: counter required");
+                    const length = algorithm.length | 0;
+                    if (length <= 0 || length > 128) throw new Error("AES-CTR: length must be in 1..128");
+                    return toArrayBuffer(subtle.aesCtrXorBytes(
+                        key._bytes, toBytes(algorithm.counter), length, toBytes(data)));
+                }
+                throw new Error("Unsupported encrypt algorithm: " + alg.name);
             };
 
             // decrypt(algorithm, key, data) → Promise<ArrayBuffer>
             subtle.decrypt = async function decrypt(algorithm, key, data) {
                 const alg = normalizeAlg(algorithm);
-                if (alg.name !== "AESGCM") {
-                    throw new Error("Unsupported decrypt algorithm: " + alg.name);
-                }
-                if (!key || key._algName !== "AES-GCM") {
-                    throw new TypeError("decrypt: key is not an AES-GCM key");
-                }
-                if (!key.usages.includes("decrypt")) {
+                if (!key || !key.usages.includes("decrypt")) {
                     throw new Error("Key not usable for decrypt");
                 }
-                if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
-                const iv = toBytes(algorithm.iv);
-                const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
-                const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
-                if (tagLength !== 128) {
-                    throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                if (alg.name === "AESGCM") {
+                    if (key._algName !== "AES-GCM") throw new TypeError("decrypt: key is not AES-GCM");
+                    if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
+                    const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
+                    if (tagLength !== 128) throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                    const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
+                    return toArrayBuffer(subtle.aesGcmDecryptBytes(
+                        key._bytes, toBytes(algorithm.iv), aad, toBytes(data)));
                 }
-                const out = subtle.aesGcmDecryptBytes(key._bytes, iv, aad, toBytes(data));
-                return toArrayBuffer(out);
+                if (alg.name === "AESCBC") {
+                    if (key._algName !== "AES-CBC") throw new TypeError("decrypt: key is not AES-CBC");
+                    if (!algorithm.iv) throw new TypeError("AES-CBC: iv required");
+                    return toArrayBuffer(subtle.aesCbcDecryptBytes(
+                        key._bytes, toBytes(algorithm.iv), toBytes(data)));
+                }
+                if (alg.name === "AESCTR") {
+                    if (key._algName !== "AES-CTR") throw new TypeError("decrypt: key is not AES-CTR");
+                    if (!algorithm.counter) throw new TypeError("AES-CTR: counter required");
+                    const length = algorithm.length | 0;
+                    if (length <= 0 || length > 128) throw new Error("AES-CTR: length must be in 1..128");
+                    return toArrayBuffer(subtle.aesCtrXorBytes(
+                        key._bytes, toBytes(algorithm.counter), length, toBytes(data)));
+                }
+                throw new Error("Unsupported decrypt algorithm: " + alg.name);
+            };
+
+            // wrapKey / unwrapKey for AES-KW (RFC 3394). Pilot scope: format="raw".
+            subtle.wrapKey = async function wrapKey(format, key, wrappingKey, wrapAlgorithm) {
+                if (format !== "raw") throw new Error("wrapKey pilot scope: format must be 'raw'");
+                const alg = normalizeAlg(wrapAlgorithm);
+                if (alg.name !== "AESKW") throw new Error("Unsupported wrap algorithm: " + alg.name);
+                if (!wrappingKey || wrappingKey._algName !== "AES-KW") {
+                    throw new TypeError("wrapKey: wrappingKey is not AES-KW");
+                }
+                if (!wrappingKey.usages.includes("wrapKey")) throw new Error("Key not usable for wrapKey");
+                if (!key || !Array.isArray(key._bytes)) throw new TypeError("wrapKey: invalid key to wrap");
+                return toArrayBuffer(subtle.aesKwWrapBytes(wrappingKey._bytes, key._bytes));
+            };
+
+            subtle.unwrapKey = async function unwrapKey(
+                format, wrappedKey, unwrappingKey, unwrapAlgorithm,
+                unwrappedKeyAlgorithm, extractable, keyUsages,
+            ) {
+                if (format !== "raw") throw new Error("unwrapKey pilot scope: format must be 'raw'");
+                const alg = normalizeAlg(unwrapAlgorithm);
+                if (alg.name !== "AESKW") throw new Error("Unsupported unwrap algorithm: " + alg.name);
+                if (!unwrappingKey || unwrappingKey._algName !== "AES-KW") {
+                    throw new TypeError("unwrapKey: unwrappingKey is not AES-KW");
+                }
+                if (!unwrappingKey.usages.includes("unwrapKey")) throw new Error("Key not usable for unwrapKey");
+                const rawBytes = subtle.aesKwUnwrapBytes(unwrappingKey._bytes, toBytes(wrappedKey));
+                return subtle.importKey("raw", rawBytes, unwrappedKeyAlgorithm, extractable, keyUsages);
             };
 
             function keyHash(key) {

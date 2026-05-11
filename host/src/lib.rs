@@ -3075,7 +3075,13 @@ const BUN_SERVE_JS: &str = r#"
                     this._pendingRequests--;
                 }
             },
-            stop() { this._stopped = true; },
+            stop() {
+                this._stopped = true;
+                if (this._tcpListenerId != null && typeof globalThis.TCP !== "undefined") {
+                    try { globalThis.TCP.stopAsync(this._tcpListenerId); } catch (_) {}
+                    this._tcpListenerId = null;
+                }
+            },
             reload(newOptions) {
                 // Per spec: port + hostname preserved across reload.
                 const port = this._port;
@@ -3083,6 +3089,83 @@ const BUN_SERVE_JS: &str = r#"
                 Object.assign(this, Bun.serve(newOptions));
                 this._port = port;
                 this._hostname = hostname;
+            },
+            // ─── Engagement Tier-G extension (option A) ───────────────
+            // listen(): bind a real TCP listener via TCP.bindAsync and start
+            // the accept loop. Optional — existing fixtures using Bun.serve
+            // for in-process routing continue to work without calling this.
+            //
+            // The full Bun.serve semantics (server auto-listens at construction)
+            // can be approximated by calling `await server.listen()` after
+            // construction.
+            _tcpListenerId: null,
+            // listen() is synchronous (returns `this`) — there is no async
+            // bind operation to await. Matches Bun's "server is listening
+            // when serve() returns" semantics more closely than an async
+            // listen() would. Consumers can call `server.listen()` directly
+            // or wrap in `await Promise.resolve(server.listen())` for
+            // consistency with the previous async signature.
+            listen() {
+                if (typeof globalThis.TCP === "undefined" ||
+                    typeof globalThis.HTTP === "undefined") {
+                    throw new Error("Bun.serve.listen: globalThis.TCP + HTTP required");
+                }
+                const result = globalThis.TCP.bindAsync(
+                    this._hostname + ":" + (this._port || 0));
+                this._tcpListenerId = result.id;
+                this._port = parseInt(result.addr.split(":").pop(), 10);
+                return this;
+            },
+            // tick(maxWaitMs): process at most one accepted connection.
+            // Returns true if work was done, false if poll timed out.
+            async tick(maxWaitMs = 50) {
+                if (this._stopped) return false;
+                if (this._tcpListenerId == null) {
+                    throw new Error("Bun.serve.tick: not listening (call await server.listen() first)");
+                }
+                const ev = globalThis.TCP.poll(this._tcpListenerId, maxWaitMs);
+                if (!ev || ev.type !== "connection") return false;
+                const streamId = ev.streamId;
+                try {
+                    const bytes = globalThis.TCP.read(streamId, 65536);
+                    if (bytes.length === 0) return true;
+                    const parsed = globalThis.HTTP.parseRequest(bytes);
+                    const hostHeader = parsed.headers.find(h => h[0].toLowerCase() === "host");
+                    const host = hostHeader ? hostHeader[1] : "localhost";
+                    const url = "http://" + host + parsed.target;
+                    const headers = new Headers();
+                    for (const [n, v] of parsed.headers) headers.append(n, v);
+                    const init = { method: parsed.method, headers };
+                    if (parsed.method !== "GET" && parsed.method !== "HEAD" &&
+                        parsed.body.length > 0) {
+                        init.body = parsed.body;
+                    }
+                    const req = new Request(url, init);
+                    this._pendingRequests++;
+                    let resp;
+                    try { resp = await this.fetch(req); }
+                    finally { this._pendingRequests--; }
+                    const respHeaders = [];
+                    resp.headers.forEach((v, n) => respHeaders.push([n, v]));
+                    const respBody = await resp.bytes();
+                    const respBytes = globalThis.HTTP.serializeResponse(
+                        resp.status, resp.statusText || "", respHeaders, respBody);
+                    globalThis.TCP.writeAll(streamId, respBytes);
+                } finally {
+                    try { globalThis.TCP.close(streamId); } catch (_) {}
+                }
+                return true;
+            },
+            // serve(): run tick() in a loop until stop() is called. Returns
+            // when stopped. This is the engagement-bridge equivalent of
+            // Bun.serve's implicit background loop — explicit here because
+            // rusty-bun-host's single-threaded JS model can't run the loop
+            // in the background while other JS code runs synchronously.
+            async serve() {
+                if (this._tcpListenerId == null) await this.listen();
+                while (!this._stopped) {
+                    await this.tick(50);
+                }
             },
         };
         return server;

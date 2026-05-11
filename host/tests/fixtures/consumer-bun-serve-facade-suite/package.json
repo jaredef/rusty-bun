@@ -1,0 +1,8 @@
+{
+  "name": "consumer-bun-serve-facade-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #51: Bun.serve facade — single-call API wrapping the async-bridge tick pattern. Exercises near-Bun-compat consumer code.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

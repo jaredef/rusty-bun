@@ -2884,6 +2884,30 @@ fn with_echo_server<F: FnOnce()>(f: F) {
 // /health → 200 JSON, /echo → 200 echo body, anything else → 404. Used by
 // the http-over-tcp fixture to validate the full client-side HTTP stack.
 #[test]
+fn js_consumer_bun_serve_facade_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-bun-serve-facade-suite/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    assert!(r.starts_with("5/5"), "bun-serve-facade-suite failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_bun_serve_facade_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-bun-serve-facade-suite/src/main.js");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun").arg(fixture.to_str().unwrap()).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "bun-serve-facade-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
+#[test]
 fn js_consumer_async_http_server_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/consumer-async-http-server-suite/src/main.js");

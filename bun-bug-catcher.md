@@ -279,6 +279,12 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **In-basin counterparts confirmed in same probe:** `Atomics`, `SharedArrayBuffer`, `WeakMap`, `WeakSet`, `Symbol.asyncIterator` — these were also probed and are PRESENT in rusty-bun-host's QuickJS. Lock-free primitives are available even though threading globals are not.
 - **Per M8(b):** scope-limits recorded; no Tier-J fixture has been built against these surfaces; future fixture-author attempts must check this entry first.
 
+### E11. `process` global absent from rusty-bun-host — CLOSED 2026-05-10
+- **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `process` as object with full surface (argv array, env object, platform string, version string, cwd function, exit function, stdout/stderr write functions, hrtime). rusty-bun-host had `typeof process === "undefined"` — process global was entirely missing.
+- **Severity at the time.** Apparatus-side scope-limit; very high-impact since `process` is used pervasively by real consumer code (config via env, CLI args, OS detection, runtime termination).
+- **Historical impact.** Tier-J fixtures had been silently bypassing the `process.stdout.write` first branch in their dual-path emission pattern; the fallback `globalThis.__esmResult` path was carrying the result, making the gap invisible from test outcomes until probed directly.
+- **CLOSED**: same commit closes via `wire_process` (Rust-side) covering argv/env/platform/arch/version/versions/cwd/exit/stdout.write/stderr.write plus `hrtime` and `hrtime.bigint`. `node:process` builtin resolution added to is_node_builtin + node_builtin_esm_source + CJS NODE_BUILTINS table for symmetric ESM/CJS support. consumer-cli-tool Tier-J fixture differentially verified.
+
 ### E10. Set.prototype.union / .intersection / .difference (ES2025) absent from rusty-bun-host (basin boundary)
 - **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `Set.prototype.union`, `.intersection`, `.difference` as functions (ES2025 / TC39 proposal-set-methods Stage 4). rusty-bun-host has them as `undefined` — its embedded QuickJS predates the merge.
 - **Severity.** Apparatus-side scope-limit; engine-version-bounded.

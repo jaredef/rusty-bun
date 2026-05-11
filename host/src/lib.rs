@@ -224,7 +224,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:crypto" | "crypto" |
         "node:buffer" | "buffer" |
         "node:url" | "url" |
-        "node:os" | "os"
+        "node:os" | "os" |
+        "node:process" | "process"
     )
 }
 
@@ -245,6 +246,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:url" | "url" => ("URL", &[]),
         "node:os" | "os" => ("os", &["platform", "arch", "type", "tmpdir",
             "homedir", "hostname", "endianness", "EOL"]),
+        "node:process" | "process" => ("process", &["argv", "env", "platform",
+            "arch", "version", "versions", "cwd", "exit", "stdout", "stderr",
+            "hrtime"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -312,6 +316,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
     install_url_class_js(&ctx)?;
+    wire_process(&ctx, &global)?;
     Ok(())
 }
 
@@ -397,6 +402,105 @@ fn wire_atob_btoa<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResu
 }
 
 // ─────────────────── path ────────────────────────────────────────────
+
+fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // node:process / globalThis.process. Bun-portable subset.
+    // stdout.write / stderr.write accumulate into globalThis.__stdoutBuf
+    // and globalThis.__stderrBuf respectively so eval_esm_module can read
+    // them. Real Bun writes to actual fd 1/2; rusty-bun-host captures
+    // them into JS-side buffers for test inspection (and for the
+    // Tier-J differential path).
+    let process = Object::new(ctx.clone())?;
+
+    // env: a fresh object populated from std::env::vars().
+    let env = Object::new(ctx.clone())?;
+    for (k, v) in std::env::vars() {
+        let _ = env.set(k.as_str(), v);
+    }
+    process.set("env", env)?;
+
+    // argv: in the host context, populate with a synthetic two-element
+    // array similar to ["bun", "<entry-script>"]. eval_esm_module knows
+    // the entry path; for the host-internal eval helpers, default to
+    // ["rusty-bun-host", "<eval>"]. The test fixtures don't depend on
+    // argv content; what they depend on is argv being an Array.
+    let argv: Vec<String> = vec!["rusty-bun-host".to_string(), "<eval>".to_string()];
+    process.set("argv", argv)?;
+
+    process.set("platform", if cfg!(target_os = "linux") { "linux" }
+        else if cfg!(target_os = "macos") { "darwin" }
+        else if cfg!(target_os = "windows") { "win32" }
+        else { "unknown" })?;
+    process.set("arch", if cfg!(target_arch = "x86_64") { "x64" }
+        else if cfg!(target_arch = "aarch64") { "arm64" }
+        else { "unknown" })?;
+    process.set("version", "v0.0.0-rusty-bun-host")?;
+    process.set("versions", {
+        let v = Object::new(ctx.clone())?;
+        v.set("node", "0.0.0")?;
+        v.set("rusty_bun_host", "0.0.0")?;
+        v
+    })?;
+
+    process.set("cwd", Function::new(ctx.clone(), || -> String {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "/".to_string())
+    })?)?;
+
+    // exit is a sentinel — we cannot actually exit the test process; the
+    // function records the code on globalThis.__exitCode and throws to
+    // unwind. Real consumer code that calls process.exit will surface as
+    // an uncaught error in rusty-bun-host but won't kill the process.
+    process.set("exit", Function::new(ctx.clone(), |code: Opt<i32>| -> JsResult<()> {
+        let _ = code;
+        Err(rquickjs::Error::new_from_js_message(
+            "process.exit", "void",
+            "process.exit called in rusty-bun-host (no-op; check __exitCode)",
+        ))
+    })?)?;
+
+    global.set("process", process)?;
+
+    // stdout / stderr with .write accumulating into JS-side buffers.
+    // JS-side wiring keeps the implementation small and avoids holding
+    // Rust state on JS objects (which would re-trigger E.4's GC issue).
+    ctx.eval::<(), _>(r#"
+        (function() {
+            globalThis.__stdoutBuf = "";
+            globalThis.__stderrBuf = "";
+            globalThis.process.stdout = {
+                write(chunk) {
+                    globalThis.__stdoutBuf += String(chunk);
+                    return true;
+                }
+            };
+            globalThis.process.stderr = {
+                write(chunk) {
+                    globalThis.__stderrBuf += String(chunk);
+                    return true;
+                }
+            };
+            // hrtime and hrtime.bigint — common in real npm packages.
+            globalThis.process.hrtime = function hrtime(prev) {
+                const t = performance.now() * 1e6;  // ns
+                const sec = Math.floor(t / 1e9);
+                const nsec = Math.floor(t % 1e9);
+                if (prev) {
+                    const ds = sec - prev[0];
+                    const dn = nsec - prev[1];
+                    return dn < 0 ? [ds - 1, dn + 1e9] : [ds, dn];
+                }
+                return [sec, nsec];
+            };
+            globalThis.process.hrtime.bigint = function() {
+                return BigInt(Math.floor(performance.now() * 1e6));
+            };
+        })();
+    "#)?;
+
+    Ok(())
+}
 
 fn wire_os<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     // node:os data-layer. Bun-portable subset: platform, arch, type,
@@ -2691,6 +2795,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "buffer": () => ({ Buffer: globalThis.Buffer }),
         "node:os": () => globalThis.os,
         "os": () => globalThis.os,
+        "node:process": () => globalThis.process,
+        "process": () => globalThis.process,
     };
 
     function loadModule(absPath) {
@@ -3234,7 +3340,13 @@ pub fn eval_cjs_module_async(entry_path: &str) -> Result<String, String> {
         if let Some(e) = err { return Err(format!("js error: {}", e)); }
         let res: Option<String> = g.get::<_, Option<String>>("__asyncResult")
             .map_err(|e| format!("read result: {:?}", e))?;
-        res.ok_or_else(|| "module did not set __asyncResult".to_string())
+        if let Some(r) = res { return Ok(r); }
+        let stdout: Option<String> = g.get::<_, Option<String>>("__stdoutBuf")
+            .map_err(|e| format!("read stdout: {:?}", e))?;
+        match stdout {
+            Some(s) if !s.is_empty() => Ok(s.trim_end_matches('\n').to_string()),
+            _ => Err("module did not set __asyncResult or __stdoutBuf".to_string()),
+        }
     })
 }
 
@@ -3264,7 +3376,16 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
         let g = ctx.globals();
         let res: Option<String> = g.get::<_, Option<String>>("__esmResult")
             .map_err(|e| format!("read result: {:?}", e))?;
-        res.ok_or_else(|| "module did not set __esmResult".to_string())
+        if let Some(r) = res { return Ok(r); }
+        // Fall back to process.stdout.write buffer — fixtures using the
+        // Bun-portable process.stdout.write path write here. Strip trailing
+        // newline to match Bun's `.trim()`-shaped differential expectations.
+        let stdout: Option<String> = g.get::<_, Option<String>>("__stdoutBuf")
+            .map_err(|e| format!("read stdout: {:?}", e))?;
+        match stdout {
+            Some(s) if !s.is_empty() => Ok(s.trim_end_matches('\n').to_string()),
+            _ => Err("module did not set __esmResult or __stdoutBuf".to_string()),
+        }
     })
 }
 

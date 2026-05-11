@@ -1,0 +1,8 @@
+{
+  "name": "consumer-cli-tool",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #17: CLI-tool shape exercising process.* surface. argv/env/platform/version/cwd + stdout.write + hrtime.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

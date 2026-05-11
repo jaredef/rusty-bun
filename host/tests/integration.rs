@@ -4277,3 +4277,23 @@ fn bun_password_verify_via_argon2id_substrate() {
     "#).unwrap();
     assert_eq!(r, "ok");
 }
+
+#[test]
+fn bun_password_hash_sync_verify_sync_roundtrip() {
+    let r = rusty_bun_host::eval_string(r#"
+        const enc = Bun.password.hashSync("hunter2", { timeCost: 2, memoryCost: 1024 });
+        const ok = Bun.password.verifySync("hunter2", enc);
+        const bad = Bun.password.verifySync("wrong", enc);
+        (ok && !bad) ? "yes" : "no"
+    "#).unwrap();
+    assert_eq!(r, "yes");
+}
+
+#[test]
+fn bun_password_verify_sync_accepts_upstream_phc() {
+    let r = rusty_bun_host::eval_string(r#"
+        const enc = "$argon2id$v=19$m=1024,t=2,p=1$c2FsdHNhbHRzYWx0c2FsdA$8Ay6op+3TmdW+WkH0Q1ci5BobdmPnyvp2rUlv7zx/IE";
+        Bun.password.verifySync("hunter2", enc) ? "ok" : "bad"
+    "#).unwrap();
+    assert_eq!(r, "ok");
+}

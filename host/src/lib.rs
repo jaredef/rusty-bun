@@ -7128,6 +7128,38 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     const got = __argon2id_run(password, salt, t, m, tau);
                     return __ct_equal(got, expected);
                 },
+                hashSync(password, options) {
+                    const opts = (typeof options === "string") ? { algorithm: options } : (options || {});
+                    if (opts.algorithm && opts.algorithm !== "argon2id") {
+                        throw new TypeError("Bun.password.hashSync: only argon2id supported");
+                    }
+                    const timeCost = opts.timeCost ?? 2;
+                    const memoryCost = opts.memoryCost ?? 65536;
+                    const salt = new Uint8Array(16);
+                    crypto.getRandomValues(salt);
+                    const tag = __argon2id_run(password, salt, timeCost, memoryCost, 32);
+                    return `$argon2id$v=19$m=${memoryCost},t=${timeCost},p=1$${__b64nopad_encode(salt)}$${__b64nopad_encode(tag)}`;
+                },
+                verifySync(password, encoded, algorithm) {
+                    if (typeof encoded !== "string") return false;
+                    const parts = encoded.split("$");
+                    if (parts.length !== 6) return false;
+                    if (parts[1] !== "argon2id") return false;
+                    if (algorithm && algorithm !== parts[1]) return false;
+                    if (parts[2] !== "v=19") return false;
+                    let m = 0, t = 0, p = 0;
+                    for (const seg of parts[3].split(",")) {
+                        const [k, v] = seg.split("=");
+                        if (k === "m") m = parseInt(v, 10);
+                        else if (k === "t") t = parseInt(v, 10);
+                        else if (k === "p") p = parseInt(v, 10);
+                    }
+                    if (p !== 1) return false;
+                    const salt = __b64nopad_decode(parts[4]);
+                    const expected = __b64nopad_decode(parts[5]);
+                    const got = __argon2id_run(password, salt, t, m, expected.length);
+                    return __ct_equal(got, expected);
+                },
             };
         })();
     "#)?;

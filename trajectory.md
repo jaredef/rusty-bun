@@ -164,7 +164,42 @@ Doc-tier corpus output:
 
 ### Tier-Π — Full plug-and-play parity trajectory (current top priority)
 
-Per seed §VII.A. The 2026-05-11 engagement run achieved curated-corpus parity (52 J.1.a fixtures byte-identical to Bun 1.3.11). Full plug-and-play parity (any arbitrary Bun consumer drops in unchanged) requires closing the hard-blocker list below. Estimated ~12-19 substantial M10-staged rounds.
+Per seed §VII.A. The 2026-05-11 engagement run achieved curated-corpus parity (52 J.1.a fixtures byte-identical to Bun 1.3.11). Full plug-and-play parity (any arbitrary Bun consumer drops in unchanged) requires closing the hard-blocker list below. Estimated ~12-19 substantial M10-staged rounds at the original framing; **the 2026-05-11 long session closed ~30 of those rounds**.
+
+#### Status at 2026-05-11 session close
+
+**Network tier ✅ functionally closed.** HTTP (Π1.1) + DNS (Π1.2) + gzip/deflate decode (Π1.3) + HTTPS / TLS 1.3 (Π1.4 all sub-rounds a-j) + WebSocket (Π1.5.a-d) all consumer-API-supported end-to-end. Real Bun consumer code using `fetch("https://api.example.com/...")` or `new WebSocket("wss://...")` works.
+
+**Runtime model ✅ infrastructure-closed.** auto-keep-alive (Π2.6 infrastructure) + process events (Π2.7). Π2.6.b async-TCP for canonical autoServe self-fetch remains as the architectural closure.
+
+**node:* breadth ✅ closed for load-bearing surfaces.** events (Π3.8) + util (Π3.10) + stream (Π3.9) + querystring+url (Π3.11) + assert (Π3-extension). mocha/jest/express/koa now have their fallback dependencies satisfied. node:tls / node:net remain gated on Π1.4 internals; node:child_process atop Bun.spawn is opportunistic.
+
+**Bun namespace ✅ small utilities closed.** Bun.write / fileURLToPath / pathToFileURL / deepEquals / inspect / CryptoHasher / Glob / gunzipSync / inflateSync / escapeHTML / nanoseconds / sleep / sleepSync. Bun.dns + Bun.serve already landed earlier. Large items remain: Π4.14 Bun.password (Blake2b substrate ✅ landed via Π4.14.a; Argon2id + JS wiring queued), Π4.15 Bun.SQLite (substantial, deferred unless consumer-corpus pull surfaces), Π4.16 Bun.YAML (medium-risk hand-roll).
+
+**Apparatus tier additions this session:** seed §A8.16 (harness-state guards) + §A8.17 (inner-loop cost stratification) + §A8.13 substrate-amortization record extended to 5 instances (was 2) + new M12 basin-expansion-at-L2M-saturation discipline per Doc 714. Bug-catcher F-series extended (F9 / F12 / F13-reclassified per §A8.17). Doc 708 amended seven times. Tier-J fixture count: ~68 (was 52).
+
+#### Remaining work toward telos closure
+
+**High-leverage:**
+- Π4.14.b Argon2id per RFC 9106 + Bun.password JS host wiring (substrate Blake2b done; auth-library compatibility once landed)
+- Π2.6.b async-TCP substrate + canonical autoServe self-fetch (architectural; unblocks `Bun.serve({fetch})` without manual ticking)
+
+**Medium-leverage:**
+- Π1.3.b compression encode (gzip/deflate) — currently decode-only
+- Π1.3.c brotli decode (compose on flate2 or hand-rolled)
+- Π4.16 Bun.YAML safe-subset
+
+**Opportunistic:**
+- Π5 real OSS differential — hono (web framework), jose (JWT), WPT runner adapter
+
+**Deferred with re-open conditions:**
+- Π4.15 Bun.SQLite (re-open when consumer-corpus pull surfaces it)
+- Bun.connect async (re-open after Π2.6.b)
+- node:tls / node:net (re-open after Π2.6.b — they wrap on it)
+
+The detailed sub-round records below remain as the engagement's history. Future sessions should re-orient against this Status block first and the historical record second.
+
+---
 
 **Phase Π1 — Network completion (5-7 rounds; highest leverage; do first).**
 1. ~~**Real fetch() wiring**~~ — ✅ DONE 2026-05-11 (single round). globalThis.fetch composes http-codec + sockets + URL parsing; http:// + IPv4/localhost only; consumer-real-fetch-suite 8/8 byte-identical to Bun. HTTPS gated to Π1.4, DNS to Π1.2 with explicit error pointers.
@@ -183,7 +218,6 @@ Per seed §VII.A. The 2026-05-11 engagement run achieved curated-corpus parity (
    - **Π1.4.i (live-handshake bug fix)** ✅ DONE 2026-05-11. The Π1.4.g recv-UnexpectedEnd was diagnosed: openssl s_server requires the legacy_session_id in ClientHello to be non-empty (32 random bytes) for middlebox-compatibility mode per RFC 8446 §4.1.2 / §D.4, even though TLS 1.3 doesn't strictly require it. My initial implementation sent an empty legacy_session_id (TLS 1.3-strict per spec) and openssl silently closed the connection after our client Finished. Fix: generate 32 random bytes for legacy_session_id in tls_connect. Live test now passes — handshake completes through to application-data round-trip; openssl returns the `-www` HTTP/1.0 status page; rusty-bun-host decrypts and verifies. The TLS substrate is now functionally validated against a real implementation.
    - **Π1.4.j (fetch HTTPS routing)** ✅ DONE 2026-05-11. fetch() in host/src/lib.rs no longer throws on https:// — it routes through globalThis.__tls.connect using a CA bundle loaded from (in order) RUSTY_BUN_CA env var, NODE_EXTRA_CA_CERTS env var, or the system default location (`/etc/ssl/certs/ca-certificates.crt` and platform analogues). __tls.write/read replace TCP.writeAll/read for the encrypted transport; __tls.close replaces TCP.close. Port defaults to 443 for https://, 80 for http://. consumer-real-fetch-suite test 5 updated from "https-throws" placeholder to "https-dns-fails-cleanly" (now that HTTPS path is real, an invalid hostname fails with DNS resolution error rather than the prior ENOTLS placeholder). Inner-loop host suite: 295 passed, 14 §A8.17-ignored, 5.47s.
    - **Π1.4 phase ✅ COMPLETE.** TLS 1.3 substrate (DER → X.509 → record layer → key schedule → AEAD → ClientHello/ServerHello → driver → cert chain walk → live verification against openssl) + host wiring + fetch HTTPS routing. ~2625 LOC of pure-Rust + ~165 LOC of host wiring + 1 verified live handshake. Sub-criterion 2 (Surface-API completeness): HTTPS is now apparatus-supported end-to-end; real Bun consumer code calling `fetch("https://...")` works.
-   - **Π1.4.e (HTTPS via fetch + host wiring)** — closes phase.
 5. **WebSocket**
    - **Π1.5.a (RFC 6455 frame codec + handshake key derivation)** ✅ DONE 2026-05-11. pilots/websocket/derived/ — ~280 LOC. Frame encode/decode with Opcode enum (Continuation/Text/Binary/Close/Ping/Pong), is_control predicate, mask handling (client → server MUST mask, server → client MUST NOT). 7/16/64-bit payload length encoding per §5.2. Close-code encode/decode per §5.5.1. Sec-WebSocket-Key generation (16 random bytes → base64). Sec-WebSocket-Accept derivation per §1.3 + §4.2.2 (SHA-1(key + "258EAFA5-...-C5AB0DC85B11") → base64). Self-contained base64 encoder per RFC 4648 §4. Verifier 18/18 including RFC 6455 §1.3 golden Accept vector ("dGhlIHNhbXBsZSBub25jZQ==" → "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") and §5.7 golden frame examples (unmasked "Hello" = 81 05 48 65 6c 6c 6f; masked "Hello" = 81 85 37 fa 21 3d 7f 9f 4d 51 58).
    - **Π1.5.b (host wiring: globalThis.__ws primitives + Tier-J consumer-ws-primitives-suite)** ✅ DONE 2026-05-11. Added rusty-websocket to host/Cargo.toml. wire_websocket exposes __ws.generate_key / derive_accept / verify_accept / encode_frame / decode_frame_json / encode_close. consumer-ws-primitives-suite 8/8 byte-identical to Bun (Bun takes all-skipped path; rusty-bun-host validates RFC 6455 §1.3 Accept vector + §5.7 frame vectors round-trip through FFI). Inner-loop host suite: 297 passed, 14 §A8.17-ignored, 5.50s.

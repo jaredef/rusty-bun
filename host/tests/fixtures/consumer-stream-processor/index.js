@@ -124,17 +124,9 @@ selfTest().then((results) => {
     const failed = results.filter(([_, ok]) => !ok).map(([name]) => name);
     const summary = passed + "/" + results.length +
         (failed.length > 0 ? " failed: " + failed.join(",") : "");
-    if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
-        process.stdout.write(summary + "\n");
-    } else {
-        globalThis.__asyncResult = summary;
-    }
+    process.stdout.write(summary + "\n");
 }).catch((e) => {
     const msg = String(e && e.message ? e.message : e);
-    if (typeof process !== "undefined" && process.stderr && process.stderr.write) {
-        process.stderr.write("error: " + msg + "\n");
-        if (typeof process.exit === "function") process.exit(1);
-    } else {
-        globalThis.__asyncError = msg;
-    }
+    process.stderr.write("error: " + msg + "\n");
+    process.exit(1);
 });

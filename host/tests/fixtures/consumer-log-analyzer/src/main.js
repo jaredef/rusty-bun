@@ -98,8 +98,4 @@ const failed = results.filter(([_, ok]) => !ok).map(([name]) => name);
 const summary = passed + "/" + results.length +
     (failed.length > 0 ? " failed: " + failed.join(",") : "");
 
-if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
-    process.stdout.write(summary + "\n");
-} else {
-    globalThis.__esmResult = summary;
-}
+process.stdout.write(summary + "\n");

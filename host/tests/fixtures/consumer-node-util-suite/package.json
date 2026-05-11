@@ -1,0 +1,8 @@
+{
+  "name": "consumer-node-util-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #58: node:util surface. Tier-Π3.10 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

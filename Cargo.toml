@@ -22,6 +22,7 @@ members = [
     "pilots/fetch-api/derived",
     "pilots/file/derived",
     "pilots/http-codec/derived",
+    "pilots/sockets/derived",
     "pilots/node-fs/derived",
     "pilots/node-http/derived",
     "pilots/node-path/derived",

@@ -378,6 +378,10 @@ name = "rusty-node-path"
 version = "0.1.0"
 
 [[package]]
+name = "rusty-sockets"
+version = "0.1.0"
+
+[[package]]
 name = "rusty-streams"
 version = "0.1.0"
 

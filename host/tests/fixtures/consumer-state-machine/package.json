@@ -1,0 +1,8 @@
+{
+  "name": "consumer-state-machine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #18: modern class features. Private fields (#), static fields/methods, super in subclass, error.cause (ES2022), Promise.any, new.target abstract-class enforcement.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

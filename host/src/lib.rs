@@ -364,6 +364,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_stream_js(&ctx)?;
     install_node_querystring_and_url_full_js(&ctx)?;
     install_bun_small_utilities_js(&ctx)?;
+    install_keep_alive_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -3676,6 +3677,58 @@ const BUN_SERVE_JS: &str = r#"
                     try { globalThis.TCP.stopAsync(this._tcpListenerId); } catch (_) {}
                     this._tcpListenerId = null;
                 }
+                // Π2.6: deregister from keep-alive registry.
+                if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
+            },
+            // Π2.6: __tick is the sync entry point the host's eval loop
+            // calls between microtask drains. Polls the listener with
+            // timeout 0 (non-blocking). If a connection is queued,
+            // schedules the async handle-and-respond as a Promise (fire-
+            // and-forget) and returns true. If no connection, returns
+            // false. Composes on the existing tick() body without
+            // requiring eval-side await.
+            __tick(_unused) {
+                if (this._stopped) return false;
+                if (this._tcpListenerId == null) return false;
+                const ev = globalThis.TCP.poll(this._tcpListenerId, 0);
+                if (!ev || ev.type !== "connection") return false;
+                // Fire-and-forget the async handler; microtask drain
+                // between ticks completes it.
+                (async () => {
+                    const streamId = ev.streamId;
+                    try {
+                        const bytes = globalThis.TCP.read(streamId, 65536);
+                        if (bytes.length === 0) return;
+                        const parsed = globalThis.HTTP.parseRequest(bytes);
+                        const hostHeader = parsed.headers.find(h => h[0].toLowerCase() === "host");
+                        const host = hostHeader ? hostHeader[1] : "localhost";
+                        const url = "http://" + host + parsed.target;
+                        const headers = new Headers();
+                        for (const [n, v] of parsed.headers) headers.append(n, v);
+                        const init = { method: parsed.method, headers };
+                        if (parsed.method !== "GET" && parsed.method !== "HEAD" &&
+                            parsed.body.length > 0) {
+                            init.body = parsed.body;
+                        }
+                        const req = new Request(url, init);
+                        this._pendingRequests++;
+                        let resp;
+                        try { resp = await this.fetch(req); }
+                        finally { this._pendingRequests--; }
+                        const respHeaders = [];
+                        resp.headers.forEach((v, n) => respHeaders.push([n, v]));
+                        const respBody = await resp.bytes();
+                        const respBytes = globalThis.HTTP.serializeResponse(
+                            resp.status, resp.statusText || "", respHeaders, respBody);
+                        globalThis.TCP.writeAll(streamId, respBytes);
+                    } catch (e) {
+                        globalThis.__stderrBuf += "Bun.serve __tick error: " +
+                            (e && e.message ? e.message : String(e)) + "\n";
+                    } finally {
+                        try { globalThis.TCP.close(streamId); } catch (_) {}
+                    }
+                })();
+                return true;
             },
             reload(newOptions) {
                 // Per spec: port + hostname preserved across reload.
@@ -3763,6 +3816,16 @@ const BUN_SERVE_JS: &str = r#"
                 }
             },
         };
+        // Π2.6: opts.autoServe = true makes Bun.serve auto-listen on
+        // construction AND register the server in the host's
+        // __keepAlive registry. The eval loop continues ticking the
+        // server until server.stop() removes it. Unlocks canonical
+        // real-Bun shape `Bun.serve({fetch, port, autoServe: true})`
+        // without explicit listen()/serve() calls in consumer code.
+        if (opts.autoServe === true) {
+            server.listen();
+            if (globalThis.__keepAlive) globalThis.__keepAlive.add(server);
+        }
         return server;
     };
 })();
@@ -5930,6 +5993,51 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
     Ok(())
 }
 
+fn install_keep_alive_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // Π2.6: async-runtime auto-keep-alive. eval_esm_module's main loop
+    // continues ticking entries in globalThis.__keepAlive after the
+    // microtask queue drains. Each entry is an object with a
+    // synchronous __tick(maxWaitMs) -> boolean method that returns
+    // true if it did productive work, false if it polled-and-was-idle.
+    // The loop exits when both microtask queue and __keepAlive are
+    // quiescent (no work for a documented number of consecutive ticks).
+    //
+    // Per seed §A8.16: __keepAlive is a process-global resource and
+    // must be guarded if the host ever supports parallel evals; for now
+    // the host runs one eval at a time so a plain Set suffices.
+    //
+    // Composes with Bun.serve(opts) which, when called with
+    // opts.autoServe truthy, calls listen() then registers the server
+    // in __keepAlive. server.stop() removes it. The canonical real-Bun
+    // shape `Bun.serve({fetch, port})` is unlocked when consumers opt
+    // into autoServe.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            globalThis.__keepAlive = new Set();
+            globalThis.__tickKeepAlive = function() {
+                let didWork = false;
+                // Copy to a list to allow add/remove during tick.
+                const items = Array.from(globalThis.__keepAlive);
+                for (const item of items) {
+                    if (item && typeof item.__tick === "function") {
+                        try {
+                            if (item.__tick(0)) didWork = true;
+                        } catch (e) {
+                            // Tick errors are surfaced to stderr but don't
+                            // halt the loop; consumer-side error handling
+                            // is per-server.
+                            globalThis.__stderrBuf += "keepAlive tick error: " +
+                                (e && e.message ? e.message : String(e)) + "\n";
+                        }
+                    }
+                }
+                return didWork;
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
 fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
     // Π4: Bun namespace small utilities — load-bearing subset visible
     // to real OSS consumer code:
@@ -6646,11 +6754,52 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
             .map_err(|e| format!("declare entry: {:?}", e))?;
         Ok(())
     })?;
-    for _ in 0..1_000_000 {
+    // Π2.6: drain microtasks AND tick keep-alive registry until both
+    // are quiescent. The keep-alive registry is populated by
+    // Bun.serve(opts, {autoServe: true}) and removed by server.stop().
+    //
+    // Termination invariant: exit when microtask queue is empty AND
+    // (the keep-alive registry is empty OR __tickKeepAlive has been
+    // idle for max_consecutive_idle iterations). Bounded by max_total
+    // to prevent runaway loops.
+    //
+    // Performance discipline (§A8.17): when __keepAlive is empty (the
+    // common case for fixtures that don't use autoServe), skip the
+    // tick-loop entirely — the prior behavior of microtask-drain-then-
+    // exit. This keeps inner-loop budget intact for non-Π2.6 fixtures.
+    let max_total: usize = 5_000_000;
+    let max_consecutive_idle: usize = 1000;
+    let mut total: usize = 0;
+    let mut consecutive_idle: usize = 0;
+    while total < max_total {
+        total += 1;
         match runtime.execute_pending_job() {
-            Ok(true) => continue,
-            Ok(false) => break,
+            Ok(true) => { consecutive_idle = 0; continue; }
+            Ok(false) => {}
             Err(_) => break,
+        }
+        // Microtask queue empty. Probe keep-alive registry; if empty,
+        // exit immediately (fast path for non-autoServe fixtures).
+        let (alive_count, did_work) = context.with(|ctx| -> (i32, bool) {
+            let g = ctx.globals();
+            let alive_count = g
+                .get::<_, Option<rquickjs::Object>>("__keepAlive")
+                .ok().flatten()
+                .and_then(|s| s.get::<_, i32>("size").ok())
+                .unwrap_or(0);
+            if alive_count == 0 { return (0, false); }
+            let did_work = match g.get::<_, Option<rquickjs::Function>>("__tickKeepAlive") {
+                Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
+                _ => false,
+            };
+            (alive_count, did_work)
+        });
+        if alive_count == 0 { break; }
+        if did_work {
+            consecutive_idle = 0;
+        } else {
+            consecutive_idle += 1;
+            if consecutive_idle > max_consecutive_idle { break; }
         }
     }
     context.with(|ctx| -> Result<String, String> {

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-bun-serve-autoserve-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #62: Bun.serve with autoServe (canonical real-Bun shape via host eval loop keep-alive). Tier-Π2.6 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

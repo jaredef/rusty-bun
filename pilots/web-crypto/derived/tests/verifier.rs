@@ -434,3 +434,114 @@ fn pbkdf2_dk_len_spans_multiple_blocks() {
     let out = rusty_web_crypto::pbkdf2_hmac_sha256(b"password", b"salt", 100, 100);
     assert_eq!(out.len(), 100);
 }
+
+// ─────────────── AES (FIPS 197) + AES-GCM (SP 800-38D) ─────────────
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    (0..s.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i+2], 16).unwrap())
+        .collect()
+}
+fn hex_encode(b: &[u8]) -> String {
+    let mut s = String::with_capacity(b.len() * 2);
+    for byte in b { s.push_str(&format!("{:02x}", byte)); }
+    s
+}
+
+#[test]
+fn aes128_fips_197_appendix_c1() {
+    // FIPS 197 §C.1: AES-128 with key 000102...0f, input 00112233...ff.
+    let key = hex_decode("000102030405060708090a0b0c0d0e0f");
+    let pt: [u8; 16] = hex_decode("00112233445566778899aabbccddeeff").try_into().unwrap();
+    let ct = rusty_web_crypto::aes_encrypt_block_with_key(&key, &pt);
+    assert_eq!(hex_encode(&ct), "69c4e0d86a7b0430d8cdb78070b4c55a");
+}
+
+#[test]
+fn aes256_fips_197_appendix_c3() {
+    // FIPS 197 §C.3: AES-256.
+    let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    let pt: [u8; 16] = hex_decode("00112233445566778899aabbccddeeff").try_into().unwrap();
+    let ct = rusty_web_crypto::aes_encrypt_block_with_key(&key, &pt);
+    assert_eq!(hex_encode(&ct), "8ea2b7ca516745bfeafc49904b496089");
+}
+
+#[test]
+fn aes_gcm_sp800_38d_test_case_2() {
+    // SP 800-38D Appendix B Test Case 2: K=zero, IV=zero, P=16 zero bytes, A=empty.
+    let key = hex_decode("00000000000000000000000000000000");
+    let iv  = hex_decode("000000000000000000000000");
+    let pt  = hex_decode("00000000000000000000000000000000");
+    let out = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, &[], &pt).unwrap();
+    assert_eq!(hex_encode(&out),
+        "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf");
+}
+
+#[test]
+fn aes_gcm_sp800_38d_test_case_3() {
+    // SP 800-38D Appendix B Test Case 3.
+    let key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let iv  = hex_decode("cafebabefacedbaddecaf888");
+    let pt  = hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255");
+    let out = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, &[], &pt).unwrap();
+    let expect_ct = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985";
+    let expect_tag = "4d5c2af327cd64a62cf35abd2ba6fab4";
+    assert_eq!(hex_encode(&out), format!("{}{}", expect_ct, expect_tag));
+}
+
+#[test]
+fn aes_gcm_sp800_38d_test_case_4() {
+    // SP 800-38D Appendix B Test Case 4 — with AAD + truncated plaintext.
+    let key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let iv  = hex_decode("cafebabefacedbaddecaf888");
+    let pt  = hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+    let aad = hex_decode("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+    let out = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, &aad, &pt).unwrap();
+    let expect_ct = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091";
+    let expect_tag = "5bc94fbc3221a5db94fae95ae7121a47";
+    assert_eq!(hex_encode(&out), format!("{}{}", expect_ct, expect_tag));
+}
+
+#[test]
+fn aes_gcm_roundtrip() {
+    let key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let iv  = hex_decode("cafebabefacedbaddecaf888");
+    let pt  = b"hello world, this is a roundtrip test of arbitrary length";
+    let aad = b"associated-data";
+    let ct = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, aad, pt).unwrap();
+    let dec = rusty_web_crypto::aes_gcm_decrypt(&key, &iv, aad, &ct).unwrap();
+    assert_eq!(&dec, pt);
+}
+
+#[test]
+fn aes_gcm_tag_mismatch_rejected() {
+    let key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let iv  = hex_decode("cafebabefacedbaddecaf888");
+    let pt  = b"some plaintext";
+    let mut ct = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, &[], pt).unwrap();
+    let n = ct.len();
+    ct[n - 1] ^= 0x01;
+    assert!(rusty_web_crypto::aes_gcm_decrypt(&key, &iv, &[], &ct).is_err());
+}
+
+#[test]
+fn aes_gcm_aad_tampered_rejected() {
+    let key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let iv  = hex_decode("cafebabefacedbaddecaf888");
+    let pt  = b"some plaintext";
+    let aad = b"original-aad";
+    let ct = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, aad, pt).unwrap();
+    assert!(rusty_web_crypto::aes_gcm_decrypt(&key, &iv, b"tampered-aad", &ct).is_err());
+}
+
+#[test]
+fn aes256_gcm_roundtrip() {
+    let key = hex_decode("0000000000000000000000000000000000000000000000000000000000000000");
+    let iv  = hex_decode("000000000000000000000000");
+    let pt  = b"AES-256-GCM smoke test payload of arbitrary length";
+    let aad = b"some-aad";
+    let ct = rusty_web_crypto::aes_gcm_encrypt(&key, &iv, aad, pt).unwrap();
+    let dec = rusty_web_crypto::aes_gcm_decrypt(&key, &iv, aad, &ct).unwrap();
+    assert_eq!(&dec, pt);
+}

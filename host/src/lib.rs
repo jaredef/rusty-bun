@@ -683,6 +683,23 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::pbkdf2_hmac_sha512(&password, &salt, iterations, dk_len as usize)
         })?,
     )?;
+    // AES-GCM (FIPS 197 + SP 800-38D). WebCrypto encrypt/decrypt with
+    // authenticated encryption, 12-byte IV (pilot scope), 16-byte tag.
+    // Output layout: ciphertext || tag (matches WebCrypto / Bun).
+    subtle.set(
+        "aesGcmEncryptBytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, iv: Vec<u8>, aad: Vec<u8>, pt: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_gcm_encrypt(&key, &iv, &aad, &pt)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-GCM", "encrypt", e))
+        })?,
+    )?;
+    subtle.set(
+        "aesGcmDecryptBytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, iv: Vec<u8>, aad: Vec<u8>, ct: Vec<u8>| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::aes_gcm_decrypt(&key, &iv, &aad, &ct)
+                .map_err(|e| rquickjs::Error::new_from_js_message("AES-GCM", "decrypt", e))
+        })?,
+    )?;
     // Constant-time comparison helper for verify.
     subtle.set(
         "timingSafeEqualBytes",
@@ -794,6 +811,20 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         _algName: "PBKDF2",
                     };
                 }
+                if (alg.name === "AESGCM") {
+                    const bytes = toBytes(keyData);
+                    if (bytes.length !== 16 && bytes.length !== 24 && bytes.length !== 32) {
+                        throw new Error("AES-GCM key must be 128/192/256 bits");
+                    }
+                    return {
+                        type: "secret",
+                        extractable: !!extractable,
+                        algorithm: { name: "AES-GCM", length: bytes.length * 8 },
+                        usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                        _bytes: bytes,
+                        _algName: "AES-GCM",
+                    };
+                }
                 if (alg.name !== "HMAC") {
                     throw new Error("Unsupported key algorithm: " + alg.name);
                 }
@@ -835,6 +866,53 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 }
                 const salt = toBytes(algorithm.salt);
                 const out = h.pbkdf2(baseKey._bytes, salt, iterations, length / 8);
+                return toArrayBuffer(out);
+            };
+
+            // encrypt(algorithm, key, data) → Promise<ArrayBuffer>
+            // Pilot scope: algorithm = {name:"AES-GCM", iv, additionalData?, tagLength?}.
+            subtle.encrypt = async function encrypt(algorithm, key, data) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "AESGCM") {
+                    throw new Error("Unsupported encrypt algorithm: " + alg.name);
+                }
+                if (!key || key._algName !== "AES-GCM") {
+                    throw new TypeError("encrypt: key is not an AES-GCM key");
+                }
+                if (!key.usages.includes("encrypt")) {
+                    throw new Error("Key not usable for encrypt");
+                }
+                if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
+                const iv = toBytes(algorithm.iv);
+                const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
+                const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
+                if (tagLength !== 128) {
+                    throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                }
+                const out = subtle.aesGcmEncryptBytes(key._bytes, iv, aad, toBytes(data));
+                return toArrayBuffer(out);
+            };
+
+            // decrypt(algorithm, key, data) → Promise<ArrayBuffer>
+            subtle.decrypt = async function decrypt(algorithm, key, data) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "AESGCM") {
+                    throw new Error("Unsupported decrypt algorithm: " + alg.name);
+                }
+                if (!key || key._algName !== "AES-GCM") {
+                    throw new TypeError("decrypt: key is not an AES-GCM key");
+                }
+                if (!key.usages.includes("decrypt")) {
+                    throw new Error("Key not usable for decrypt");
+                }
+                if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
+                const iv = toBytes(algorithm.iv);
+                const aad = algorithm.additionalData ? toBytes(algorithm.additionalData) : [];
+                const tagLength = algorithm.tagLength == null ? 128 : (algorithm.tagLength | 0);
+                if (tagLength !== 128) {
+                    throw new Error("AES-GCM pilot scope: tagLength must be 128");
+                }
+                const out = subtle.aesGcmDecryptBytes(key._bytes, iv, aad, toBytes(data));
                 return toArrayBuffer(out);
             };
 
@@ -929,10 +1007,13 @@ fn wire_text_encoding<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> Js
             constructor(label) { this._label = label; }
             get encoding() { return "utf-8"; }
             decode(bytes) {
-                // Normalize Uint8Array / Buffer / typed-array views → plain
-                // JS array (rquickjs Vec<u8> binding doesn't accept typed
-                // arrays directly).
-                if (bytes && typeof bytes === "object" && !Array.isArray(bytes)) {
+                // Normalize Uint8Array / Buffer / typed-array views / ArrayBuffer
+                // → plain JS array (rquickjs Vec<u8> binding doesn't accept typed
+                // arrays directly). ArrayBuffer is non-iterable so Array.from
+                // returns empty; wrap in Uint8Array first.
+                if (bytes instanceof ArrayBuffer) {
+                    bytes = Array.from(new Uint8Array(bytes));
+                } else if (bytes && typeof bytes === "object" && !Array.isArray(bytes)) {
                     bytes = Array.from(bytes);
                 }
                 if (this._label === undefined || this._label === null) {

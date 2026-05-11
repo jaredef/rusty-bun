@@ -1,0 +1,8 @@
+{
+  "name": "consumer-aes-gcm-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #29: AES-GCM authenticated encryption via crypto.subtle.encrypt/decrypt.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "consumer-mustache-mini-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #39: vendored mustache-shape template engine exercising RegExp + recursion + HTML escape + Map lookup.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "mustache-mini": "^0.1.0" }
+}

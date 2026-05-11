@@ -2849,6 +2849,30 @@ fn js_differential_consumer_sha512_suite_matches_bun() {
 }
 
 #[test]
+fn js_consumer_mustache_mini_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-mustache-mini-suite/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    assert!(r.starts_with("15/15"), "mustache-mini-suite failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_mustache_mini_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-mustache-mini-suite/src/main.js");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun").arg(fixture.to_str().unwrap()).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "mustache-mini-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
+#[test]
 fn js_consumer_jwks_verifier_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/consumer-jwks-verifier-suite/src/main.js");

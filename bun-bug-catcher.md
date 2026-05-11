@@ -325,6 +325,12 @@ Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixtu
 - **What it attests.** Both Bun and rusty-bun-host execute clsx identically to its documented semantics. The failure was the fixture author's expectation, not either runtime.
 - **Author rule.** When vendoring third-party code, write expected values by *running the library and copying the actual output*, not by inferring semantics from the function name. The library's source is authoritative; one's intuition about what `clsx` "should do" is not.
 
+### F7. JS regex alternation ordering for nested-prefix patterns
+- **Source.** consumer-mustache-mini fixture initial Bun run, 2026-05-11. Author wrote `\{\{(...)\s*([\s\S]*?)\s*\}\}|(\{\{\{\s*[\s\S]*?\s*\}\}\})` to tokenize Mustache tags. Triple-stache `{{{name}}}` consistently mis-parsed as a double-stache with a `{name` capture.
+- **Spec.** ECMAScript regex alternation tries alternatives left-to-right at each position. Both alternatives can match starting at `{{{`, and the leftmost alternative (`\{\{...\}\}`) wins.
+- **Author rule.** When two alternatives share a prefix (one nested inside the other — `{{{` vs `{{`, `***` vs `**`, etc.), the **longer/more-specific alternative MUST come first**. Visual inspection reads the regex as "or" but the engine reads it as "try left first."
+- **F7 vs F4/F5/F6.** Those are *constant typos*; F7 is *regex-semantic ordering*. Both are silent: the regex doesn't error, the wrong-but-plausible result propagates. The catching mechanism is the same — run a small fixture under the comparator before relying on the parser.
+
 ### F1. BigInt-arithmetic operand-type strictness
 - **Source.** consumer-batch-loader fixture initial Bun run, 2026-05-10. Author wrote `id % 2 === 0n` (mixing Number `2` with BigInt `id`). Bun threw `TypeError: Invalid mix of BigInt and other type in remainder.`
 - **Spec.** ECMAScript spec: BigInt operators require both operands BigInt; no implicit coercion.

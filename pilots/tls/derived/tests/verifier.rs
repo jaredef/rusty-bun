@@ -304,6 +304,95 @@ fn finished_mac_deterministic() {
     assert_eq!(m1.len(), 32);
 }
 
+// ─── ClientHello / ServerHello encoding ─────────────────────────────
+
+#[test]
+fn client_hello_encodes_with_correct_shape() {
+    let random = [0xAA; 32];
+    let key_share_bytes = vec![0x04; 65];  // dummy uncompressed P-256 point
+    let params = ClientHelloParams {
+        random: &random,
+        legacy_session_id: &[],
+        cipher_suites: &[CIPHER_AES_128_GCM_SHA256],
+        server_name: Some("example.com"),
+        supported_groups: &[GROUP_SECP256R1],
+        signature_algorithms: &[SIG_ECDSA_SECP256R1_SHA256, SIG_RSA_PSS_RSAE_SHA256],
+        key_shares: &[(GROUP_SECP256R1, key_share_bytes.clone())],
+        alpn: Some(&[b"http/1.1" as &[u8]]),
+    };
+    let bytes = encode_client_hello(&params).unwrap();
+    // Outer handshake-message wrapper: type=ClientHello (1), 3-byte length.
+    assert_eq!(bytes[0], 1);
+    // Body length = total - 4.
+    let body_len = ((bytes[1] as usize) << 16) | ((bytes[2] as usize) << 8) | (bytes[3] as usize);
+    assert_eq!(body_len, bytes.len() - 4);
+    // Body starts with 0x0303 (legacy_version).
+    assert_eq!(&bytes[4..6], &[0x03, 0x03]);
+    // Then the random.
+    assert_eq!(&bytes[6..38], &random);
+    // legacy_session_id length = 0.
+    assert_eq!(bytes[38], 0x00);
+    // cipher_suites: u16 length = 2, then one suite 0x1301.
+    assert_eq!(&bytes[39..41], &[0x00, 0x02]);
+    assert_eq!(&bytes[41..43], &[0x13, 0x01]);
+    // legacy_compression_methods: [0x00] preceded by length 1.
+    assert_eq!(bytes[43], 0x01);
+    assert_eq!(bytes[44], 0x00);
+}
+
+#[test]
+fn server_hello_decode_roundtrip() {
+    // Synthesize a valid ServerHello body and decode it.
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0x03, 0x03]);   // legacy_version
+    body.extend_from_slice(&[0xBB; 32]);     // random
+    body.push(0x00);                         // legacy_session_id_echo length
+    body.extend_from_slice(&[0x13, 0x01]);   // cipher_suite = TLS_AES_128_GCM_SHA256
+    body.push(0x00);                         // legacy_compression_method
+    // extensions: supported_versions (selected = 0x0304)
+    let sv_ext = vec![0x00, 0x2B, 0x00, 0x02, 0x03, 0x04];
+    body.extend_from_slice(&[0x00, sv_ext.len() as u8]);
+    body.extend_from_slice(&sv_ext);
+    let sh = decode_server_hello(&body).unwrap();
+    assert_eq!(sh.random, [0xBB; 32]);
+    assert!(sh.legacy_session_id_echo.is_empty());
+    assert_eq!(sh.cipher_suite, CIPHER_AES_128_GCM_SHA256);
+    assert_eq!(sh.legacy_compression_method, 0);
+    assert_eq!(sh.selected_version(), Some(0x0304));
+}
+
+#[test]
+fn server_hello_key_share_extracted() {
+    // Synthesize a ServerHello with a key_share extension.
+    let group_secp256r1 = 0x0017u16;
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0x03, 0x03]);
+    body.extend_from_slice(&[0xCC; 32]);
+    body.push(0x00);
+    body.extend_from_slice(&[0x13, 0x01]);
+    body.push(0x00);
+    // key_share extension body: group(2) + key_exchange_len(2) + key_exchange
+    let key_bytes = vec![0x04u8; 65];
+    let mut ks_ext = Vec::new();
+    ks_ext.push((group_secp256r1 >> 8) as u8);
+    ks_ext.push((group_secp256r1 & 0xFF) as u8);
+    ks_ext.push((key_bytes.len() >> 8) as u8);
+    ks_ext.push((key_bytes.len() & 0xFF) as u8);
+    ks_ext.extend_from_slice(&key_bytes);
+    let mut ext_block = Vec::new();
+    ext_block.push(0x00); ext_block.push(0x33); // EXT_KEY_SHARE
+    ext_block.push((ks_ext.len() >> 8) as u8);
+    ext_block.push((ks_ext.len() & 0xFF) as u8);
+    ext_block.extend_from_slice(&ks_ext);
+    body.push((ext_block.len() >> 8) as u8);
+    body.push((ext_block.len() & 0xFF) as u8);
+    body.extend_from_slice(&ext_block);
+    let sh = decode_server_hello(&body).unwrap();
+    let (g, k) = sh.server_key_share().unwrap();
+    assert_eq!(g, group_secp256r1);
+    assert_eq!(k, &key_bytes[..]);
+}
+
 // ─── Hex helper module ──────────────────────────────────────────────
 
 mod hex {

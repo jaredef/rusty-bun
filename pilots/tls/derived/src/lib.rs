@@ -26,7 +26,9 @@ use rusty_x509::*;
 pub mod record;
 pub mod store;
 pub mod handshake;
+pub mod client;
 
 pub use record::*;
 pub use store::*;
 pub use handshake::*;
+pub use client::*;

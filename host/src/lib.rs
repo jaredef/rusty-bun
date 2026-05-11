@@ -462,6 +462,29 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
     out
 }
 
+/// Detect CJS-only source. CJS markers: `module.exports`, `exports.X =`,
+/// `require(`. ESM markers (mutually exclusive): top-of-line `export `,
+/// `export {`, `export *`, `export default`, `import `, `import {`.
+/// The detection is conservative — a file with any ESM marker is treated
+/// as ESM. Comment-only matches survive but are rare.
+fn looks_like_cjs(source: &str) -> bool {
+    // Quick reject: any line starting with `import ` or `export `
+    // (after trimming) implies ESM, even if the file also has stray
+    // module.exports references.
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.starts_with("export ") || t.starts_with("export{")
+            || t.starts_with("export *") || t.starts_with("export default")
+            || t.starts_with("import ") || t.starts_with("import{")
+            || t.starts_with("import \"") || t.starts_with("import '") {
+            return false;
+        }
+    }
+    // Positive CJS signal.
+    source.contains("module.exports") || source.contains("exports.")
+        || source.contains("require(")
+}
+
 #[derive(Default, Clone, Copy)]
 struct FsLoader;
 
@@ -472,6 +495,57 @@ impl Loader for FsLoader {
         }
         let source = std::fs::read_to_string(name)
             .map_err(|_| JsErr::new_loading(name))?;
+
+        // E.13 closure: when an ESM `import` resolves to a CJS-shaped file
+        // (no ESM markers, has module.exports/require), evaluate it via
+        // bootRequire and synthesize a re-export ESM shim. Mirrors Bun's
+        // automatic CJS↔ESM interop for the `import pkg from "cjs-lib"`
+        // case. Named exports populated from Object.keys(module.exports).
+        if looks_like_cjs(&source) {
+            // Eagerly evaluate the CJS module and stash module.exports on
+            // a globalThis bridge map keyed by absolute path.
+            let bridge_init = format!(
+                "(function() {{\n\
+                   if (!globalThis.__cjsBridge) globalThis.__cjsBridge = {{}};\n\
+                   if (!Object.prototype.hasOwnProperty.call(globalThis.__cjsBridge, {0})) {{\n\
+                     globalThis.__cjsBridge[{0}] = globalThis.bootRequire({0});\n\
+                   }}\n\
+                 }})();",
+                json_str(name)
+            );
+            ctx.eval::<(), _>(bridge_init.as_bytes())?;
+
+            // Read the keys for named export generation.
+            let keys_code = format!(
+                "(function() {{\n\
+                   const m = globalThis.__cjsBridge[{}];\n\
+                   if (m == null || typeof m !== 'object' && typeof m !== 'function') return [];\n\
+                   return Object.keys(m);\n\
+                 }})()",
+                json_str(name)
+            );
+            let keys: Vec<String> = ctx.eval::<Vec<String>, _>(keys_code.as_bytes())
+                .unwrap_or_default();
+
+            let mut esm_src = format!(
+                "const __m = globalThis.__cjsBridge[{}];\nexport default __m;\n",
+                json_str(name)
+            );
+            for k in keys {
+                // Skip keys that aren't valid JS identifiers OR collide
+                // with reserved-in-export position (`default`).
+                if k == "default" { continue; }
+                let valid = !k.is_empty()
+                    && k.chars().enumerate().all(|(i, c)| {
+                        if i == 0 { c.is_alphabetic() || c == '_' || c == '$' }
+                        else { c.is_alphanumeric() || c == '_' || c == '$' }
+                    });
+                if !valid { continue; }
+                esm_src.push_str(&format!("export const {0} = __m.{0};\n", k));
+            }
+            return Module::declare(ctx.clone(), name, esm_src);
+        }
+
         let source = strip_reserved_class_field_decls(&source);
         Module::declare(ctx.clone(), name, source)
     }

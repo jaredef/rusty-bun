@@ -1,0 +1,8 @@
+{
+  "name": "consumer-websocket-class-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #66: WHATWG WebSocket class API-shape. Tier-Π1.5.c structural test (live connection deferred to Π1.5.d).",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

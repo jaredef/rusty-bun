@@ -374,6 +374,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_streams_js(&ctx)?;
     install_node_http_js(&ctx)?;
     install_node_events_js(&ctx)?;
+    install_websocket_class_js(&ctx)?;
     install_node_util_js(&ctx)?;
     install_node_stream_js(&ctx)?;
     install_node_querystring_and_url_full_js(&ctx)?;
@@ -5184,6 +5185,343 @@ const COMMONJS_LOADER_JS: &str = r#"
     globalThis.__cjs = { resolvePath, moduleCache, loadModule };
 })();
 "#;
+
+fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    // Π1.5.c: JS-side WebSocket class.
+    //
+    // WHATWG WebSocket interface
+    // (https://html.spec.whatwg.org/multipage/web-sockets.html) shape:
+    //   new WebSocket(url, protocols?) -> ws
+    //   ws.readyState ∈ {CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3}
+    //   ws.send(data); ws.close(code?, reason?)
+    //   ws.onopen / onmessage / onclose / onerror; addEventListener
+    //   ws.url, ws.protocol, ws.extensions, ws.binaryType, ws.bufferedAmount
+    //
+    // Tier-3 implementation-contingent divergence from real Bun per
+    // seed C1: the connection driver runs synchronously during
+    // construction (open TCP + Upgrade handshake + verify Accept),
+    // since rusty-bun-host has no real event loop. The result is that
+    // by the time `new WebSocket(url)` returns, readyState is either
+    // OPEN (success) or CLOSED (failure). onopen fires via microtask
+    // after construction returns. Real Bun async-emits 'open' from
+    // its event loop; consumer code awaiting `await new Promise(r =>
+    // ws.onopen = r)` works under both implementations.
+    //
+    // Per seed §A8.16: WebSocket reuses globalThis.TCP / __tls — the
+    // process-global state is already guarded by those layers.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const ws_ns = globalThis.__ws;
+            if (!ws_ns) return;  // Π1.5.b not yet wired; class unavailable.
+
+            class WebSocket {
+                static get CONNECTING() { return 0; }
+                static get OPEN() { return 1; }
+                static get CLOSING() { return 2; }
+                static get CLOSED() { return 3; }
+
+                constructor(url, protocols) {
+                    const u = new URL(url);
+                    // Per Bun-shape (lax): http:// and https:// are silently
+                    // mapped to ws:// and wss:// respectively. Real WHATWG
+                    // says SyntaxError but Bun is permissive.
+                    let isSecure;
+                    if (u.protocol === "ws:") isSecure = false;
+                    else if (u.protocol === "wss:") isSecure = true;
+                    else if (u.protocol === "http:") isSecure = false;
+                    else if (u.protocol === "https:") isSecure = true;
+                    else {
+                        throw new SyntaxError("WebSocket: unsupported scheme " + u.protocol);
+                    }
+                    this._url = u.href;
+                    this._isSecure = isSecure;
+                    this._readyState = 0;  // CONNECTING
+                    this._protocol = "";
+                    this._extensions = "";
+                    this._binaryType = "blob";
+                    this._bufferedAmount = 0;
+                    this._listeners = Object.create(null);
+                    this._sid = null;
+                    this._readBuf = [];   // accumulator of bytes from the transport
+                    this._isTls = this._isSecure;
+
+                    // Synchronous connect + handshake (Tier-3 divergence
+                    // documented above).
+                    try {
+                        this._open(u, protocols);
+                        this._readyState = 1;  // OPEN
+                        queueMicrotask(() => this._dispatch("open", { type: "open" }));
+                    } catch (e) {
+                        this._readyState = 3;  // CLOSED
+                        const err = e instanceof Error ? e : new Error(String(e));
+                        queueMicrotask(() => {
+                            this._dispatch("error", { type: "error", message: err.message });
+                            this._dispatch("close", { type: "close", code: 1006, reason: err.message, wasClean: false });
+                        });
+                    }
+                }
+
+                _open(u, protocols) {
+                    let host = u.hostname;
+                    if (host === "localhost") host = "127.0.0.1";
+                    const port = u.port ? parseInt(u.port, 10) : (this._isSecure ? 443 : 80);
+                    const path = u.pathname + (u.search || "");
+
+                    // Generate Sec-WebSocket-Key + expected Accept.
+                    const key = ws_ns.generate_key();
+                    const expectedAccept = ws_ns.derive_accept(key);
+
+                    // Build the Upgrade request.
+                    const headers = [
+                        ["Host", host + ":" + port],
+                        ["Upgrade", "websocket"],
+                        ["Connection", "Upgrade"],
+                        ["Sec-WebSocket-Key", key],
+                        ["Sec-WebSocket-Version", "13"],
+                    ];
+                    if (protocols) {
+                        const pList = Array.isArray(protocols) ? protocols.join(", ") : String(protocols);
+                        headers.push(["Sec-WebSocket-Protocol", pList]);
+                    }
+                    const reqBytes = globalThis.HTTP.serializeRequest("GET", path, headers, []);
+
+                    // Open the transport.
+                    if (this._isTls) {
+                        // Read CA bundle the same way fetch() does.
+                        const env = (globalThis.process && globalThis.process.env) || {};
+                        const caCandidates = [];
+                        if (env.RUSTY_BUN_CA) caCandidates.push(env.RUSTY_BUN_CA);
+                        if (env.NODE_EXTRA_CA_CERTS) caCandidates.push(env.NODE_EXTRA_CA_CERTS);
+                        caCandidates.push("/etc/ssl/certs/ca-certificates.crt",
+                                          "/etc/pki/tls/certs/ca-bundle.crt",
+                                          "/etc/ssl/cert.pem",
+                                          "/etc/ssl/ca-bundle.pem");
+                        let caPem = "";
+                        for (const p of caCandidates) {
+                            try {
+                                caPem = globalThis.fs.readFileSyncUtf8(p);
+                                if (caPem.length > 0) break;
+                            } catch (_) {}
+                        }
+                        if (!caPem) {
+                            throw new TypeError("WebSocket: no CA bundle found for wss://");
+                        }
+                        this._sid = globalThis.__tls.connect(host, port, caPem);
+                        const toFfiBytes = (b) => {
+                            const arr = new Array(b.length);
+                            for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                            return arr;
+                        };
+                        globalThis.__tls.write(this._sid, toFfiBytes(reqBytes));
+                    } else {
+                        this._sid = globalThis.TCP.connect(host + ":" + port);
+                        globalThis.TCP.writeAll(this._sid, reqBytes);
+                    }
+
+                    // Read the upgrade response. Server sends a single HTTP/1.1
+                    // 101 Switching Protocols followed by the empty body. The
+                    // body may contain post-handshake frame bytes; we accumulate
+                    // everything past the header into _readBuf for the frame
+                    // pump.
+                    const acc = [];
+                    let bodyStart = -1;
+                    while (bodyStart < 0) {
+                        let chunk;
+                        if (this._isTls) {
+                            try { chunk = globalThis.__tls.read(this._sid); } catch (_) { chunk = new Uint8Array(0); }
+                        } else {
+                            chunk = globalThis.TCP.read(this._sid, 65536);
+                        }
+                        if (chunk.length === 0) {
+                            throw new Error("WebSocket: connection closed during handshake");
+                        }
+                        for (let i = 0; i < chunk.length; i++) acc.push(chunk[i]);
+                        // Look for \r\n\r\n which terminates HTTP headers.
+                        for (let i = 3; i < acc.length; i++) {
+                            if (acc[i - 3] === 13 && acc[i - 2] === 10 &&
+                                acc[i - 1] === 13 && acc[i] === 10) {
+                                bodyStart = i + 1;
+                                break;
+                            }
+                        }
+                    }
+                    const headerBytes = new Uint8Array(acc.slice(0, bodyStart));
+                    const parsed = globalThis.HTTP.parseResponse(headerBytes);
+                    if (parsed.status !== 101) {
+                        throw new Error("WebSocket: expected 101 Switching Protocols, got " + parsed.status);
+                    }
+                    const accept = parsed.headers.find(h => h[0].toLowerCase() === "sec-websocket-accept");
+                    if (!accept || !ws_ns.verify_accept(key, accept[1])) {
+                        throw new Error("WebSocket: Sec-WebSocket-Accept mismatch");
+                    }
+                    const proto = parsed.headers.find(h => h[0].toLowerCase() === "sec-websocket-protocol");
+                    if (proto) this._protocol = proto[1];
+
+                    // Any bytes past the headers belong to subsequent frames.
+                    for (let i = bodyStart; i < acc.length; i++) this._readBuf.push(acc[i]);
+                }
+
+                get url() { return this._url; }
+                get readyState() { return this._readyState; }
+                get protocol() { return this._protocol; }
+                get extensions() { return this._extensions; }
+                get bufferedAmount() { return this._bufferedAmount; }
+                get binaryType() { return this._binaryType; }
+                set binaryType(v) {
+                    if (v !== "blob" && v !== "arraybuffer") {
+                        throw new SyntaxError("WebSocket.binaryType must be 'blob' or 'arraybuffer'");
+                    }
+                    this._binaryType = v;
+                }
+
+                addEventListener(event, listener) {
+                    if (!this._listeners[event]) this._listeners[event] = [];
+                    this._listeners[event].push(listener);
+                }
+                removeEventListener(event, listener) {
+                    if (!this._listeners[event]) return;
+                    const i = this._listeners[event].indexOf(listener);
+                    if (i >= 0) this._listeners[event].splice(i, 1);
+                }
+                _dispatch(event, ev) {
+                    const arr = this._listeners[event] || [];
+                    for (const l of arr) { try { l(ev); } catch (_) {} }
+                    const propName = "on" + event;
+                    if (typeof this[propName] === "function") {
+                        try { this[propName](ev); } catch (_) {}
+                    }
+                }
+
+                send(data) {
+                    if (this._readyState !== 1) {
+                        throw new Error("WebSocket: not OPEN (readyState=" + this._readyState + ")");
+                    }
+                    let payload;
+                    let opcode;
+                    if (typeof data === "string") {
+                        payload = new TextEncoder().encode(data);
+                        opcode = 0x1;
+                    } else if (data instanceof Uint8Array) {
+                        payload = data;
+                        opcode = 0x2;
+                    } else if (data instanceof ArrayBuffer) {
+                        payload = new Uint8Array(data);
+                        opcode = 0x2;
+                    } else {
+                        throw new TypeError("WebSocket.send: unsupported data type");
+                    }
+                    // Client → server: must mask. Generate a fresh mask per frame.
+                    const maskBytes = new Uint8Array(4);
+                    crypto.getRandomValues(maskBytes);
+                    const payloadArr = new Array(payload.length);
+                    for (let i = 0; i < payload.length; i++) payloadArr[i] = payload[i];
+                    const maskArr = [maskBytes[0], maskBytes[1], maskBytes[2], maskBytes[3]];
+                    const frameBytes = ws_ns.encode_frame(true, opcode, maskArr, payloadArr);
+                    this._writeBytes(frameBytes);
+                }
+
+                close(code, reason) {
+                    if (this._readyState === 2 || this._readyState === 3) return;
+                    this._readyState = 2;  // CLOSING
+                    try {
+                        const closePayload = ws_ns.encode_close(code || 1000, reason || "");
+                        const payloadArr = [];
+                        for (let i = 0; i < closePayload.length; i++) payloadArr.push(closePayload[i]);
+                        const maskBytes = new Uint8Array(4);
+                        crypto.getRandomValues(maskBytes);
+                        const maskArr = [maskBytes[0], maskBytes[1], maskBytes[2], maskBytes[3]];
+                        const frameBytes = ws_ns.encode_frame(true, 0x8 /* Close */, maskArr, payloadArr);
+                        this._writeBytes(frameBytes);
+                    } catch (_) {}
+                    this._teardownTransport();
+                    this._readyState = 3;  // CLOSED
+                    queueMicrotask(() => {
+                        this._dispatch("close", {
+                            type: "close", code: code || 1000, reason: reason || "", wasClean: true,
+                        });
+                    });
+                }
+
+                _writeBytes(bytes) {
+                    const toFfiBytes = (b) => {
+                        const arr = new Array(b.length);
+                        for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                        return arr;
+                    };
+                    if (this._isTls) {
+                        globalThis.__tls.write(this._sid, toFfiBytes(bytes));
+                    } else {
+                        globalThis.TCP.writeAll(this._sid, bytes);
+                    }
+                }
+
+                _teardownTransport() {
+                    try {
+                        if (this._isTls) globalThis.__tls.close(this._sid);
+                        else globalThis.TCP.close(this._sid);
+                    } catch (_) {}
+                    this._sid = null;
+                }
+
+                // pump(): synchronous frame pump. Reads available bytes from
+                // the transport (one chunk), accumulates, decodes complete
+                // frames, and dispatches events. Returns the number of frames
+                // dispatched. Real Bun runs this loop in the background; the
+                // host's single-threaded model has the consumer call this
+                // explicitly (or the eval loop's keep-alive registry can pump
+                // it; future Π1.5.d wires that).
+                pump() {
+                    if (this._readyState !== 1 && this._readyState !== 2) return 0;
+                    let dispatched = 0;
+                    // Read one chunk if available.
+                    let chunk = null;
+                    try {
+                        if (this._isTls) chunk = globalThis.__tls.read(this._sid);
+                        else chunk = globalThis.TCP.read(this._sid, 65536);
+                    } catch (_) { chunk = new Uint8Array(0); }
+                    if (chunk && chunk.length > 0) {
+                        for (let i = 0; i < chunk.length; i++) this._readBuf.push(chunk[i]);
+                    }
+                    // Drain complete frames.
+                    while (this._readBuf.length >= 2) {
+                        const view = this._readBuf.slice(0, Math.min(this._readBuf.length, 65536));
+                        let frameJson;
+                        try { frameJson = ws_ns.decode_frame_json(view); }
+                        catch (_) { break; }  // need more bytes
+                        const f = JSON.parse(frameJson);
+                        this._readBuf.splice(0, f.consumed);
+                        if (f.opcode === 0x1 /* Text */) {
+                            const text = new TextDecoder().decode(new Uint8Array(f.payload));
+                            this._dispatch("message", { type: "message", data: text });
+                        } else if (f.opcode === 0x2 /* Binary */) {
+                            const data = this._binaryType === "arraybuffer"
+                                ? new Uint8Array(f.payload).buffer
+                                : new Blob([new Uint8Array(f.payload)]);
+                            this._dispatch("message", { type: "message", data });
+                        } else if (f.opcode === 0x8 /* Close */) {
+                            this._teardownTransport();
+                            this._readyState = 3;
+                            this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean: true });
+                            break;
+                        } else if (f.opcode === 0x9 /* Ping */) {
+                            // Respond with Pong of same payload (RFC §5.5.3).
+                            const maskBytes = new Uint8Array(4);
+                            crypto.getRandomValues(maskBytes);
+                            const pongBytes = ws_ns.encode_frame(true, 0xA, [maskBytes[0], maskBytes[1], maskBytes[2], maskBytes[3]], f.payload);
+                            this._writeBytes(pongBytes);
+                        }
+                        // Pong ignored.
+                        dispatched += 1;
+                    }
+                    return dispatched;
+                }
+            }
+
+            globalThis.WebSocket = WebSocket;
+        })();
+    "#)?;
+    Ok(())
+}
 
 fn install_node_events_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     // Π3.8: node:events. EventEmitter class is the canonical

@@ -1113,6 +1113,234 @@ pub fn ecdsa_p256_sha256_verify(
     else { Err("ECDSA: signature mismatch".into()) }
 }
 
+// ─────────────────────── Curve-parameterized EC primitives ─────────
+//
+// Generalization of the P-256-specific code above. All NIST P-curves
+// have a = -3, so we hardcode that and parameterize over (p, n, b, G,
+// coord_bytes). P-384 + P-521 reuse this scaffold.
+
+#[derive(Clone)]
+pub struct Curve {
+    pub p: BigUInt,
+    pub n: BigUInt,
+    pub b: BigUInt,
+    pub g: P256Point,           // reuse the affine Point type — same shape
+    pub coord_bytes: usize,     // 32 (P-256), 48 (P-384), 66 (P-521)
+}
+
+pub fn curve_p256() -> Curve {
+    Curve {
+        p: p256_p(),
+        n: p256_n(),
+        b: p256_b(),
+        g: p256_g(),
+        coord_bytes: 32,
+    }
+}
+
+pub fn curve_p384() -> Curve {
+    // SEC 2 §2.5.1 / FIPS 186-4 §D.1.2.4.
+    let p = BigUInt::from_be_bytes(&hex_to_bytes(
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff"));
+    let n = BigUInt::from_be_bytes(&hex_to_bytes(
+        "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973"));
+    let b = BigUInt::from_be_bytes(&hex_to_bytes(
+        "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef"));
+    let gx = BigUInt::from_be_bytes(&hex_to_bytes(
+        "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7"));
+    let gy = BigUInt::from_be_bytes(&hex_to_bytes(
+        "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f"));
+    Curve { p, n, b, g: P256Point::Affine { x: gx, y: gy }, coord_bytes: 48 }
+}
+
+pub fn curve_p521() -> Curve {
+    // SEC 2 §2.6.1 / FIPS 186-4 §D.1.2.5. Coordinates are 66 bytes
+    // (521 bits, leading 7 bits are zero in the byte representation).
+    let p = BigUInt::from_be_bytes(&hex_to_bytes(
+        "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+    let n = BigUInt::from_be_bytes(&hex_to_bytes(
+        "01fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409"));
+    let b = BigUInt::from_be_bytes(&hex_to_bytes(
+        "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00"));
+    let gx = BigUInt::from_be_bytes(&hex_to_bytes(
+        "00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66"));
+    let gy = BigUInt::from_be_bytes(&hex_to_bytes(
+        "011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650"));
+    Curve { p, n, b, g: P256Point::Affine { x: gx, y: gy }, coord_bytes: 66 }
+}
+
+fn hex_to_bytes(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i+2], 16).unwrap())
+        .collect()
+}
+
+fn ec_double(c: &Curve, pt: &P256Point) -> P256Point {
+    let p = &c.p;
+    let three = BigUInt::from_be_bytes(&[3]);
+    let two = BigUInt::from_be_bytes(&[2]);
+    match pt {
+        P256Point::Identity => P256Point::Identity,
+        P256Point::Affine { x, y } => {
+            if y.is_zero() { return P256Point::Identity; }
+            let x2 = mod_mul(x, x, p);
+            let three_x2 = mod_mul(&three, &x2, p);
+            let three_x2_plus_a = mod_sub(&three_x2, &three, p);  // a = -3
+            let two_y = mod_mul(&two, y, p);
+            let inv = mod_inv_fermat(&two_y, p);
+            let lambda = mod_mul(&three_x2_plus_a, &inv, p);
+            let lambda2 = mod_mul(&lambda, &lambda, p);
+            let two_x = mod_mul(&two, x, p);
+            let x3 = mod_sub(&lambda2, &two_x, p);
+            let x_minus_x3 = mod_sub(x, &x3, p);
+            let lambda_diff = mod_mul(&lambda, &x_minus_x3, p);
+            let y3 = mod_sub(&lambda_diff, y, p);
+            P256Point::Affine { x: x3, y: y3 }
+        }
+    }
+}
+
+fn ec_add(c: &Curve, p1: &P256Point, p2: &P256Point) -> P256Point {
+    use std::cmp::Ordering;
+    let p = &c.p;
+    match (p1, p2) {
+        (P256Point::Identity, q) | (q, P256Point::Identity) => q.clone(),
+        (P256Point::Affine { x: x1, y: y1 }, P256Point::Affine { x: x2, y: y2 }) => {
+            if x1.cmp(x2) == Ordering::Equal {
+                if y1.cmp(y2) == Ordering::Equal { return ec_double(c, p1); }
+                return P256Point::Identity;
+            }
+            let dy = mod_sub(y2, y1, p);
+            let dx = mod_sub(x2, x1, p);
+            let inv = mod_inv_fermat(&dx, p);
+            let lambda = mod_mul(&dy, &inv, p);
+            let lambda2 = mod_mul(&lambda, &lambda, p);
+            let x3 = mod_sub(&mod_sub(&lambda2, x1, p), x2, p);
+            let x1_minus_x3 = mod_sub(x1, &x3, p);
+            let lambda_diff = mod_mul(&lambda, &x1_minus_x3, p);
+            let y3 = mod_sub(&lambda_diff, y1, p);
+            P256Point::Affine { x: x3, y: y3 }
+        }
+    }
+}
+
+pub fn ec_scalar_mul(c: &Curve, k: &BigUInt, pt: &P256Point) -> P256Point {
+    let mut result = P256Point::Identity;
+    let mut addend = pt.clone();
+    let bits = k.bit_len();
+    for i in 0..bits {
+        if k.bit(i) {
+            result = ec_add(c, &result, &addend);
+        }
+        addend = ec_double(c, &addend);
+    }
+    result
+}
+
+fn on_curve(c: &Curve, x: &BigUInt, y: &BigUInt) -> bool {
+    use std::cmp::Ordering;
+    let three = BigUInt::from_be_bytes(&[3]);
+    let p = &c.p;
+    let lhs = mod_mul(y, y, p);
+    let x3 = mod_mul(&mod_mul(x, x, p), x, p);
+    let neg3x = mod_mul(&three, x, p);
+    let rhs = mod_sub(&mod_add(&x3, &c.b, p), &neg3x, p);
+    lhs.cmp(&rhs) == Ordering::Equal
+}
+
+/// ECDSA over arbitrary NIST curve. `hash` is the message hash already
+/// computed; caller selects the hash to match the curve. `nonce_k` is
+/// the per-signature random k (caller-supplied).
+pub fn ecdsa_sign(
+    c: &Curve, d_bytes: &[u8], hash: &[u8], nonce_k: &[u8],
+) -> Result<Vec<u8>, String> {
+    use std::cmp::Ordering;
+    let d = BigUInt::from_be_bytes(d_bytes);
+    let k = BigUInt::from_be_bytes(nonce_k);
+    if k.is_zero() || k.cmp(&c.n) != Ordering::Less {
+        return Err("ECDSA: nonce k out of range".into());
+    }
+    if d.is_zero() || d.cmp(&c.n) != Ordering::Less {
+        return Err("ECDSA: private key out of range".into());
+    }
+    // e = leftmost N_bits of hash, then mod n. For P-curves where the
+    // hash length matches the field size, this is just OS2IP(hash) mod n.
+    // For mismatched sizes WebCrypto still uses OS2IP(hash) mod n.
+    let e = BigUInt::from_be_bytes(hash).modulo(&c.n);
+    let r_pt = ec_scalar_mul(c, &k, &c.g);
+    let x1 = match &r_pt {
+        P256Point::Affine { x, .. } => x.clone(),
+        P256Point::Identity => return Err("ECDSA: k*G is identity".into()),
+    };
+    let r = x1.modulo(&c.n);
+    if r.is_zero() { return Err("ECDSA: r=0".into()); }
+    let k_inv = mod_inv_fermat(&k, &c.n);
+    let rd = mod_mul(&r, &d, &c.n);
+    let e_plus_rd = mod_add(&e, &rd, &c.n);
+    let s = mod_mul(&k_inv, &e_plus_rd, &c.n);
+    if s.is_zero() { return Err("ECDSA: s=0".into()); }
+    let mut out = Vec::with_capacity(2 * c.coord_bytes);
+    out.extend_from_slice(&r.to_be_bytes(c.coord_bytes));
+    out.extend_from_slice(&s.to_be_bytes(c.coord_bytes));
+    Ok(out)
+}
+
+pub fn ecdsa_verify(
+    c: &Curve, qx_bytes: &[u8], qy_bytes: &[u8], hash: &[u8], signature: &[u8],
+) -> Result<(), String> {
+    use std::cmp::Ordering;
+    if signature.len() != 2 * c.coord_bytes {
+        return Err("ECDSA: signature length mismatch".into());
+    }
+    let one = BigUInt::one();
+    let r = BigUInt::from_be_bytes(&signature[..c.coord_bytes]);
+    let s = BigUInt::from_be_bytes(&signature[c.coord_bytes..]);
+    if r.cmp(&one) == Ordering::Less || r.cmp(&c.n) != Ordering::Less {
+        return Err("ECDSA: r out of range".into());
+    }
+    if s.cmp(&one) == Ordering::Less || s.cmp(&c.n) != Ordering::Less {
+        return Err("ECDSA: s out of range".into());
+    }
+    let qx = BigUInt::from_be_bytes(qx_bytes);
+    let qy = BigUInt::from_be_bytes(qy_bytes);
+    if !on_curve(c, &qx, &qy) {
+        return Err("ECDSA: public key not on curve".into());
+    }
+    let q = P256Point::Affine { x: qx, y: qy };
+    let e = BigUInt::from_be_bytes(hash).modulo(&c.n);
+    let w = mod_inv_fermat(&s, &c.n);
+    let u1 = mod_mul(&e, &w, &c.n);
+    let u2 = mod_mul(&r, &w, &c.n);
+    let p1 = ec_scalar_mul(c, &u1, &c.g);
+    let p2 = ec_scalar_mul(c, &u2, &q);
+    let r_pt = ec_add(c, &p1, &p2);
+    let x1 = match r_pt {
+        P256Point::Affine { x, .. } => x,
+        P256Point::Identity => return Err("ECDSA: u1·G + u2·Q is identity".into()),
+    };
+    if x1.modulo(&c.n).cmp(&r) == Ordering::Equal { Ok(()) }
+    else { Err("ECDSA: signature mismatch".into()) }
+}
+
+pub fn ecdh(c: &Curve, d_bytes: &[u8], qx_bytes: &[u8], qy_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use std::cmp::Ordering;
+    let d = BigUInt::from_be_bytes(d_bytes);
+    if d.is_zero() || d.cmp(&c.n) != Ordering::Less {
+        return Err("ECDH: private scalar out of range".into());
+    }
+    let qx = BigUInt::from_be_bytes(qx_bytes);
+    let qy = BigUInt::from_be_bytes(qy_bytes);
+    if !on_curve(c, &qx, &qy) {
+        return Err("ECDH: peer public key not on curve".into());
+    }
+    let q = P256Point::Affine { x: qx, y: qy };
+    let shared = ec_scalar_mul(c, &d, &q);
+    match shared {
+        P256Point::Identity => Err("ECDH: derived point is identity".into()),
+        P256Point::Affine { x, .. } => Ok(x.to_be_bytes(c.coord_bytes)),
+    }
+}
+
 // ─────────────────────── ECDH over P-256 (SEC 1 §3.3.1) ────────────
 //
 // Pure ECDH: derive a shared secret as the x-coordinate of (d_A · Q_B),

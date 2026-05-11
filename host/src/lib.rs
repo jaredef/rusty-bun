@@ -723,6 +723,58 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // Curve-parameterized ECDSA + ECDH over P-256 / P-384 / P-521.
+    fn curve_by_name(name: &str) -> Result<rusty_web_crypto::Curve, String> {
+        match name {
+            "P-256" => Ok(rusty_web_crypto::curve_p256()),
+            "P-384" => Ok(rusty_web_crypto::curve_p384()),
+            "P-521" => Ok(rusty_web_crypto::curve_p521()),
+            other => Err(format!("ECDSA/ECDH: unsupported curve {}", other)),
+        }
+    }
+    fn hash_by_name(name: &str, data: &[u8]) -> Result<Vec<u8>, String> {
+        match name {
+            "SHA-1"   => Ok(rusty_web_crypto::digest_sha1(data).to_vec()),
+            "SHA-256" => Ok(rusty_web_crypto::digest_sha256(data).to_vec()),
+            "SHA-384" => Ok(rusty_web_crypto::digest_sha384(data).to_vec()),
+            "SHA-512" => Ok(rusty_web_crypto::digest_sha512(data).to_vec()),
+            other => Err(format!("ECDSA: unsupported hash {}", other)),
+        }
+    }
+    subtle.set(
+        "ecdsaSignBytes",
+        Function::new(ctx.clone(), |curve_name: String, hash_name: String, d: Vec<u8>, msg: Vec<u8>, k: Vec<u8>| -> JsResult<Vec<u8>> {
+            let c = curve_by_name(&curve_name)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDSA", "sign", e))?;
+            let h = hash_by_name(&hash_name, &msg)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDSA", "sign", e))?;
+            rusty_web_crypto::ecdsa_sign(&c, &d, &h, &k)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDSA", "sign", e))
+        })?,
+    )?;
+    subtle.set(
+        "ecdsaVerifyBytes",
+        Function::new(ctx.clone(), |curve_name: String, hash_name: String, qx: Vec<u8>, qy: Vec<u8>, msg: Vec<u8>, sig: Vec<u8>| -> JsResult<bool> {
+            let c = match curve_by_name(&curve_name) {
+                Ok(c) => c,
+                Err(_) => return Ok(false),
+            };
+            let h = match hash_by_name(&hash_name, &msg) {
+                Ok(h) => h,
+                Err(_) => return Ok(false),
+            };
+            Ok(rusty_web_crypto::ecdsa_verify(&c, &qx, &qy, &h, &sig).is_ok())
+        })?,
+    )?;
+    subtle.set(
+        "ecdhBytes",
+        Function::new(ctx.clone(), |curve_name: String, d: Vec<u8>, qx: Vec<u8>, qy: Vec<u8>| -> JsResult<Vec<u8>> {
+            let c = curve_by_name(&curve_name)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDH", "derive", e))?;
+            rusty_web_crypto::ecdh(&c, &d, &qx, &qy)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ECDH", "derive", e))
+        })?,
+    )?;
     // ECDH over P-256 (SEC 1 §3.3.1). x-coordinate of d·Q.
     subtle.set(
         "ecdhP256Bytes",
@@ -1003,8 +1055,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         const specName = alg.name === "ECDSA" ? "ECDSA" : "ECDH";
                         // JWK EC: {kty:"EC", crv:"P-256", x, y, d?}
                         if (!keyData || keyData.kty !== "EC") throw new TypeError("JWK kty must be EC");
-                        if (keyData.crv !== "P-256") {
-                            throw new Error("ECDSA pilot scope: P-256 only, got " + keyData.crv);
+                        if (keyData.crv !== "P-256" && keyData.crv !== "P-384" && keyData.crv !== "P-521") {
+                            throw new Error("ECDSA/ECDH: unsupported curve " + keyData.crv);
                         }
                         const x = b64urlToBytes(keyData.x);
                         const y = b64urlToBytes(keyData.y);
@@ -1012,16 +1064,16 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                             const d = b64urlToBytes(keyData.d);
                             return {
                                 type: "private", extractable: !!extractable,
-                                algorithm: { name: specName, namedCurve: "P-256" },
+                                algorithm: { name: specName, namedCurve: keyData.crv },
                                 usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                                _x: x, _y: y, _d: d, _algName: specName, _curve: "P-256",
+                                _x: x, _y: y, _d: d, _algName: specName, _curve: keyData.crv,
                             };
                         }
                         return {
                             type: "public", extractable: !!extractable,
                             algorithm: { name: "ECDSA", namedCurve: "P-256" },
                             usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                            _x: x, _y: y, _algName: specName, _curve: "P-256",
+                            _x: x, _y: y, _algName: specName, _curve: keyData.crv,
                         };
                     }
                     if (alg.name === "RSAOAEP" || alg.name === "RSAPSS") {
@@ -1149,16 +1201,14 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     if (!algorithm.public || algorithm.public._algName !== "ECDH") {
                         throw new TypeError("deriveBits: algorithm.public must be an ECDH public key");
                     }
-                    if (baseKey._curve !== "P-256" || algorithm.public._curve !== "P-256") {
-                        throw new Error("ECDH pilot scope: P-256 only");
+                    if (baseKey._curve !== algorithm.public._curve) {
+                        throw new Error("ECDH: keys must share a curve");
                     }
-                    const fullSecret = subtle.ecdhP256Bytes(
-                        baseKey._d, algorithm.public._x, algorithm.public._y);
-                    // Truncate to requested bit-length (must be ≤ 256 bits for P-256
-                    // x-coordinate). length is in bits, in multiples of 8.
+                    const fullSecret = subtle.ecdhBytes(
+                        baseKey._curve, baseKey._d, algorithm.public._x, algorithm.public._y);
                     const byteLen = length / 8;
                     if (byteLen > fullSecret.length) {
-                        throw new Error("ECDH P-256: length must be ≤ 256 bits");
+                        throw new Error("ECDH: length exceeds field size");
                     }
                     return toArrayBuffer(fullSecret.slice(0, byteLen));
                 }
@@ -1311,14 +1361,18 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     if (key._algName !== "ECDSA" || !key._d) {
                         throw new TypeError("sign: key is not an ECDSA private key");
                     }
-                    if (key._curve !== "P-256") throw new Error("ECDSA pilot scope: P-256 only");
-                    // Generate random k in [1, n-1]; with overwhelming probability
-                    // a 32-byte /dev/urandom value satisfies this. Spec-grade ECDSA
-                    // would loop on r=0 / s=0; pilot accepts a single attempt.
-                    const kArr = new Uint8Array(32);
+                    const hashName = algorithm.hash
+                        ? (typeof algorithm.hash === "string" ? algorithm.hash : algorithm.hash.name)
+                        : "SHA-256";
+                    const coordBytes = { "P-256": 32, "P-384": 48, "P-521": 66 }[key._curve];
+                    if (!coordBytes) throw new Error("ECDSA: unsupported curve " + key._curve);
+                    const kArr = new Uint8Array(coordBytes);
                     globalThis.crypto.getRandomValues(kArr);
-                    return toArrayBuffer(subtle.ecdsaP256Sha256SignBytes(
-                        key._d, toBytes(data), Array.from(kArr)));
+                    // Ensure k < n by masking top bits when k has extra high bits
+                    // (only relevant for P-521 where coord_bytes*8 = 528 > 521).
+                    if (key._curve === "P-521") kArr[0] &= 0x01;
+                    return toArrayBuffer(subtle.ecdsaSignBytes(
+                        key._curve, hashName, key._d, toBytes(data), Array.from(kArr)));
                 }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS" || !key._d) {
@@ -1350,9 +1404,11 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 }
                 if (alg.name === "ECDSA") {
                     if (key._algName !== "ECDSA") throw new TypeError("verify: key is not ECDSA");
-                    if (key._curve !== "P-256") throw new Error("ECDSA pilot scope: P-256 only");
-                    return subtle.ecdsaP256Sha256VerifyBytes(
-                        key._x, key._y, toBytes(data), toBytes(signature));
+                    const hashName = algorithm.hash
+                        ? (typeof algorithm.hash === "string" ? algorithm.hash : algorithm.hash.name)
+                        : "SHA-256";
+                    return subtle.ecdsaVerifyBytes(
+                        key._curve, hashName, key._x, key._y, toBytes(data), toBytes(signature));
                 }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS") {

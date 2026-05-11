@@ -1146,3 +1146,85 @@ fn ecdh_p256_rejects_off_curve_peer() {
     let bad_qy = vec![0x00u8; 32];
     assert!(rusty_web_crypto::ecdh_p256(&d, &bad_qx, &bad_qy).is_err());
 }
+
+// ─────────────── ECDSA P-384 / SHA-384 ──────────────────────────────
+
+#[test]
+fn ecdsa_p384_sign_verify_roundtrip() {
+    let curve = rusty_web_crypto::curve_p384();
+    let d  = hex_decode("a5bbbebe32882a8847ff889da2d2e3f33c424a13b8033767e192cde8390cc3f00f40d2997dd248651db028b2676b2df8");
+    let qx = hex_decode("e4f93add2552dfbb6962c668a72bca58f4b46a6b0f0399e7c3c602fa0fca50c428f46726e7c56b359860b62b4558b58e");
+    let qy = hex_decode("7620c00c829cb1f499b402f2d686f9bf2fa2060c18379c1ef5fd11f75bf71d56aa5589993aea4619917d25bc8559e674");
+    let nonce = hex_decode("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60a6e3c57dd01abe90086538398355dd4c");
+    let hash = rusty_web_crypto::digest_sha384(b"msg-p384").to_vec();
+    let sig = rusty_web_crypto::ecdsa_sign(&curve, &d, &hash, &nonce).unwrap();
+    assert_eq!(sig.len(), 96);
+    rusty_web_crypto::ecdsa_verify(&curve, &qx, &qy, &hash, &sig).unwrap();
+    // Tampered message must reject.
+    let wrong_hash = rusty_web_crypto::digest_sha384(b"different").to_vec();
+    assert!(rusty_web_crypto::ecdsa_verify(&curve, &qx, &qy, &wrong_hash, &sig).is_err());
+}
+
+#[test]
+fn ecdh_p384_diffie_hellman() {
+    let curve = rusty_web_crypto::curve_p384();
+    let d_a  = hex_decode("a5bbbebe32882a8847ff889da2d2e3f33c424a13b8033767e192cde8390cc3f00f40d2997dd248651db028b2676b2df8");
+    let qax  = hex_decode("e4f93add2552dfbb6962c668a72bca58f4b46a6b0f0399e7c3c602fa0fca50c428f46726e7c56b359860b62b4558b58e");
+    let qay  = hex_decode("7620c00c829cb1f499b402f2d686f9bf2fa2060c18379c1ef5fd11f75bf71d56aa5589993aea4619917d25bc8559e674");
+    // Bob: derive from a different d, with d·G producing pub key.
+    let d_b  = hex_decode("424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424c");
+    let q_b = rusty_web_crypto::ec_scalar_mul(
+        &curve, &rusty_web_crypto::BigUInt::from_be_bytes(&d_b), &curve.g);
+    let (qbx, qby) = if let rusty_web_crypto::P256Point::Affine { x, y } = q_b {
+        (x.to_be_bytes(48), y.to_be_bytes(48))
+    } else { panic!("identity"); };
+    let s1 = rusty_web_crypto::ecdh(&curve, &d_a, &qbx, &qby).unwrap();
+    let s2 = rusty_web_crypto::ecdh(&curve, &d_b, &qax, &qay).unwrap();
+    assert_eq!(s1, s2);
+    assert_eq!(s1.len(), 48);
+}
+
+// ─────────────── ECDSA P-521 / SHA-512 ──────────────────────────────
+
+#[test]
+fn ecdsa_p521_sign_verify_roundtrip() {
+    let curve = rusty_web_crypto::curve_p521();
+    let d  = hex_decode("018f8c771f2e82f6e424f3cc14240a7a06201190e94fbf6431d7af4e2f664749b1dfca40b071baa3a332da25bb5c9919e5e42e2742dd0c218600a6c1fba7d55181c0");
+    let qx = hex_decode("007c667440e01ae15b11792bade8e70dbb2f8e2827d11499ea5cbff0c5ee3bf36ad1c052642cd5c13a20b1d100821473d3fbaeea62cc8597a67a8ab58833e524d48c");
+    let qy = hex_decode("01c057ba8d7724a5d27360161960a7963c9de10029b336f6cf4125ab972b4ef3f896998f2074201149dcfc71e4d10b367cc14ba7ab7c4e4597958c0019dba81d51f5");
+    let nonce = hex_decode("00a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+    let hash = rusty_web_crypto::digest_sha512(b"msg-p521").to_vec();
+    let sig = rusty_web_crypto::ecdsa_sign(&curve, &d, &hash, &nonce).unwrap();
+    assert_eq!(sig.len(), 132);
+    rusty_web_crypto::ecdsa_verify(&curve, &qx, &qy, &hash, &sig).unwrap();
+}
+
+#[test]
+fn ecdh_p521_diffie_hellman() {
+    let curve = rusty_web_crypto::curve_p521();
+    let d_a = hex_decode("018f8c771f2e82f6e424f3cc14240a7a06201190e94fbf6431d7af4e2f664749b1dfca40b071baa3a332da25bb5c9919e5e42e2742dd0c218600a6c1fba7d55181c0");
+    let qax = hex_decode("007c667440e01ae15b11792bade8e70dbb2f8e2827d11499ea5cbff0c5ee3bf36ad1c052642cd5c13a20b1d100821473d3fbaeea62cc8597a67a8ab58833e524d48c");
+    let qay = hex_decode("01c057ba8d7724a5d27360161960a7963c9de10029b336f6cf4125ab972b4ef3f896998f2074201149dcfc71e4d10b367cc14ba7ab7c4e4597958c0019dba81d51f5");
+    let d_b = hex_decode("004242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242");
+    let q_b = rusty_web_crypto::ec_scalar_mul(
+        &curve, &rusty_web_crypto::BigUInt::from_be_bytes(&d_b), &curve.g);
+    let (qbx, qby) = if let rusty_web_crypto::P256Point::Affine { x, y } = q_b {
+        (x.to_be_bytes(66), y.to_be_bytes(66))
+    } else { panic!("identity"); };
+    let s1 = rusty_web_crypto::ecdh(&curve, &d_a, &qbx, &qby).unwrap();
+    let s2 = rusty_web_crypto::ecdh(&curve, &d_b, &qax, &qay).unwrap();
+    assert_eq!(s1, s2);
+    assert_eq!(s1.len(), 66);
+}
+
+#[test]
+fn debug_p521_g_on_curve() {
+    let curve = rusty_web_crypto::curve_p521();
+    let gx_bytes = hex_decode("00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66");
+    let gy_bytes = hex_decode("011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650");
+    // Use the on_curve check via ecdh: it validates Q on curve before scalar mul.
+    // If G is not on curve per my code, ecdh will error.
+    let d = vec![1u8; 66];  // anything in range
+    let r = rusty_web_crypto::ecdh(&curve, &d, &gx_bytes, &gy_bytes);
+    assert!(r.is_ok(), "G not on curve per my code: {:?}", r);
+}

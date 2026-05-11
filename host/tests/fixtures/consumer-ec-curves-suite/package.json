@@ -1,0 +1,8 @@
+{
+  "name": "consumer-ec-curves-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #36: ECDSA + ECDH over P-384 and P-521 via curve-parameterized crypto.subtle.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

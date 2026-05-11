@@ -333,6 +333,7 @@ dependencies = [
  "rusty-http-codec",
  "rusty-node-fs",
  "rusty-node-path",
+ "rusty-sockets",
  "rusty-textencoder",
  "rusty-urlsearchparams",
  "rusty-web-crypto",

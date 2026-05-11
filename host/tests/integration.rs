@@ -2848,6 +2848,72 @@ fn js_differential_consumer_sha512_suite_matches_bun() {
     assert_eq!(rb.trim(), bs, "sha512-suite mismatch:\nrb={}\nbun={}", rb, bs);
 }
 
+// Sockets fixture: spawn an in-process echo server on 127.0.0.1:0 so the
+// fixture's client side has a known endpoint to round-trip against. The
+// helper sets SOCKETS_TEST_PORT in the environment for the fixture's
+// process.env.SOCKETS_TEST_PORT read.
+fn with_echo_server<F: FnOnce()>(f: F) {
+    use std::net::TcpListener;
+    use std::io::{Read, Write};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_thread = std::thread::spawn(move || {
+        // Accept exactly one connection, echo two writes, then close.
+        if let Ok((mut sock, _)) = listener.accept() {
+            // Keep the connection alive across multiple writes.
+            let mut buf = [0u8; 1024];
+            // The fixture sends three messages over the same connection
+            // (echo-roundtrip + keep-alive x2). Each read gets one buffer.
+            for _ in 0..3 {
+                match sock.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => { let _ = sock.write_all(&buf[..n]); }
+                    Err(_) => break,
+                }
+            }
+        }
+    });
+    std::env::set_var("SOCKETS_TEST_PORT", port.to_string());
+    f();
+    std::env::remove_var("SOCKETS_TEST_PORT");
+    // Drain the server thread; it exits when the connection drops.
+    let _ = server_thread.join();
+}
+
+#[test]
+fn js_consumer_sockets_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-sockets-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_echo_server(|| {
+        let r = eval_esm_module(&path).unwrap();
+        assert!(r.starts_with("8/8"), "sockets-suite failed: {}", r);
+    });
+}
+
+#[test]
+fn js_differential_consumer_sockets_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-sockets-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    // rusty-bun-host: runs with harness echo-server + SOCKETS_TEST_PORT.
+    let rb = {
+        let mut out = String::new();
+        with_echo_server(|| { out = eval_esm_module(&path).unwrap(); });
+        out
+    };
+    // Bun: no TCP namespace; fixture takes the all-skipped path → "8/8".
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bs, "sockets-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
 #[test]
 fn js_consumer_mini_http_server_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

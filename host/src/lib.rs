@@ -305,6 +305,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_response_static(&ctx, &global)?;
     install_fetch_api_classes_js(&ctx)?;
     wire_http_codec(&ctx, &global)?;
+    wire_sockets(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
     wire_bun_serve_static(&ctx, &global)?;
@@ -760,6 +761,144 @@ fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+// ─────────────────── sockets (Tier-G TCP primitives) ────────────────
+//
+// Exposes the rusty-sockets pilot's handle-based primitives under
+// globalThis.__sockets. JS-side callers receive opaque u64 handle ids
+// (passed as f64 in JS since rquickjs converts u64 → f64 — safe for
+// values < 2^53, which is many orders of magnitude beyond the slab's
+// expected lifetime). Blocking semantics: each call may block; the
+// caller is responsible for not blocking the main JS thread in a
+// production server (a higher-level Bun.listen async wrapper will land
+// in a follow-on round).
+
+fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "listenerBind",
+        Function::new(ctx.clone(), |addr: String| -> JsResult<Vec<rquickjs::Value>> {
+            // Can't easily return a tuple; emit JSON instead, parsed JS-side.
+            let _ = addr;
+            unreachable!()
+        })?,
+    )?;
+    // Above approach can't capture ctx; emit JSON strings instead.
+    let ns = Object::new(ctx.clone())?;
+    ns.set(
+        "listenerBindJson",
+        Function::new(ctx.clone(), |addr: String| -> JsResult<String> {
+            let (id, addr) = rusty_sockets::listener_bind(&addr)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "bind", e.to_string()))?;
+            Ok(format!("{{\"id\":{},\"addr\":{}}}", id, json_str(&addr)))
+        })?,
+    )?;
+    ns.set(
+        "listenerAcceptJson",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            let (sid, peer) = rusty_sockets::listener_accept(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "accept", e.to_string()))?;
+            Ok(format!("{{\"id\":{},\"peer\":{}}}", sid, json_str(&peer)))
+        })?,
+    )?;
+    ns.set(
+        "streamConnect",
+        Function::new(ctx.clone(), |addr: String| -> JsResult<f64> {
+            rusty_sockets::stream_connect(&addr)
+                .map(|id| id as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "connect", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamConnectTimeout",
+        Function::new(ctx.clone(), |addr: String, timeout_ms: f64| -> JsResult<f64> {
+            rusty_sockets::stream_connect_timeout(&addr, timeout_ms as u64)
+                .map(|id| id as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "connect", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamRead",
+        Function::new(ctx.clone(), |id: f64, max: f64| -> JsResult<Vec<u8>> {
+            rusty_sockets::stream_read(id as u64, max as usize)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "read", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamWrite",
+        Function::new(ctx.clone(), |id: f64, data: Vec<u8>| -> JsResult<f64> {
+            rusty_sockets::stream_write(id as u64, &data)
+                .map(|n| n as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "write", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamWriteAll",
+        Function::new(ctx.clone(), |id: f64, data: Vec<u8>| -> JsResult<()> {
+            rusty_sockets::stream_write_all(id as u64, &data)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "writeAll", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamPeerAddr",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            rusty_sockets::stream_peer_addr(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "peerAddr", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "streamLocalAddr",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            rusty_sockets::stream_local_addr(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "localAddr", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "handleClose",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<()> {
+            rusty_sockets::handle_close(id as u64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "close", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "handleKind",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            rusty_sockets::handle_kind(id as u64)
+                .map(|s| s.to_string())
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "kind", e.to_string()))
+        })?,
+    )?;
+    global.set("__sockets", ns)?;
+    // JS-side facade: globalThis.TCP with parsed-result helpers + the
+    // toByteArray pattern (per F8) for typed-array → Vec<u8> calls.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const raw = globalThis.__sockets;
+            function toByteArray(b) {
+                if (b == null) return [];
+                if (typeof b === "string") b = new TextEncoder().encode(b);
+                else if (b instanceof ArrayBuffer) b = new Uint8Array(b);
+                const arr = new Array(b.length);
+                for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                return arr;
+            }
+            globalThis.TCP = {
+                bind(addr) { return JSON.parse(raw.listenerBindJson(addr)); },
+                accept(id) { return JSON.parse(raw.listenerAcceptJson(id)); },
+                connect(addr) { return raw.streamConnect(addr); },
+                connectTimeout(addr, ms) { return raw.streamConnectTimeout(addr, ms); },
+                read(id, max) { return new Uint8Array(raw.streamRead(id, max)); },
+                write(id, data) { return raw.streamWrite(id, toByteArray(data)); },
+                writeAll(id, data) { raw.streamWriteAll(id, toByteArray(data)); },
+                peerAddr(id) { return raw.streamPeerAddr(id); },
+                localAddr(id) { return raw.streamLocalAddr(id); },
+                close(id) { raw.handleClose(id); },
+                kind(id) { return raw.handleKind(id); },
+            };
+        })();
+    "#)?;
+    Ok(())
 }
 
 // ─────────────────── crypto + crypto.subtle ──────────────────────────

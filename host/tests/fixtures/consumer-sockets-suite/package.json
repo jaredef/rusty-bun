@@ -1,0 +1,8 @@
+{
+  "name": "consumer-sockets-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #48: Tier-G socket primitives via globalThis.TCP. Uses environment-supplied SOCKETS_TEST_PORT to connect to a Rust-thread echo server set up by the integration test harness.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

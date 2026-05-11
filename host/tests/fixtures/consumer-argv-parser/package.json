@@ -1,0 +1,8 @@
+{
+  "name": "consumer-argv-parser",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #16: argv parser exercising a real-shape vendored third-party library (mri-style, MIT). ~150 LOC ESM with alias/boolean/string/default options.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

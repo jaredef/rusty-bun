@@ -312,7 +312,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:stream/promises" | "stream/promises" |
         "node:querystring" | "querystring" |
         "node:assert" | "assert" |
-        "node:assert/strict" | "assert/strict"
+        "node:assert/strict" | "assert/strict" |
+        "node:child_process" | "child_process"
     )
 }
 
@@ -366,6 +367,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "deepStrictEqual", "notDeepStrictEqual", "throws", "doesNotThrow",
             "rejects", "doesNotReject", "match", "doesNotMatch", "fail",
             "ifError", "strict", "AssertionError"]),
+        "node:child_process" | "child_process" => ("nodeChildProcess",
+            &["spawn", "spawnSync", "exec", "execSync", "execFile",
+              "execFileSync", "fork"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -428,6 +432,88 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
 /// outside a class body would also be renamed. In practice these are
 /// either invalid syntax (`delete;` standalone) or vanishingly rare
 /// (`get;` as variable reference statement). Recorded as E.12 closure.
+/// Rewrite `export const { a, b, c } = expr;` (top-level destructure-export)
+/// into individual `export const a = expr.a;` declarations. QuickJS's ESM
+/// implementation doesn't bind destructured names as module exports; the
+/// destructure runs but the names are local. Modern V8 + JSC handle this
+/// per ES2015 spec. Many CJS-wrapper esm.mjs files use this pattern
+/// (commander, others) to re-export named members from a CJS default.
+///
+/// Pattern: a line starting with `export const {`, followed by zero or
+/// more lines of identifier-or-comment, ending with `} = IDENT;` on its
+/// own line. The identifier after `=` must be a simple name (the
+/// imported binding) — more complex expressions are passed through.
+fn rewrite_destructure_exports(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("export const {") || trimmed.starts_with("export const{") {
+            // Scan ahead for the matching `} = NAME;` close.
+            let mut matched: Option<(usize, String, Vec<String>)> = None;
+            let max_scan = std::cmp::min(lines.len(), i + 200);
+            for j in (i + 1)..max_scan {
+                let t = lines[j].trim();
+                if let Some(rest) = t.strip_prefix("} = ") {
+                    if let Some(name) = rest.strip_suffix(";") {
+                        let name = name.trim();
+                        let valid_name = !name.is_empty()
+                            && name.chars().enumerate().all(|(k, c)| {
+                                if k == 0 { c.is_alphabetic() || c == '_' || c == '$' }
+                                else { c.is_alphanumeric() || c == '_' || c == '$' }
+                            });
+                        if !valid_name { break; }
+                        let joined: String = lines[i..=j].join("\n");
+                        if let (Some(o), Some(c)) = (joined.find('{'), joined.rfind('}')) {
+                            let inner = &joined[o + 1..c];
+                            // Strip line comments (// to end-of-line) BEFORE splitting on
+                            // commas — comments mid-list (e.g. `Foo, // deprecated\n  Bar`)
+                            // otherwise swallow the next identifier when split-then-strip.
+                            let cleaned: String = inner.lines().map(|l| {
+                                l.split("//").next().unwrap_or("").to_string()
+                            }).collect::<Vec<_>>().join("\n");
+                            let mut names: Vec<String> = Vec::new();
+                            for tok in cleaned.split(',') {
+                                let stripped = tok.trim();
+                                if stripped.is_empty() { continue; }
+                                let n = stripped.split(':').next().unwrap_or("").trim();
+                                let valid = !n.is_empty()
+                                    && n.chars().enumerate().all(|(k, ch)| {
+                                        if k == 0 { ch.is_alphabetic() || ch == '_' || ch == '$' }
+                                        else { ch.is_alphanumeric() || ch == '_' || ch == '$' }
+                                    });
+                                if valid { names.push(n.to_string()); }
+                            }
+                            matched = Some((j, name.to_string(), names));
+                        }
+                        break;
+                    }
+                }
+            }
+            if let Some((j, name, names)) = matched {
+                for n in names {
+                    out.push_str(&format!("export const {0} = {1}.{0};\n", n, name));
+                }
+                i = j + 1;
+                continue;
+            }
+            // Fallback: emit the original line and continue at i+1.
+            out.push_str(line);
+            out.push('\n');
+            i += 1;
+            continue;
+        }
+        out.push_str(line);
+        if i < lines.len() - 1 {
+            out.push('\n');
+        }
+        i += 1;
+    }
+    out
+}
+
 fn strip_reserved_class_field_decls(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     for line in source.split_inclusive('\n') {
@@ -502,6 +588,9 @@ impl Loader for FsLoader {
         // automatic CJS↔ESM interop for the `import pkg from "cjs-lib"`
         // case. Named exports populated from Object.keys(module.exports).
         if looks_like_cjs(&source) {
+            if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
+                eprintln!("[fsloader] CJS branch: {}", name);
+            }
             // Eagerly evaluate the CJS module and stash module.exports on
             // a globalThis bridge map keyed by absolute path.
             let bridge_init = format!(
@@ -513,19 +602,31 @@ impl Loader for FsLoader {
                  }})();",
                 json_str(name)
             );
-            ctx.eval::<(), _>(bridge_init.as_bytes())?;
+            match ctx.eval::<(), _>(bridge_init.as_bytes()) {
+                Ok(_) => {}
+                Err(e) => {
+                    if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
+                        eprintln!("[fsloader] bridge_init failed for {}: {:?}", name, e);
+                    }
+                    return Err(e);
+                }
+            }
 
             // Read the keys for named export generation.
             let keys_code = format!(
                 "(function() {{\n\
                    const m = globalThis.__cjsBridge[{}];\n\
-                   if (m == null || typeof m !== 'object' && typeof m !== 'function') return [];\n\
+                   if (m == null) return [];\n\
+                   if (typeof m !== 'object' && typeof m !== 'function') return [];\n\
                    return Object.keys(m);\n\
                  }})()",
                 json_str(name)
             );
             let keys: Vec<String> = ctx.eval::<Vec<String>, _>(keys_code.as_bytes())
                 .unwrap_or_default();
+            if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
+                eprintln!("[fsloader] CJS keys for {}: {:?}", name, keys);
+            }
 
             let mut esm_src = format!(
                 "const __m = globalThis.__cjsBridge[{}];\nexport default __m;\n",
@@ -547,6 +648,7 @@ impl Loader for FsLoader {
         }
 
         let source = strip_reserved_class_field_decls(&source);
+        let source = rewrite_destructure_exports(&source);
         Module::declare(ctx.clone(), name, source)
     }
 }
@@ -598,6 +700,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_bun_small_utilities_js(&ctx)?;
     install_keep_alive_js(&ctx)?;
     install_node_assert_js(&ctx)?;
+    install_node_child_process_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -5545,6 +5648,13 @@ const COMMONJS_LOADER_JS: &str = r#"
         "assert/strict": () => globalThis.nodeAssertStrict,
         "node:url": () => globalThis.nodeUrl,
         "url": () => globalThis.nodeUrl,
+        // node:child_process — minimal shim. Many libs (commander, others)
+        // top-level-require this even when they don't use it. spawnSync
+        // composes on Bun.spawnSync; spawn/exec/execSync/fork throw if
+        // called (not yet wired). Modules that only top-level-import for
+        // optional features (commander's executable subcommands) work.
+        "node:child_process": () => globalThis.nodeChildProcess,
+        "child_process": () => globalThis.nodeChildProcess,
     };
 
     function loadModule(absPath) {
@@ -7042,6 +7152,60 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
                 pathToFileURL,
                 domainToASCII,
                 domainToUnicode,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_child_process_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // node:child_process minimal shim. spawnSync composes on Bun.spawnSync
+    // (the already-wired std::process::Command wrapper); other entry points
+    // throw a clear error if called. Many libraries top-level-require this
+    // for optional features (commander's executable subcommands) but never
+    // actually invoke it under normal usage — those libs now load cleanly.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const stub = (name) => () => {
+                throw new Error("rusty-bun-host: node:child_process." + name +
+                    " not implemented (only spawnSync composes on Bun.spawnSync)");
+            };
+            globalThis.nodeChildProcess = {
+                spawnSync(command, args, options) {
+                    const opts = options || {};
+                    const argv = [String(command)].concat((args || []).map(String));
+                    const stdinText = (typeof opts.input === "string") ? opts.input :
+                        (opts.input && opts.input.toString) ? opts.input.toString() : undefined;
+                    const r = Bun.spawnSync(argv, {
+                        stdin: stdinText,
+                        cwd: opts.cwd,
+                    });
+                    return {
+                        pid: 0,
+                        status: r.exitCode,
+                        signal: null,
+                        output: [null, r.stdout, r.stderr],
+                        stdout: typeof Buffer !== "undefined" ? Buffer.from(r.stdout) : r.stdout,
+                        stderr: typeof Buffer !== "undefined" ? Buffer.from(r.stderr) : r.stderr,
+                    };
+                },
+                execSync(cmd, options) {
+                    const opts = options || {};
+                    const argv = ["/bin/sh", "-c", String(cmd)];
+                    const r = Bun.spawnSync(argv, { cwd: opts.cwd });
+                    if (r.exitCode !== 0) {
+                        const err = new Error("Command failed: " + cmd);
+                        err.status = r.exitCode;
+                        err.stderr = r.stderr;
+                        throw err;
+                    }
+                    return typeof Buffer !== "undefined" ? Buffer.from(r.stdout) : r.stdout;
+                },
+                spawn: stub("spawn"),
+                exec: stub("exec"),
+                execFile: stub("execFile"),
+                execFileSync: stub("execFileSync"),
+                fork: stub("fork"),
             };
         })();
     "#)?;

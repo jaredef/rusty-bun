@@ -233,7 +233,9 @@ fn is_node_builtin(name: &str) -> bool {
         "node:util/types" | "util/types" |
         "node:stream" | "stream" |
         "node:stream/promises" | "stream/promises" |
-        "node:querystring" | "querystring"
+        "node:querystring" | "querystring" |
+        "node:assert" | "assert" |
+        "node:assert/strict" | "assert/strict"
     )
 }
 
@@ -278,6 +280,16 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["pipeline", "finished"]),
         "node:querystring" | "querystring" => ("nodeQuerystring",
             &["parse", "stringify", "escape", "unescape", "decode", "encode"]),
+        "node:assert" | "assert" => ("nodeAssert", &["ok", "equal", "notEqual",
+            "strictEqual", "notStrictEqual", "deepEqual", "notDeepEqual",
+            "deepStrictEqual", "notDeepStrictEqual", "throws", "doesNotThrow",
+            "rejects", "doesNotReject", "match", "doesNotMatch", "fail",
+            "ifError", "strict", "AssertionError"]),
+        "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
+            &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
+              "throws", "doesNotThrow", "rejects", "doesNotReject",
+              "match", "doesNotMatch", "fail", "ifError",
+              "AssertionError"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -365,6 +377,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_querystring_and_url_full_js(&ctx)?;
     install_bun_small_utilities_js(&ctx)?;
     install_keep_alive_js(&ctx)?;
+    install_node_assert_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -4868,6 +4881,10 @@ const COMMONJS_LOADER_JS: &str = r#"
         "stream/promises": () => globalThis.nodeStreamPromises,
         "node:querystring": () => globalThis.nodeQuerystring,
         "querystring": () => globalThis.nodeQuerystring,
+        "node:assert": () => globalThis.nodeAssert,
+        "assert": () => globalThis.nodeAssert,
+        "node:assert/strict": () => globalThis.nodeAssertStrict,
+        "assert/strict": () => globalThis.nodeAssertStrict,
         "node:url": () => globalThis.nodeUrl,
         "url": () => globalThis.nodeUrl,
     };
@@ -5988,6 +6005,191 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
                 domainToASCII,
                 domainToUnicode,
             };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_assert_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // Π3.x: node:assert. The canonical test-framework primitive most
+    // npm test infrastructure uses as a fallback. Composes on
+    // nodeUtil.isDeepStrictEqual (Π3.10) for deepStrictEqual.
+    //
+    // Per M9 (spec-first against Bun): throws AssertionError with the
+    // documented shape; default vs strict modes behave per Node.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            class AssertionError extends Error {
+                constructor(opts) {
+                    opts = opts || {};
+                    const message = opts.message || (
+                        (opts.actual !== undefined && opts.expected !== undefined)
+                            ? "Expected " + Bun.inspect(opts.expected) + " but got " + Bun.inspect(opts.actual)
+                            : "Assertion failed");
+                    super(message);
+                    this.name = "AssertionError";
+                    this.code = "ERR_ASSERTION";
+                    this.actual = opts.actual;
+                    this.expected = opts.expected;
+                    this.operator = opts.operator;
+                    this.generatedMessage = opts.message === undefined;
+                }
+            }
+
+            function ok(value, message) {
+                if (!value) throw new AssertionError({
+                    actual: value, expected: true, operator: "==",
+                    message: message,
+                });
+            }
+            function equal(actual, expected, message) {
+                if (actual != expected) throw new AssertionError({
+                    actual, expected, operator: "==", message,
+                });
+            }
+            function notEqual(actual, expected, message) {
+                if (actual == expected) throw new AssertionError({
+                    actual, expected, operator: "!=", message,
+                });
+            }
+            function strictEqual(actual, expected, message) {
+                if (!Object.is(actual, expected)) throw new AssertionError({
+                    actual, expected, operator: "===", message,
+                });
+            }
+            function notStrictEqual(actual, expected, message) {
+                if (Object.is(actual, expected)) throw new AssertionError({
+                    actual, expected, operator: "!==", message,
+                });
+            }
+            function deepStrictEqual(actual, expected, message) {
+                if (!globalThis.nodeUtil.isDeepStrictEqual(actual, expected)) {
+                    throw new AssertionError({
+                        actual, expected, operator: "deepStrictEqual", message,
+                    });
+                }
+            }
+            function notDeepStrictEqual(actual, expected, message) {
+                if (globalThis.nodeUtil.isDeepStrictEqual(actual, expected)) {
+                    throw new AssertionError({
+                        actual, expected, operator: "notDeepStrictEqual", message,
+                    });
+                }
+            }
+            // deepEqual in non-strict mode uses == on primitives + recursive
+            // for objects. We delegate to isDeepStrictEqual which is
+            // structurally what consumers expect even in non-strict mode.
+            const deepEqual = deepStrictEqual;
+            const notDeepEqual = notDeepStrictEqual;
+
+            function throws(block, errSpec, message) {
+                let thrown = null;
+                try { block(); } catch (e) { thrown = e; }
+                if (thrown === null) throw new AssertionError({
+                    actual: undefined, expected: errSpec, operator: "throws",
+                    message: message || "Expected function to throw",
+                });
+                if (errSpec instanceof RegExp) {
+                    if (!errSpec.test(String(thrown.message))) throw new AssertionError({
+                        actual: thrown.message, expected: errSpec, operator: "throws", message,
+                    });
+                } else if (typeof errSpec === "function") {
+                    if (!(thrown instanceof errSpec)) throw new AssertionError({
+                        actual: thrown, expected: errSpec, operator: "throws", message,
+                    });
+                } else if (errSpec && typeof errSpec === "object") {
+                    for (const k of Object.keys(errSpec)) {
+                        if (thrown[k] !== errSpec[k]) throw new AssertionError({
+                            actual: thrown[k], expected: errSpec[k],
+                            operator: "throws", message: message || ("Property '" + k + "' mismatch"),
+                        });
+                    }
+                }
+            }
+            function doesNotThrow(block, errSpec, message) {
+                try { block(); } catch (e) {
+                    throw new AssertionError({
+                        actual: e, expected: undefined, operator: "doesNotThrow",
+                        message: message || "Expected function not to throw: " + e.message,
+                    });
+                }
+            }
+            async function rejects(promiseOrFn, errSpec, message) {
+                const p = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+                let thrown = null;
+                try { await p; } catch (e) { thrown = e; }
+                if (thrown === null) throw new AssertionError({
+                    actual: undefined, expected: errSpec, operator: "rejects",
+                    message: message || "Expected promise to reject",
+                });
+                // Match thrown against errSpec same as throws().
+                if (errSpec instanceof RegExp) {
+                    if (!errSpec.test(String(thrown.message))) throw new AssertionError({
+                        actual: thrown.message, expected: errSpec, operator: "rejects", message,
+                    });
+                } else if (typeof errSpec === "function") {
+                    if (!(thrown instanceof errSpec)) throw new AssertionError({
+                        actual: thrown, expected: errSpec, operator: "rejects", message,
+                    });
+                }
+            }
+            async function doesNotReject(promiseOrFn, message) {
+                const p = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+                try { await p; } catch (e) {
+                    throw new AssertionError({
+                        actual: e, expected: undefined, operator: "doesNotReject",
+                        message: message || "Expected promise not to reject: " + e.message,
+                    });
+                }
+            }
+            function match(string, regexp, message) {
+                if (!(regexp instanceof RegExp)) throw new TypeError("match: regexp required");
+                if (!regexp.test(String(string))) throw new AssertionError({
+                    actual: string, expected: regexp, operator: "match", message,
+                });
+            }
+            function doesNotMatch(string, regexp, message) {
+                if (!(regexp instanceof RegExp)) throw new TypeError("doesNotMatch: regexp required");
+                if (regexp.test(String(string))) throw new AssertionError({
+                    actual: string, expected: regexp, operator: "doesNotMatch", message,
+                });
+            }
+            function fail(message) {
+                throw new AssertionError({
+                    message: message || "Failed",
+                    operator: "fail",
+                });
+            }
+            function ifError(value) {
+                if (value !== null && value !== undefined) {
+                    throw new AssertionError({
+                        actual: value, expected: null, operator: "ifError",
+                        message: "ifError got unwanted: " + (value && value.message ? value.message : String(value)),
+                    });
+                }
+            }
+
+            // Default assert is callable AND has the methods attached.
+            const assertFn = function assert(value, message) { ok(value, message); };
+            Object.assign(assertFn, {
+                ok, equal, notEqual, strictEqual, notStrictEqual,
+                deepEqual, notDeepEqual, deepStrictEqual, notDeepStrictEqual,
+                throws, doesNotThrow, rejects, doesNotReject,
+                match, doesNotMatch, fail, ifError,
+                AssertionError,
+            });
+            // Strict mode: equal == strictEqual, deepEqual == deepStrictEqual.
+            const strictFn = function strict(value, message) { ok(value, message); };
+            Object.assign(strictFn, assertFn, {
+                equal: strictEqual,
+                notEqual: notStrictEqual,
+                deepEqual: deepStrictEqual,
+                notDeepEqual: notDeepStrictEqual,
+            });
+            assertFn.strict = strictFn;
+
+            globalThis.nodeAssert = assertFn;
+            globalThis.nodeAssertStrict = strictFn;
         })();
     "#)?;
     Ok(())

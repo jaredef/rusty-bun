@@ -1,0 +1,8 @@
+{
+  "name": "consumer-node-assert-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #63: node:assert. Tier-Π3-extension closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

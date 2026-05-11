@@ -14,6 +14,7 @@ members = [
     "welch",
     # Pilots — alphabetical by surface
     "pilots/abort-controller/derived",
+    "pilots/asn1-der/derived",
     "pilots/blob/derived",
     "pilots/buffer/derived",
     "pilots/bun-file/derived",

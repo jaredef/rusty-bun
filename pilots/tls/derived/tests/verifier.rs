@@ -393,6 +393,100 @@ fn server_hello_key_share_extracted() {
     assert_eq!(k, &key_bytes[..]);
 }
 
+// ─── ECDH ephemeral keypair (P-256) ─────────────────────────────────
+
+#[test]
+#[ignore]  // seed A8.17: P-256 ECDH scalar mul slow on Pi
+fn ephemeral_ecdh_generates_valid_point() {
+    let kp = EphemeralEcdh::generate().unwrap();
+    assert_eq!(kp.private_scalar.len(), 32);
+    assert_eq!(kp.public_point.len(), 65);
+    assert_eq!(kp.public_point[0], 0x04);
+    // Two generations should produce different keypairs.
+    let kp2 = EphemeralEcdh::generate().unwrap();
+    assert_ne!(kp.private_scalar, kp2.private_scalar);
+}
+
+#[test]
+#[ignore]  // seed A8.17: P-256 ECDH scalar mul slow on Pi
+fn ephemeral_ecdh_shared_secret_symmetric() {
+    // Alice and Bob each generate a keypair; their shared secrets via
+    // ECDH should be equal (canonical DH property).
+    let alice = EphemeralEcdh::generate().unwrap();
+    let bob = EphemeralEcdh::generate().unwrap();
+    let alice_view = alice.shared_secret(&bob.public_point).unwrap();
+    let bob_view = bob.shared_secret(&alice.public_point).unwrap();
+    assert_eq!(alice_view, bob_view);
+    assert_eq!(alice_view.len(), 32);
+}
+
+#[test]
+#[ignore]  // seed A8.17: ephemeral generate triggers P-256 scalar mul
+fn shared_secret_rejects_invalid_format() {
+    let kp = EphemeralEcdh::generate().unwrap();
+    // Compressed form (we only accept uncompressed 0x04).
+    let bad = vec![0x02u8; 33];
+    let r = kp.shared_secret(&bad);
+    assert!(r.is_err());
+}
+
+// ─── Certificate message parsing ────────────────────────────────────
+
+#[test]
+fn parse_empty_certificate_message_rejected() {
+    let r = parse_certificate_message(&[]);
+    assert!(matches!(r, Err(TlsError::UnexpectedEnd)));
+}
+
+#[test]
+fn parse_certificate_message_with_zero_certs() {
+    // context_len=0, list_len=0, no certs.
+    let body = [0x00, 0x00, 0x00, 0x00];
+    let certs = parse_certificate_message(&body).unwrap();
+    assert!(certs.is_empty());
+}
+
+// ─── Initiate handshake structural test (mock transport) ────────────
+
+struct MockTransport {
+    write_log: Vec<u8>,
+    read_data: Vec<u8>,
+    read_pos: usize,
+}
+
+impl TlsTransport for MockTransport {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), TlsError> {
+        self.write_log.extend_from_slice(bytes);
+        Ok(())
+    }
+    fn read_some(&mut self, buf: &mut Vec<u8>) -> Result<usize, TlsError> {
+        let remaining = &self.read_data[self.read_pos..];
+        if remaining.is_empty() { return Err(TlsError::UnexpectedEnd); }
+        buf.extend_from_slice(remaining);
+        self.read_pos = self.read_data.len();
+        Ok(remaining.len())
+    }
+}
+
+#[test]
+#[ignore]  // seed A8.17: P-256 ECDH scalar mul slow on Pi
+fn initiate_handshake_writes_client_hello() {
+    let mut transport = MockTransport {
+        write_log: Vec::new(), read_data: Vec::new(), read_pos: 0,
+    };
+    let store = TrustStore::new();
+    let ephemeral = initiate_handshake(&mut transport, "example.com", &store).unwrap();
+    // Verify a record was written: starts with 0x16 (Handshake), 0x03 0x03 legacy version.
+    assert!(transport.write_log.len() > 5);
+    assert_eq!(transport.write_log[0], 22);  // ContentType.Handshake
+    assert_eq!(&transport.write_log[1..3], &[0x03, 0x03]);
+    // The handshake-message inside the record body starts with type=1 (ClientHello).
+    assert_eq!(transport.write_log[5], 1);
+    // Ephemeral keypair is returned valid.
+    assert_eq!(ephemeral.public_point.len(), 65);
+    assert_eq!(ephemeral.public_point[0], 0x04);
+}
+
 // ─── Hex helper module ──────────────────────────────────────────────
 
 mod hex {

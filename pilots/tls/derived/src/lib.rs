@@ -27,8 +27,10 @@ pub mod record;
 pub mod store;
 pub mod handshake;
 pub mod client;
+pub mod driver;
 
 pub use record::*;
 pub use store::*;
 pub use handshake::*;
 pub use client::*;
+pub use driver::*;

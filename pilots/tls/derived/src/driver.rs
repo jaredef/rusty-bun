@@ -57,15 +57,20 @@ pub fn tls_connect(
     let stream = std::net::TcpStream::connect(&addr)
         .map_err(|e| TlsError::SignatureFail(format!("connect {}: {}", addr, e)))?;
     let mut transport = TcpTlsTransport { stream };
-    // Build ClientHello + write it; also keep a copy of the handshake-message
-    // bytes for the transcript.
     let ephemeral = EphemeralEcdh::generate()?;
     let mut client_random = [0u8; 32];
     rusty_web_crypto::get_random_values(&mut client_random)
         .map_err(|e| TlsError::SignatureFail(format!("RNG: {}", e)))?;
+    // Middlebox-compatibility mode per RFC 8446 §4.1.2 / §D.4: send a
+    // 32-byte legacy session ID even though TLS 1.3 doesn't use it.
+    // Most servers (openssl included by default) expect this for
+    // backward-compat with TLS 1.2 path-checks.
+    let mut legacy_session_id = [0u8; 32];
+    rusty_web_crypto::get_random_values(&mut legacy_session_id)
+        .map_err(|e| TlsError::SignatureFail(format!("RNG: {}", e)))?;
     let ch_params = ClientHelloParams {
         random: &client_random,
-        legacy_session_id: &[],
+        legacy_session_id: &legacy_session_id,
         cipher_suites: &[CIPHER_AES_128_GCM_SHA256],
         server_name: Some(host),
         supported_groups: &[GROUP_SECP256R1],

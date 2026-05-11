@@ -520,18 +520,21 @@ fn tls_connect_against_openssl_s_server() {
     let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
-    // Spawn openssl s_server.
+    // Spawn openssl s_server with captured stderr for diagnosis.
+    let server_log = dir.join("s_server.log");
+    let log_file = std::fs::File::create(&server_log).unwrap();
+    let log_file2 = log_file.try_clone().unwrap();
     let mut server = Command::new("openssl").args(&[
         "s_server", "-port", &port.to_string(),
         "-cert", cert_path.to_str().unwrap(),
         "-key", key_path.to_str().unwrap(),
-        "-tls1_3", "-quiet", "-naccept", "1",
+        "-tls1_3", "-naccept", "1",
         "-www",
-    ]).stdout(std::process::Stdio::null())
-      .stderr(std::process::Stdio::null())
+    ]).stdout(std::process::Stdio::from(log_file))
+      .stderr(std::process::Stdio::from(log_file2))
       .spawn().expect("spawn s_server");
-    // Wait briefly for s_server to bind.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Wait for s_server to bind. On a Pi, openssl req + server start can be slow.
+    std::thread::sleep(std::time::Duration::from_millis(2000));
 
     // Build trust store from the test cert.
     let pem = std::fs::read_to_string(&cert_path).unwrap();
@@ -540,19 +543,28 @@ fn tls_connect_against_openssl_s_server() {
 
     // Connect + handshake.
     let session_result = tls_connect("127.0.0.1", port, &store);
-    // Tear down server.
+
+    let session_outcome = match session_result {
+        Ok(mut session) => {
+            session.send_application_data(b"GET / HTTP/1.0\r\n\r\n")
+                .map(|_| ())
+                .and_then(|_| {
+                    let mut acc = Vec::new();
+                    session.receive_application_data(&mut acc)
+                })
+                .map(|resp| String::from_utf8_lossy(&resp).to_string())
+        }
+        Err(e) => Err(e),
+    };
+
+    // Tear down server but read the log first.
     let _ = server.kill();
     let _ = server.wait();
+    let log = std::fs::read_to_string(&server_log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
+    eprintln!("--- s_server log ({} bytes) ---\n{}\n--- end log ---", log.len(), log);
 
-    let mut session = session_result.expect("TLS handshake against s_server");
-    // s_server -www serves a static page; send a basic request and read
-    // some application data.
-    session.send_application_data(b"GET / HTTP/1.0\r\n\r\n").expect("send");
-    let mut acc = Vec::new();
-    let resp = session.receive_application_data(&mut acc).expect("recv");
-    let s = String::from_utf8_lossy(&resp);
-    // The -www response begins with "HTTP/1.0".
+    let s = session_outcome.expect("session round-trip");
     assert!(s.starts_with("HTTP/1.0"), "unexpected response: {:?}", &s[..s.len().min(40)]);
 }
 

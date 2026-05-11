@@ -313,6 +313,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_http_codec(&ctx, &global)?;
     wire_sockets(&ctx, &global)?;
     wire_dns(&ctx, &global)?;
+    wire_compression(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
     // install_dns_js extends globalThis.Bun.dns, so it MUST run after
@@ -783,6 +784,38 @@ fn json_str(s: &str) -> String {
 // caller is responsible for not blocking the main JS thread in a
 // production server (a higher-level Bun.listen async wrapper will land
 // in a follow-on round).
+
+fn wire_compression<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // Tier-Π1.3 substrate: gzip + zlib + raw DEFLATE decode via the
+    // rusty-compression pilot (RFC 1951 + RFC 1952 + RFC 1950, hand-rolled).
+    // Decode-only this round; encode deferred. Exposed under
+    // globalThis.__compression for fetch's response-body decode path.
+    //
+    // Per seed §A8.2 (stateless Rust + JS-side facade). Per seed §A8.13
+    // (substrate-introduction round): the decoder is the substrate;
+    // encode and brotli will compose on top in subsequent rounds.
+    let ns = Object::new(ctx.clone())?;
+    ns.set("gunzip", Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<Vec<u8>> {
+        rusty_compression::gunzip(&bytes)
+            .map_err(|e| rquickjs::Error::new_from_js_message(
+                "compression", "gunzip", e.to_string()))
+    })?)?;
+    ns.set("inflate", Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<Vec<u8>> {
+        // Raw DEFLATE.
+        rusty_compression::inflate(&bytes)
+            .map_err(|e| rquickjs::Error::new_from_js_message(
+                "compression", "inflate", e.to_string()))
+    })?)?;
+    ns.set("http_deflate_inflate", Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<Vec<u8>> {
+        // Content-Encoding: deflate — accept both RFC 1950 zlib wrapping
+        // and raw RFC 1951 DEFLATE per real-world server behavior.
+        rusty_compression::http_deflate_inflate(&bytes)
+            .map_err(|e| rquickjs::Error::new_from_js_message(
+                "compression", "http_deflate_inflate", e.to_string()))
+    })?)?;
+    global.set("__compression", ns)?;
+    Ok(())
+}
 
 fn wire_dns<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     use std::net::ToSocketAddrs;
@@ -3230,7 +3263,41 @@ if (typeof globalThis.fetch === "undefined" ||
             // Build Response.
             const respHeaders = new Headers();
             for (const [n, v] of parsed.headers) respHeaders.append(n, v);
-            const resp = new Response(parsed.body, {
+            // Π1.3: Content-Encoding decode. Per RFC 7231 §3.1.2.2, the
+            // ordered list of codings was applied; reverse them to decode.
+            // We support gzip + deflate + identity in this round (brotli
+            // gated to Π1.3.c). After decoding, drop the Content-Encoding
+            // header so consumers see only the decoded body, and adjust
+            // Content-Length to match the decoded bytes.
+            let respBody = parsed.body;
+            const ceHeader = respHeaders.get("content-encoding");
+            if (ceHeader) {
+                // F8 (seed §A8 bug-catcher): rquickjs Vec<u8> FFI binding
+                // rejects Uint8Array. Convert to plain Array of numbers.
+                const toFfiBytes = (b) => {
+                    if (b == null) return [];
+                    const arr = new Array(b.length);
+                    for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                    return arr;
+                };
+                const codings = ceHeader.split(",").map(s => s.trim().toLowerCase()).filter(c => c.length > 0).reverse();
+                for (const c of codings) {
+                    if (c === "identity") continue;
+                    const inArr = toFfiBytes(respBody);
+                    if (c === "gzip" || c === "x-gzip") {
+                        respBody = new Uint8Array(globalThis.__compression.gunzip(inArr));
+                    } else if (c === "deflate") {
+                        respBody = new Uint8Array(globalThis.__compression.http_deflate_inflate(inArr));
+                    } else if (c === "br") {
+                        throw new TypeError("rusty-bun-host: brotli decoding not yet supported (Tier-Π1.3.c pending). Content-Encoding=" + ceHeader);
+                    } else {
+                        throw new TypeError("rusty-bun-host: unsupported Content-Encoding '" + c + "'");
+                    }
+                }
+                respHeaders.delete("content-encoding");
+                respHeaders.set("content-length", String(respBody.length));
+            }
+            const resp = new Response(respBody, {
                 status: parsed.status,
                 statusText: parsed.reason,
                 headers: respHeaders,

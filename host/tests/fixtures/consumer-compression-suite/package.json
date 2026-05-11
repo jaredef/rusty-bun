@@ -1,0 +1,8 @@
+{
+  "name": "consumer-compression-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #55: gzip + deflate decode composition via fetch() Content-Encoding. Tier-Π1.3 closure round (decode-only).",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

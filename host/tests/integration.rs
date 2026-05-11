@@ -2935,6 +2935,124 @@ fn with_fetch_target_server<F: FnOnce()>(f: F) {
     let _ = server_thread.join();
 }
 
+// Harness for the compression fixture. Precomputes gzip/zlib/raw-DEFLATE
+// payloads via system tools (gzip + python3), then serves them with the
+// appropriate Content-Encoding headers. Per seed §A8.16, the harness
+// shares the FETCH_TEST_PORT env var with the other fetch harnesses, so
+// the same FETCH_HARNESS_LOCK static is used.
+fn with_compression_target_server<F: FnOnce()>(f: F) {
+    use std::net::TcpListener;
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::sync::Mutex;
+    static COMPRESSION_HARNESS_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = COMPRESSION_HARNESS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    fn gzip_encode(input: &[u8]) -> Vec<u8> {
+        let mut c = Command::new("gzip").arg("-c").arg("-n")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        c.stdin.as_mut().unwrap().write_all(input).unwrap();
+        c.wait_with_output().unwrap().stdout
+    }
+    fn python_encode(script: &str, input: &[u8]) -> Option<Vec<u8>> {
+        let mut c = match Command::new("python3").arg("-c").arg(script)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn()
+        { Ok(c) => c, Err(_) => return None };
+        c.stdin.as_mut().unwrap().write_all(input).ok()?;
+        let out = c.wait_with_output().ok()?;
+        if out.status.success() { Some(out.stdout) } else { None }
+    }
+    let gz_small = gzip_encode(b"compressed payload");
+    let gz_ws = gzip_encode(b"ws-gzip");
+    let gz_large = {
+        let s: String = "abcde".repeat(1000);
+        gzip_encode(s.as_bytes())
+    };
+    let zlib_payload = python_encode(
+        "import sys, zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))",
+        b"zlib-wrapped",
+    ).expect("python3 zlib unavailable");
+    let raw_deflate = python_encode(
+        "import sys, zlib; d = zlib.compressobj(-1, zlib.DEFLATED, -15); \
+         sys.stdout.buffer.write(d.compress(sys.stdin.buffer.read()) + d.flush())",
+        b"raw-deflate",
+    ).expect("python3 raw-deflate unavailable");
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_thread = std::thread::spawn(move || {
+        // F9 rule (seed §A8.16): bound matches fixture's exact connection
+        // count. Fixture issues 6 real fetches (tests 1, 4, 5, 6, 7, 8;
+        // tests 2 and 3 inspect headers from test 1's response and do not
+        // open new connections).
+        for _ in 0..6 {
+            let (mut sock, _) = match listener.accept() { Ok(p) => p, Err(_) => break };
+            let mut buf = vec![0u8; 8192];
+            let n = match sock.read(&mut buf) { Ok(0) => continue, Ok(n) => n, Err(_) => continue };
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let first = req.lines().next().unwrap_or("");
+            let parts: Vec<&str> = first.split(' ').collect();
+            let path = parts.get(1).copied().unwrap_or("");
+            let (status, content_encoding, payload): (&str, Option<&str>, Vec<u8>) = match path {
+                "/gzip" => ("200 OK", Some("gzip"), gz_small.clone()),
+                "/gzip-ws-header" => ("200 OK", Some(" gzip "), gz_ws.clone()),
+                "/gzip-large" => ("200 OK", Some("gzip"), gz_large.clone()),
+                "/deflate-zlib" => ("200 OK", Some("deflate"), zlib_payload.clone()),
+                "/deflate-raw" => ("200 OK", Some("deflate"), raw_deflate.clone()),
+                "/identity" => ("200 OK", Some("identity"), b"uncompressed".to_vec()),
+                _ => ("404 Not Found", None, Vec::new()),
+            };
+            let mut header = format!("HTTP/1.1 {}\r\ncontent-type: text/plain\r\ncontent-length: {}\r\n",
+                                     status, payload.len());
+            if let Some(ce) = content_encoding {
+                header.push_str(&format!("content-encoding: {}\r\n", ce));
+            }
+            header.push_str("\r\n");
+            let _ = sock.write_all(header.as_bytes());
+            let _ = sock.write_all(&payload);
+        }
+    });
+    std::env::set_var("FETCH_TEST_PORT", port.to_string());
+    f();
+    std::env::remove_var("FETCH_TEST_PORT");
+    let _ = server_thread.join();
+}
+
+#[test]
+fn js_consumer_compression_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-compression-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_compression_target_server(|| {
+        let r = eval_esm_module(&path).unwrap();
+        let summary = r.lines().filter(|l| !l.is_empty()).last().unwrap_or("");
+        assert!(summary.starts_with("8/8"), "compression-suite failed: {}", r);
+    });
+}
+
+#[test]
+fn js_differential_consumer_compression_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-compression-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    let rb = {
+        let mut out = String::new();
+        with_compression_target_server(|| { out = eval_esm_module(&path).unwrap(); });
+        out.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string()
+    };
+    // Bun: no FETCH_TEST_PORT, all-skipped path → 8/8.
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    let bs_last = bs.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    assert_eq!(rb.trim(), bs_last, "compression-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
 #[test]
 fn js_consumer_dns_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -19,6 +19,7 @@ members = [
     "pilots/bun-file/derived",
     "pilots/bun-serve/derived",
     "pilots/bun-spawn/derived",
+    "pilots/compression/derived",
     "pilots/fetch-api/derived",
     "pilots/file/derived",
     "pilots/http-codec/derived",

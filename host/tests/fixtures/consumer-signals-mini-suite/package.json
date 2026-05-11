@@ -1,0 +1,9 @@
+{
+  "name": "consumer-signals-mini-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #43: vendored reactive signals library exercising dependency tracking + diamond resolution.",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "signals-mini": "^0.1.0" }
+}

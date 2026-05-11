@@ -37,6 +37,7 @@ Repository scaffold. Direction is pending. The keeper sets the work; this README
 
 ## Reading
 
+- [STRUCTURAL-FINDINGS.md](./STRUCTURAL-FINDINGS.md) — engagement-internal articulation of the structural patterns that crystallized during the runtime-derivation engagement: substrate-amortization staging, multi-tier closure, three SIPE-T thresholds observed, option-A architectural validation against Bun's own design, and the F-series silent-failure pattern.
 - [Doc 702 — AI-Assisted Cross-Language Code Translation](https://jaredfoy.com/resolve/doc/702-ai-assisted-cross-language-code-translation-as-a-pin-art-bilateral-under-sipe-t-threshold-conditions-reading-the-bun-zig-to-rust-port) — the apparatus-level reading
 - [Doc 700 — L2M Resolved](https://jaredfoy.com/resolve/doc/700-l2m-resolved-against-the-corpus-bipartite-mutual-information-scaling-as-empirical-grounding-for-the-pin-art-channel-ensemble) — the capacity-bound apparatus
 - [Doc 696 — Discrete Geometry](https://jaredfoy.com/resolve/doc/696-discrete-geometry-as-the-apparatus-that-names-the-polytope-inheritance-boundary) — the Welch-bound packing apparatus

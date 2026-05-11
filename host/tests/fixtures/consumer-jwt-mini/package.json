@@ -1,0 +1,8 @@
+{
+  "name": "consumer-jwt-mini",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #24: JWT HS256 sign/verify via vendored jwt-mini library that uses crypto.subtle.importKey/sign/verify internally. Validates the just-closed E.8 surface from a third-party-library context.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

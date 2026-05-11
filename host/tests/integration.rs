@@ -4221,3 +4221,59 @@ fn js_differential_consumer_pbkdf2_suite_matches_bun() {
     let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bs, "pbkdf2-suite mismatch:\nrb={}\nbun={}", rb, bs);
 }
+
+// ════════════════════ Bun.password (Π4.14.c) ════════════════════
+
+#[test]
+fn bun_password_hash_returns_phc_string() {
+    let r = rusty_bun_host::eval_string_async(r#"
+        const enc = await Bun.password.hash("hunter2", { timeCost: 2, memoryCost: 1024 });
+        return enc;
+    "#).unwrap();
+    assert!(r.starts_with("$argon2id$v=19$m=1024,t=2,p=1$"), "got: {}", r);
+    let parts: Vec<&str> = r.split('$').collect();
+    assert_eq!(parts.len(), 6);
+    assert!(!parts[4].is_empty() && !parts[5].is_empty());
+}
+
+#[test]
+fn bun_password_hash_verify_roundtrip() {
+    let r = rusty_bun_host::eval_string_async(r#"
+        const enc = await Bun.password.hash("correct horse", { timeCost: 2, memoryCost: 1024 });
+        const ok = await Bun.password.verify("correct horse", enc);
+        const bad = await Bun.password.verify("wrong", enc);
+        return (ok && !bad) ? "yes" : "no";
+    "#).unwrap();
+    assert_eq!(r, "yes");
+}
+
+#[test]
+fn bun_password_verify_upstream_phc_string() {
+    // PHC string produced by upstream `argon2` npm package, Bun runtime:
+    //   argon2.hash("hunter2", { type:argon2id, salt:"saltsaltsaltsalt",
+    //                            timeCost:2, memoryCost:1024, parallelism:1,
+    //                            hashLength:32, version:0x13 })
+    let r = rusty_bun_host::eval_string_async(r#"
+        const enc = "$argon2id$v=19$m=1024,t=2,p=1$c2FsdHNhbHRzYWx0c2FsdA$8Ay6op+3TmdW+WkH0Q1ci5BobdmPnyvp2rUlv7zx/IE";
+        const ok = await Bun.password.verify("hunter2", enc);
+        const bad = await Bun.password.verify("hunter3", enc);
+        return (ok && !bad) ? "ok" : "bad";
+    "#).unwrap();
+    assert_eq!(r, "ok");
+}
+
+#[test]
+fn bun_password_verify_via_argon2id_substrate() {
+    let r = rusty_bun_host::eval_string_async(r#"
+        const pwBytes = new TextEncoder().encode("pw");
+        const salt = new TextEncoder().encode("saltsaltsaltsalt");
+        const tag = new Uint8Array(globalThis.crypto.subtle.argon2idBytes(
+            Array.from(pwBytes), Array.from(salt), 2, 1024, 32,
+        ));
+        const b64nopad = (b) => { let s=""; for (const x of b) s+=String.fromCharCode(x); return btoa(s).replace(/=+$/,""); };
+        const enc = `$argon2id$v=19$m=1024,t=2,p=1$${b64nopad(salt)}$${b64nopad(tag)}`;
+        const ok = await Bun.password.verify("pw", enc);
+        return ok ? "ok" : "bad";
+    "#).unwrap();
+    assert_eq!(r, "ok");
+}

@@ -1682,6 +1682,19 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // Argon2id (RFC 9106). Memory-hard password hash. Backs Bun.password.
+    // Single-lane (p=1) substrate; multi-lane parallelism deferred.
+    subtle.set(
+        "argon2idBytes",
+        Function::new(ctx.clone(), |password: Vec<u8>, salt: Vec<u8>, t_cost: u32, m_kib: u32, tau: u32| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::argon2id_hash(
+                &password, &salt,
+                &rusty_web_crypto::Argon2idParams {
+                    t_cost, m_kib, parallelism: 1, tau,
+                },
+            ).map_err(|e| rquickjs::Error::new_from_js_message("Argon2id", "hash", e.to_string()))
+        })?,
+    )?;
     // Curve-parameterized ECDSA + ECDH over P-256 / P-384 / P-521.
     fn curve_by_name(name: &str) -> Result<rusty_web_crypto::Curve, String> {
         match name {
@@ -6843,8 +6856,10 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
     //   - Bun.gzipSync / Bun.gunzipSync / Bun.deflateSync / Bun.inflateSync —
     //     composes on Π1.3 compression decode (encode deferred).
     //
-    // Bun.password, Bun.SQLite, Bun.connect (real async), Bun.YAML —
+    // Bun.SQLite, Bun.connect (real async), Bun.YAML —
     // deferred per seed §VII.A and the architectural-cost discipline.
+    // Bun.password ships this round (Π4.14.c) on the rusty-web-crypto
+    // argon2id substrate.
     ctx.eval::<(), _>(r#"
         (function() {
             globalThis.Bun = globalThis.Bun || {};
@@ -7034,6 +7049,85 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
             Bun.sleepSync = function sleepSync(_ms) {
                 // No-op in test runtime: real wall-clock pauses aren't
                 // representable without real async I/O.
+            };
+
+            // Bun.password — argon2id-backed password hashing. Real Bun
+            // returns a PHC-format string from hash(); verify() parses
+            // the PHC string and recomputes. Defaults from Bun docs:
+            // algorithm=argon2id, time_cost=2, memory_cost=65536, hash_len=32.
+            // Single-lane (p=1) only; multi-lane support tracked separately.
+            const __b64nopad_encode = (bytes) => {
+                let s = "";
+                for (const b of bytes) s += String.fromCharCode(b);
+                return btoa(s).replace(/=+$/, "");
+            };
+            const __b64nopad_decode = (str) => {
+                const pad = (4 - (str.length % 4)) % 4;
+                const padded = str + "=".repeat(pad);
+                const bin = atob(padded);
+                const out = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+                return out;
+            };
+            const __argon2id_run = (password, salt, t, m, tau) => {
+                const pwBytes = typeof password === "string"
+                    ? new TextEncoder().encode(password)
+                    : (password instanceof Uint8Array ? password : new Uint8Array(password));
+                const out = globalThis.crypto.subtle.argon2idBytes(
+                    Array.from(pwBytes), Array.from(salt), t, m, tau,
+                );
+                return new Uint8Array(out);
+            };
+            const __ct_equal = (a, b) => {
+                if (a.length !== b.length) return false;
+                let diff = 0;
+                for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+                return diff === 0;
+            };
+
+            Bun.password = {
+                async hash(password, options) {
+                    const opts = (typeof options === "string") ? { algorithm: options } : (options || {});
+                    const algo = opts.algorithm || "argon2id";
+                    if (algo !== "argon2id" && algo !== "argon2d" && algo !== "argon2i") {
+                        throw new TypeError("Bun.password: only argon2 family supported");
+                    }
+                    if (algo !== "argon2id") {
+                        throw new TypeError("Bun.password: only argon2id supported in this build");
+                    }
+                    const timeCost = opts.timeCost ?? 2;
+                    const memoryCost = opts.memoryCost ?? 65536;
+                    const tau = 32;
+                    const salt = new Uint8Array(16);
+                    crypto.getRandomValues(salt);
+                    const tag = __argon2id_run(password, salt, timeCost, memoryCost, tau);
+                    const saltB64 = __b64nopad_encode(salt);
+                    const hashB64 = __b64nopad_encode(tag);
+                    return `$argon2id$v=19$m=${memoryCost},t=${timeCost},p=1$${saltB64}$${hashB64}`;
+                },
+                async verify(password, encoded, algorithm) {
+                    if (typeof encoded !== "string") return false;
+                    const parts = encoded.split("$");
+                    // Form: ["", "argon2id", "v=19", "m=...,t=...,p=...", saltB64, hashB64]
+                    if (parts.length !== 6) return false;
+                    if (parts[1] !== "argon2id") return false;
+                    if (algorithm && algorithm !== parts[1]) return false;
+                    if (parts[2] !== "v=19") return false;
+                    const paramSegs = parts[3].split(",");
+                    let m = 0, t = 0, p = 0;
+                    for (const seg of paramSegs) {
+                        const [k, v] = seg.split("=");
+                        if (k === "m") m = parseInt(v, 10);
+                        else if (k === "t") t = parseInt(v, 10);
+                        else if (k === "p") p = parseInt(v, 10);
+                    }
+                    if (p !== 1) return false;
+                    const salt = __b64nopad_decode(parts[4]);
+                    const expected = __b64nopad_decode(parts[5]);
+                    const tau = expected.length;
+                    const got = __argon2id_run(password, salt, t, m, tau);
+                    return __ct_equal(got, expected);
+                },
             };
         })();
     "#)?;

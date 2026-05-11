@@ -1,0 +1,8 @@
+{
+  "name": "consumer-ws-primitives-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #65: globalThis.__ws primitives (frame codec + handshake key). Tier-Π1.5.b structural test.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

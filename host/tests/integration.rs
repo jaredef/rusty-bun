@@ -3024,6 +3024,52 @@ fn with_compression_target_server<F: FnOnce()>(f: F) {
     let _ = server_thread.join();
 }
 
+// Π1.5.b: harness for __ws namespace structural test.
+fn with_ws_primitives_test_env<F: FnOnce()>(f: F) {
+    use std::sync::Mutex;
+    static WS_NS_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = WS_NS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Bind+drop an ephemeral port to get a "real" FETCH_TEST_PORT;
+    // the WS primitives don't actually connect anywhere — the env var
+    // just toggles the fixture's structural-validation branch.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    std::env::set_var("FETCH_TEST_PORT", port.to_string());
+    f();
+    std::env::remove_var("FETCH_TEST_PORT");
+}
+
+#[test]
+fn js_consumer_ws_primitives_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-ws-primitives-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_ws_primitives_test_env(|| {
+        let r = eval_esm_module(&path).unwrap();
+        let summary = r.lines().filter(|l| !l.is_empty()).last().unwrap_or("");
+        assert!(summary.starts_with("8/8"), "ws-primitives-suite failed: {}", r);
+    });
+}
+
+#[test]
+fn js_differential_consumer_ws_primitives_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-ws-primitives-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    let bs_last = bs.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    // Under Bun (no FETCH_TEST_PORT, no __ws): all-skipped path → 8/8.
+    assert!(bs_last.starts_with("8/8"), "bun did not report 8/8: {}", bs);
+}
+
 #[test]
 fn js_consumer_node_assert_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

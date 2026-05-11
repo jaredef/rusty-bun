@@ -24,6 +24,7 @@ rusty-bun-spawn = { path = "../pilots/bun-spawn/derived" }
 rusty-compression = { path = "../pilots/compression/derived" }
 rusty-fetch-api = { path = "../pilots/fetch-api/derived" }
 rusty-tls = { path = "../pilots/tls/derived" }
+rusty-websocket = { path = "../pilots/websocket/derived" }
 rusty-http-codec = { path = "../pilots/http-codec/derived" }
 rusty-sockets = { path = "../pilots/sockets/derived" }
 rusty-node-fs = { path = "../pilots/node-fs/derived" }

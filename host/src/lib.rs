@@ -360,6 +360,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_dns(&ctx, &global)?;
     wire_compression(&ctx, &global)?;
     wire_tls(&ctx, &global)?;
+    wire_websocket(&ctx, &global)?;
     wire_bun_namespace_static(&ctx, &global)?;
     install_bun_namespace_js(&ctx)?;
     // install_dns_js extends globalThis.Bun.dns, so it MUST run after
@@ -939,6 +940,94 @@ fn json_str(s: &str) -> String {
 // caller is responsible for not blocking the main JS thread in a
 // production server (a higher-level Bun.listen async wrapper will land
 // in a follow-on round).
+
+fn wire_websocket<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    // Π1.5.b: WebSocket primitive bindings. Exposes the
+    // pilots/websocket/derived/ primitives under globalThis.__ws so a
+    // future JS-side WebSocket class can compose frame encode/decode
+    // and handshake key derivation on top of the existing TCP / __tls
+    // transports and the http-codec Upgrade flow.
+    //
+    // Per seed §A8.2: stateless Rust helpers, no captured state.
+    // The JS-side WebSocket class lands in Π1.5.c with the live
+    // connection driver + Tier-J fixture.
+    let ns = Object::new(ctx.clone())?;
+
+    // generate_key() -> String
+    ns.set("generate_key", Function::new(ctx.clone(), || -> JsResult<String> {
+        rusty_websocket::generate_key()
+            .map_err(|e| rquickjs::Error::new_from_js_message("ws", "generate_key", e.to_string()))
+    })?)?;
+
+    // derive_accept(key) -> String
+    ns.set("derive_accept", Function::new(ctx.clone(), |key: String| -> String {
+        rusty_websocket::derive_accept(&key)
+    })?)?;
+
+    // verify_accept(key, server_accept) -> bool
+    ns.set("verify_accept", Function::new(ctx.clone(),
+        |key: String, server: String| -> bool {
+            rusty_websocket::verify_accept(&key, &server)
+        })?)?;
+
+    // encode_frame(fin, opcode, mask_optional, payload) -> Vec<u8>
+    // mask_optional is either an empty Array (no mask) or a 4-element
+    // Array<u8> (use this mask). opcode values per Opcode enum.
+    ns.set("encode_frame", Function::new(ctx.clone(),
+        |fin: bool, opcode: u8, mask_arr: Vec<u8>, payload: Vec<u8>|
+            -> JsResult<Vec<u8>> {
+            use rusty_websocket::*;
+            let op = Opcode::from_u8(opcode)
+                .ok_or_else(|| rquickjs::Error::new_from_js_message(
+                    "ws", "encode_frame", format!("invalid opcode 0x{:x}", opcode)))?;
+            let mask = if mask_arr.is_empty() { None }
+                else if mask_arr.len() == 4 {
+                    Some([mask_arr[0], mask_arr[1], mask_arr[2], mask_arr[3]])
+                } else {
+                    return Err(rquickjs::Error::new_from_js_message(
+                        "ws", "encode_frame", "mask must be empty or 4 bytes"));
+                };
+            let frame = Frame { fin, opcode: op, mask, payload };
+            encode_frame(&frame)
+                .map_err(|e| rquickjs::Error::new_from_js_message("ws", "encode_frame", e.to_string()))
+        })?)?;
+
+    // decode_frame_json(bytes) -> JSON string with { fin, opcode, masked, payload, consumed }.
+    // rquickjs return-type limitations make a flat JSON string the cleanest
+    // wire shape, per the existing pattern in HTTP codec wiring.
+    ns.set("decode_frame_json", Function::new(ctx.clone(),
+        |bytes: Vec<u8>| -> JsResult<String> {
+            use rusty_websocket::*;
+            let (frame, consumed) = decode_frame(&bytes)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "ws", "decode_frame", e.to_string()))?;
+            let mut s = String::from("{");
+            s.push_str(&format!("\"fin\":{}", frame.fin));
+            s.push_str(&format!(",\"opcode\":{}", frame.opcode as u8));
+            s.push_str(&format!(",\"masked\":{}", frame.mask.is_some()));
+            s.push_str(&format!(",\"consumed\":{}", consumed));
+            s.push_str(",\"payload\":[");
+            for (i, b) in frame.payload.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&b.to_string());
+            }
+            s.push_str("]}");
+            Ok(s)
+        })?)?;
+
+    // encode_close(code_optional, reason) -> Vec<u8>
+    // code_optional: 0 means absent (since u16 has no canonical "none");
+    // any non-zero value is sent. RFC 6455 reserves codes 0-999 so 0
+    // unambiguously signals absence here.
+    ns.set("encode_close", Function::new(ctx.clone(),
+        |code: u16, reason: String| -> Vec<u8> {
+            let code_opt = if code == 0 { None } else { Some(code) };
+            rusty_websocket::encode_close(code_opt, &reason)
+        })?)?;
+
+    global.set("__ws", ns)?;
+    Ok(())
+}
 
 fn wire_tls<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     // Π1.4.h: TLS 1.3 client integration. globalThis.__tls.connect(host,

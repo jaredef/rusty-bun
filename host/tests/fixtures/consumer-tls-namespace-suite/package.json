@@ -1,0 +1,8 @@
+{
+  "name": "consumer-tls-namespace-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #64: globalThis.__tls namespace API-shape validation. Tier-Π1.4.h structural test (does not exercise the live handshake; that's covered by Π1.4.g's slow pilot test which is queued for diagnosis in Π1.4.i).",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

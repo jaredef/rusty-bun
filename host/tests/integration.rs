@@ -3052,6 +3052,59 @@ fn js_differential_consumer_node_assert_suite_matches_bun() {
     assert_eq!(rb_last, bs_last, "node-assert-suite mismatch:\nrb={}\nbun={}", rb, bs);
 }
 
+// Π1.4.h: harness for __tls namespace structural test.
+fn with_tls_namespace_test_env<F: FnOnce()>(f: F) {
+    use std::sync::Mutex;
+    static TLS_NS_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = TLS_NS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Bind an ephemeral port and use it as FETCH_TEST_PORT so the
+    // fixture takes the structural-validation path (vs the skipped
+    // path). We don't actually serve TLS — the fixture only tests
+    // namespace presence + error-path semantics that don't require a
+    // live handshake.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Drop the listener immediately so the port becomes unavailable;
+    // tls.connect to it will fail with a connect error, which is what
+    // the "tls-connect-rejects-empty-ca" test expects.
+    drop(listener);
+    std::env::set_var("FETCH_TEST_PORT", port.to_string());
+    f();
+    std::env::remove_var("FETCH_TEST_PORT");
+}
+
+#[test]
+fn js_consumer_tls_namespace_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-tls-namespace-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    with_tls_namespace_test_env(|| {
+        let r = eval_esm_module(&path).unwrap();
+        let summary = r.lines().filter(|l| !l.is_empty()).last().unwrap_or("");
+        assert!(summary.starts_with("8/8"), "tls-namespace-suite failed: {}", r);
+    });
+}
+
+#[test]
+fn js_differential_consumer_tls_namespace_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-tls-namespace-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    let bs_last = bs.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    // Under Bun (no FETCH_TEST_PORT, no __tls), the fixture takes the
+    // all-skipped-noport path → 8/8.
+    assert!(bs_last.starts_with("8/8"),
+        "bun did not report 8/8 (env-isolation issue): {}", bs);
+}
+
 #[test]
 fn js_consumer_bun_serve_autoserve_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

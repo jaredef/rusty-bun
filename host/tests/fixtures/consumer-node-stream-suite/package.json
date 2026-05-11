@@ -1,0 +1,8 @@
+{
+  "name": "consumer-node-stream-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #59: node:stream Readable/Writable/Transform/PassThrough/pipeline. Tier-Π3.9 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

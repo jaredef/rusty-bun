@@ -3025,6 +3025,34 @@ fn with_compression_target_server<F: FnOnce()>(f: F) {
 }
 
 #[test]
+fn js_consumer_node_stream_suite_runs_clean() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-node-stream-suite/src/main.js");
+    let r = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let summary = r.lines().filter(|l| !l.is_empty()).last().unwrap_or("");
+    assert!(summary.starts_with("8/8"), "node-stream-suite failed: {}", r);
+}
+
+#[test]
+fn js_differential_consumer_node_stream_suite_matches_bun() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-node-stream-suite/src/main.js");
+    let path = fixture.to_str().unwrap().to_string();
+    let rb = eval_esm_module(&path).unwrap();
+    let rb_last = rb.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    let bun = match std::process::Command::new("bun").arg(&path).output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    if !bun.status.success() {
+        panic!("bun stderr: {}", String::from_utf8_lossy(&bun.stderr));
+    }
+    let bs = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    let bs_last = bs.lines().filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    assert_eq!(rb_last, bs_last, "node-stream-suite mismatch:\nrb={}\nbun={}", rb, bs);
+}
+
+#[test]
 fn js_consumer_node_util_suite_runs_clean() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/consumer-node-util-suite/src/main.js");

@@ -230,7 +230,9 @@ fn is_node_builtin(name: &str) -> bool {
         "node:dns/promises" | "dns/promises" |
         "node:events" | "events" |
         "node:util" | "util" |
-        "node:util/types" | "util/types"
+        "node:util/types" | "util/types" |
+        "node:stream" | "stream" |
+        "node:stream/promises" | "stream/promises"
     )
 }
 
@@ -268,6 +270,11 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "isPromise", "isDate", "isRegExp", "isMap", "isSet",
             "isArrayBuffer", "isTypedArray", "isUint8Array", "isInt8Array",
             "isAsyncFunction", "isGeneratorFunction"]),
+        "node:stream" | "stream" => ("nodeStream", &["Readable", "Writable",
+            "Duplex", "Transform", "PassThrough", "pipeline", "finished",
+            "Stream"]),
+        "node:stream/promises" | "stream/promises" => ("nodeStreamPromises",
+            &["pipeline", "finished"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -341,6 +348,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_http_js(&ctx)?;
     install_node_events_js(&ctx)?;
     install_node_util_js(&ctx)?;
+    install_node_stream_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -4776,6 +4784,10 @@ const COMMONJS_LOADER_JS: &str = r#"
         "util": () => globalThis.nodeUtil,
         "node:util/types": () => globalThis.nodeUtilTypes,
         "util/types": () => globalThis.nodeUtilTypes,
+        "node:stream": () => globalThis.nodeStream,
+        "stream": () => globalThis.nodeStream,
+        "node:stream/promises": () => globalThis.nodeStreamPromises,
+        "stream/promises": () => globalThis.nodeStreamPromises,
     };
 
     function loadModule(absPath) {
@@ -5327,6 +5339,391 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 TextDecoder: globalThis.TextDecoder,
             };
             globalThis.nodeUtilTypes = types;
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    // Π3.9: node:stream. Distinct from web-streams (already installed
+    // by install_streams_js as ReadableStream/WritableStream/
+    // TransformStream); node:stream is the Node convention with
+    // EventEmitter-driven on('data')/on('end')/on('error') + push/
+    // write/end internal API.
+    //
+    // Per M9 (spec-first): minimum viable load-bearing subset for real
+    // npm consumers. High-water-mark precision, encoding parsing,
+    // objectMode subtleties deferred to follow-on if a consumer
+    // surfaces them.
+    //
+    // Per seed §A8.2: pure JS-side classes, no closure-captured Rust state.
+    // Composes on globalThis.EventEmitter from Π3.8.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const EE = globalThis.EventEmitter;
+
+            // ─── Readable ─────────────────────────────────────────────
+            function Readable(options) {
+                EE.call(this);
+                options = options || {};
+                this._readableBuffer = [];
+                this._readableEnded = false;
+                this._readableDestroyed = false;
+                this._readableFlowing = null;  // null/true/false per Node
+                this._readableHighWaterMark = options.highWaterMark || 16 * 1024;
+                this.readable = true;
+                if (typeof options.read === "function") this._read = options.read;
+                if (typeof options.destroy === "function") this._destroy = options.destroy;
+            }
+            Readable.prototype = Object.create(EE.prototype);
+            Readable.prototype.constructor = Readable;
+            Readable.prototype._read = function _read(_size) {};
+            Readable.prototype.push = function push(chunk) {
+                if (this._readableEnded) return false;
+                if (chunk === null) {
+                    this._readableEnded = true;
+                    // Schedule 'end' if no data buffered.
+                    if (this._readableBuffer.length === 0) {
+                        queueMicrotask(() => { try { this.emit("end"); } catch (_) {} });
+                    }
+                    return false;
+                }
+                this._readableBuffer.push(chunk);
+                // If flowing, dispatch immediately.
+                if (this._readableFlowing === true) {
+                    queueMicrotask(() => this._drainFlowing());
+                }
+                return true;
+            };
+            Readable.prototype._drainFlowing = function _drainFlowing() {
+                while (this._readableFlowing === true && this._readableBuffer.length > 0) {
+                    const chunk = this._readableBuffer.shift();
+                    this.emit("data", chunk);
+                }
+                if (this._readableFlowing === true && this._readableEnded) {
+                    this.emit("end");
+                    return;
+                }
+                // Pull-driven: after the buffer drains, ask _read for more.
+                // The subclass-via-options pattern depends on this; without it,
+                // _read fires once and the stream stalls. Scheduled rather than
+                // called directly to keep microtask ordering predictable.
+                if (this._readableFlowing === true && !this._readableEnded) {
+                    queueMicrotask(() => {
+                        if (!this._readableEnded && this._readableFlowing === true) {
+                            try { this._read(this._readableHighWaterMark); } catch (e) { this.emit("error", e); }
+                        }
+                    });
+                }
+            };
+            Readable.prototype.read = function read(_n) {
+                if (this._readableBuffer.length > 0) return this._readableBuffer.shift();
+                return null;
+            };
+            Readable.prototype.on = function on(event, listener) {
+                EE.prototype.on.call(this, event, listener);
+                if (event === "data" && this._readableFlowing === null) {
+                    this._readableFlowing = true;
+                    queueMicrotask(() => {
+                        try { this._read(this._readableHighWaterMark); } catch (e) { this.emit("error", e); }
+                        this._drainFlowing();
+                    });
+                }
+                return this;
+            };
+            Readable.prototype.pause = function pause() {
+                this._readableFlowing = false;
+                return this;
+            };
+            Readable.prototype.resume = function resume() {
+                if (!this._readableFlowing) {
+                    this._readableFlowing = true;
+                    queueMicrotask(() => this._drainFlowing());
+                }
+                return this;
+            };
+            Readable.prototype.destroy = function destroy(err) {
+                this._readableDestroyed = true;
+                this.readable = false;
+                try { this._destroy && this._destroy(err, () => {}); } catch (_) {}
+                if (err) queueMicrotask(() => this.emit("error", err));
+                queueMicrotask(() => this.emit("close"));
+                return this;
+            };
+            Readable.prototype[Symbol.asyncIterator] = function() {
+                const self = this;
+                return {
+                    next() {
+                        return new Promise((resolve, reject) => {
+                            if (self._readableBuffer.length > 0) {
+                                resolve({ value: self._readableBuffer.shift(), done: false });
+                                return;
+                            }
+                            if (self._readableEnded) {
+                                resolve({ value: undefined, done: true });
+                                return;
+                            }
+                            const onData = (chunk) => {
+                                self.off("end", onEnd);
+                                self.off("error", onErr);
+                                resolve({ value: chunk, done: false });
+                            };
+                            const onEnd = () => {
+                                self.off("data", onData);
+                                self.off("error", onErr);
+                                resolve({ value: undefined, done: true });
+                            };
+                            const onErr = (e) => {
+                                self.off("data", onData);
+                                self.off("end", onEnd);
+                                reject(e);
+                            };
+                            self.once("data", onData);
+                            self.once("end", onEnd);
+                            self.once("error", onErr);
+                            self.resume();
+                        });
+                    },
+                    return() {
+                        self.destroy();
+                        return Promise.resolve({ value: undefined, done: true });
+                    },
+                };
+            };
+            Readable.prototype.pipe = function pipe(dst, _opts) {
+                const src = this;
+                src.on("data", (chunk) => {
+                    const more = dst.write(chunk);
+                    if (more === false) src.pause();
+                });
+                src.on("end", () => dst.end());
+                src.on("error", (err) => dst.destroy(err));
+                dst.on("drain", () => src.resume());
+                return dst;
+            };
+            Readable.from = function from(iter, _opts) {
+                const r = new Readable();
+                r._read = function() {};
+                (async () => {
+                    try {
+                        for await (const chunk of iter) {
+                            r.push(chunk);
+                        }
+                        r.push(null);
+                    } catch (e) {
+                        r.destroy(e);
+                    }
+                })();
+                return r;
+            };
+
+            // ─── Writable ─────────────────────────────────────────────
+            function Writable(options) {
+                EE.call(this);
+                options = options || {};
+                this._writableEnded = false;
+                this._writableDestroyed = false;
+                this._writableHighWaterMark = options.highWaterMark || 16 * 1024;
+                this._writableQueue = [];
+                this._writing = false;
+                this.writable = true;
+                if (typeof options.write === "function") this._write = options.write;
+                if (typeof options.final === "function") this._final = options.final;
+                if (typeof options.destroy === "function") this._destroy = options.destroy;
+            }
+            Writable.prototype = Object.create(EE.prototype);
+            Writable.prototype.constructor = Writable;
+            Writable.prototype._write = function _write(_chunk, _enc, cb) { cb(); };
+            Writable.prototype.write = function write(chunk, encOrCb, maybeCb) {
+                if (this._writableEnded) {
+                    const err = new Error("write after end");
+                    queueMicrotask(() => this.emit("error", err));
+                    return false;
+                }
+                let encoding, cb;
+                if (typeof encOrCb === "function") { cb = encOrCb; encoding = "utf8"; }
+                else { encoding = encOrCb || "utf8"; cb = maybeCb; }
+                this._writableQueue.push({ chunk, encoding, cb });
+                this._drainWritable();
+                return this._writableQueue.length < (this._writableHighWaterMark / 16);
+            };
+            Writable.prototype._drainWritable = function _drainWritable() {
+                if (this._writing) return;
+                const item = this._writableQueue.shift();
+                if (!item) {
+                    // Empty queue. If we were under high-water-mark and now drained, emit 'drain'.
+                    queueMicrotask(() => this.emit("drain"));
+                    return;
+                }
+                this._writing = true;
+                try {
+                    this._write(item.chunk, item.encoding, (err) => {
+                        this._writing = false;
+                        if (item.cb) try { item.cb(err); } catch (_) {}
+                        if (err) {
+                            queueMicrotask(() => this.emit("error", err));
+                            return;
+                        }
+                        this._drainWritable();
+                    });
+                } catch (e) {
+                    this._writing = false;
+                    if (item.cb) try { item.cb(e); } catch (_) {}
+                    queueMicrotask(() => this.emit("error", e));
+                }
+            };
+            Writable.prototype.end = function end(chunkOrCb, encOrCb, maybeCb) {
+                let chunk, encoding, cb;
+                if (typeof chunkOrCb === "function") { cb = chunkOrCb; }
+                else { chunk = chunkOrCb; if (typeof encOrCb === "function") cb = encOrCb; else { encoding = encOrCb; cb = maybeCb; } }
+                if (chunk !== undefined && chunk !== null) this.write(chunk, encoding);
+                this._writableEnded = true;
+                const finish = () => {
+                    const doFinish = () => {
+                        if (cb) try { cb(); } catch (_) {}
+                        this.emit("finish");
+                    };
+                    if (this._final) {
+                        this._final((err) => {
+                            if (err) queueMicrotask(() => this.emit("error", err));
+                            else queueMicrotask(doFinish);
+                        });
+                    } else {
+                        queueMicrotask(doFinish);
+                    }
+                };
+                // Wait for queue to drain.
+                const waitDrain = () => {
+                    if (this._writableQueue.length === 0 && !this._writing) finish();
+                    else queueMicrotask(waitDrain);
+                };
+                waitDrain();
+                return this;
+            };
+            Writable.prototype.destroy = function destroy(err) {
+                this._writableDestroyed = true;
+                this.writable = false;
+                try { this._destroy && this._destroy(err, () => {}); } catch (_) {}
+                if (err) queueMicrotask(() => this.emit("error", err));
+                queueMicrotask(() => this.emit("close"));
+                return this;
+            };
+            Writable.prototype.cork = function cork() { return this; };
+            Writable.prototype.uncork = function uncork() { return this; };
+
+            // ─── Duplex ───────────────────────────────────────────────
+            function Duplex(options) {
+                Readable.call(this, options);
+                Writable.call(this, options);
+            }
+            Duplex.prototype = Object.create(Readable.prototype);
+            Object.assign(Duplex.prototype, Writable.prototype);
+            Duplex.prototype.constructor = Duplex;
+
+            // ─── Transform ────────────────────────────────────────────
+            function Transform(options) {
+                Duplex.call(this, options);
+                options = options || {};
+                if (typeof options.transform === "function") this._transform = options.transform;
+                if (typeof options.flush === "function") this._flush = options.flush;
+            }
+            Transform.prototype = Object.create(Duplex.prototype);
+            Transform.prototype.constructor = Transform;
+            Transform.prototype._transform = function _transform(chunk, _enc, cb) { cb(null, chunk); };
+            // Override _write to route through _transform.
+            Transform.prototype._write = function _write(chunk, enc, cb) {
+                const self = this;
+                self._transform(chunk, enc, (err, transformed) => {
+                    if (err) { cb(err); return; }
+                    if (transformed !== undefined && transformed !== null) self.push(transformed);
+                    cb();
+                });
+            };
+            Transform.prototype._final = function _final(cb) {
+                if (this._flush) {
+                    this._flush((err, tail) => {
+                        if (err) { cb(err); return; }
+                        if (tail !== undefined && tail !== null) this.push(tail);
+                        this.push(null);
+                        cb();
+                    });
+                } else {
+                    this.push(null);
+                    cb();
+                }
+            };
+
+            // ─── PassThrough ──────────────────────────────────────────
+            function PassThrough(options) {
+                Transform.call(this, options);
+            }
+            PassThrough.prototype = Object.create(Transform.prototype);
+            PassThrough.prototype.constructor = PassThrough;
+            PassThrough.prototype._transform = function(chunk, _enc, cb) { cb(null, chunk); };
+
+            // ─── pipeline + finished ──────────────────────────────────
+            function pipeline(...args) {
+                let cb = typeof args[args.length - 1] === "function" ? args.pop() : null;
+                const streams = args;
+                if (streams.length < 2) {
+                    const err = new TypeError("pipeline: need at least 2 streams");
+                    if (cb) queueMicrotask(() => cb(err));
+                    return;
+                }
+                let done = false;
+                const finish = (err) => {
+                    if (done) return;
+                    done = true;
+                    if (cb) queueMicrotask(() => cb(err || null));
+                };
+                for (let i = 0; i < streams.length - 1; i++) {
+                    streams[i].on("error", finish);
+                    streams[i].pipe(streams[i + 1]);
+                }
+                const last = streams[streams.length - 1];
+                last.on("error", finish);
+                last.on("finish", () => finish());
+                last.on("end", () => finish());
+                return last;
+            }
+            function finished(stream, cb) {
+                let done = false;
+                const fire = (err) => {
+                    if (done) return;
+                    done = true;
+                    queueMicrotask(() => cb(err || null));
+                };
+                stream.on("end", () => fire());
+                stream.on("finish", () => fire());
+                stream.on("error", (e) => fire(e));
+                stream.on("close", () => fire());
+            }
+
+            // Promise variants for node:stream/promises.
+            function pipelinePromise(...args) {
+                return new Promise((resolve, reject) => {
+                    pipeline(...args, (err) => err ? reject(err) : resolve());
+                });
+            }
+            function finishedPromise(stream) {
+                return new Promise((resolve, reject) => {
+                    finished(stream, (err) => err ? reject(err) : resolve());
+                });
+            }
+
+            // Stream is the legacy ancestor; node aliases stream = Stream
+            // for backward-compat. We expose all classes under one namespace.
+            const nodeStream = {
+                Readable, Writable, Duplex, Transform, PassThrough,
+                pipeline, finished,
+                Stream: Readable,  // legacy alias; npm packages rarely use it.
+            };
+            // Self-reference for default-import = module-object pattern.
+            globalThis.nodeStream = nodeStream;
+            globalThis.nodeStreamPromises = {
+                pipeline: pipelinePromise,
+                finished: finishedPromise,
+            };
         })();
     "#)?;
     Ok(())

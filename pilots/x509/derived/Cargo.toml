@@ -1,0 +1,11 @@
+[package]
+name = "rusty-x509"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rusty-asn1-der = { path = "../../asn1-der/derived" }
+rusty-web-crypto = { path = "../../web-crypto/derived" }

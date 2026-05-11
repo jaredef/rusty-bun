@@ -33,6 +33,7 @@ members = [
     "pilots/textencoder/derived",
     "pilots/urlsearchparams/derived",
     "pilots/web-crypto/derived",
+    "pilots/x509/derived",
     # JS host integration (trajectory Tier-H, seed §VII Sub-criterion 4)
     "host",
 ]

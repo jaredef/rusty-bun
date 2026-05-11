@@ -31,6 +31,7 @@ members = [
     "pilots/streams/derived",
     "pilots/structured-clone/derived",
     "pilots/textencoder/derived",
+    "pilots/tls/derived",
     "pilots/urlsearchparams/derived",
     "pilots/web-crypto/derived",
     "pilots/x509/derived",

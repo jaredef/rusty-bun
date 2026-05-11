@@ -1,0 +1,8 @@
+{
+  "name": "consumer-sha1-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #25: SHA-1 + HMAC-SHA-1 via crypto.subtle (legacy but widely-used: OAuth 1.0, AWS SigV4 legacy, git objects, older webhook schemes).",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

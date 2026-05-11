@@ -617,6 +617,20 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::hmac_sha256(&key, &data).to_vec()
         })?,
     )?;
+    // SHA-1 digest + HMAC-SHA-1 — legacy but still in use (OAuth 1.0,
+    // older AWS SigV4 contexts, some webhook schemes, git object hashes).
+    subtle.set(
+        "digestSha1Bytes",
+        Function::new(ctx.clone(), |data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::digest_sha1(&data).to_vec()
+        })?,
+    )?;
+    subtle.set(
+        "hmacSha1Bytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::hmac_sha1(&key, &data).to_vec()
+        })?,
+    )?;
     // Constant-time comparison helper for verify.
     subtle.set(
         "timingSafeEqualBytes",
@@ -672,17 +686,30 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 throw new TypeError("WebCrypto: invalid algorithm");
             }
 
+            // Supported hash → (digest fn, hmac fn, spec-name, output bytes).
+            const HASHES = {
+                "SHA256": {
+                    spec: "SHA-256",
+                    digest: (b) => subtle.digestSha256Bytes(b),
+                    hmac: (k, b) => subtle.hmacSha256Bytes(k, b),
+                },
+                "SHA1": {
+                    spec: "SHA-1",
+                    digest: (b) => subtle.digestSha1Bytes(b),
+                    hmac: (k, b) => subtle.hmacSha1Bytes(k, b),
+                },
+            };
+
             // digest(algorithm, data) → Promise<ArrayBuffer>
             subtle.digest = async function digest(algorithm, data) {
                 const alg = normalizeAlg(algorithm);
-                if (alg.name !== "SHA256") {
-                    throw new Error("Unsupported digest algorithm: " + alg.name);
-                }
-                return toArrayBuffer(subtle.digestSha256Bytes(toBytes(data)));
+                const h = HASHES[alg.name];
+                if (!h) throw new Error("Unsupported digest algorithm: " + alg.name);
+                return toArrayBuffer(h.digest(toBytes(data)));
             };
 
             // importKey(format, keyData, algorithm, extractable, keyUsages)
-            // Pilot scope: format="raw", algorithm={name:"HMAC", hash:"SHA-256"}.
+            // Pilot scope: format="raw", algorithm={name:"HMAC", hash:"SHA-256"|"SHA-1"}.
             // Returns a CryptoKey-shaped object whose private _bytes carry the
             // key material. Async per spec (returns Promise).
             subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
@@ -693,18 +720,25 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 if (alg.name !== "HMAC") {
                     throw new Error("Unsupported key algorithm: " + alg.name);
                 }
-                if (alg.hash !== "SHA256") {
-                    throw new Error("Unsupported HMAC hash: " + alg.hash);
-                }
+                const h = HASHES[alg.hash];
+                if (!h) throw new Error("Unsupported HMAC hash: " + alg.hash);
                 const bytes = toBytes(keyData);
                 return {
                     type: "secret",
                     extractable: !!extractable,
-                    algorithm: { name: "HMAC", hash: { name: "SHA-256" }, length: bytes.length * 8 },
+                    algorithm: { name: "HMAC", hash: { name: h.spec }, length: bytes.length * 8 },
                     usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
-                    _bytes: bytes,  // implementation-private
+                    _bytes: bytes,
+                    _hashName: alg.hash,  // implementation-private; pinned at import
                 };
             };
+
+            function keyHash(key) {
+                const name = key && key._hashName;
+                const h = HASHES[name];
+                if (!h) throw new Error("Unsupported HMAC hash on key: " + name);
+                return h;
+            }
 
             // sign(algorithm, key, data) → Promise<ArrayBuffer>
             subtle.sign = async function sign(algorithm, key, data) {
@@ -718,7 +752,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 if (!key.usages.includes("sign")) {
                     throw new Error("Key not usable for sign");
                 }
-                return toArrayBuffer(subtle.hmacSha256Bytes(key._bytes, toBytes(data)));
+                const h = keyHash(key);
+                return toArrayBuffer(h.hmac(key._bytes, toBytes(data)));
             };
 
             // verify(algorithm, key, signature, data) → Promise<boolean>
@@ -733,7 +768,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 if (!key.usages.includes("verify")) {
                     throw new Error("Key not usable for verify");
                 }
-                const expected = subtle.hmacSha256Bytes(key._bytes, toBytes(data));
+                const h = keyHash(key);
+                const expected = h.hmac(key._bytes, toBytes(data));
                 return subtle.timingSafeEqualBytes(toBytes(signature), expected);
             };
         })();

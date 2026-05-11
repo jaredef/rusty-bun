@@ -136,6 +136,100 @@ pub fn digest_sha256_hex(data: &[u8]) -> String {
     s
 }
 
+// ───────────────────────────── SHA-1 ──────────────────────────────────
+// FIPS 180-4 reference implementation. SHA-1 is cryptographically broken
+// for collision resistance (Shattered, 2017) but remains in scope because
+// real consumer code still uses HMAC-SHA-1 (AWS SigV4 legacy, OAuth 1.0,
+// some webhook signature schemes, git object identification). Pilot
+// implementation here is for spec-correctness against existing usage,
+// not endorsement.
+
+const SHA1_H0: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+
+pub fn digest_sha1(data: &[u8]) -> [u8; 20] {
+    let mut h = SHA1_H0;
+    let mut padded: Vec<u8> = data.to_vec();
+    let bit_len = (data.len() as u64) * 8;
+    padded.push(0x80);
+    while padded.len() % 64 != 56 { padded.push(0); }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in padded.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([chunk[i*4], chunk[i*4+1], chunk[i*4+2], chunk[i*4+3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for i in 0..80 {
+            let (f, k) = if i < 20 {
+                ((b & c) | (!b & d), 0x5a827999_u32)
+            } else if i < 40 {
+                (b ^ c ^ d, 0x6ed9eba1_u32)
+            } else if i < 60 {
+                ((b & c) | (b & d) | (c & d), 0x8f1bbcdc_u32)
+            } else {
+                (b ^ c ^ d, 0xca62c1d6_u32)
+            };
+            let t = a.rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(w[i]);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = t;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for i in 0..5 {
+        out[i*4..i*4+4].copy_from_slice(&h[i].to_be_bytes());
+    }
+    out
+}
+
+pub fn digest_sha1_hex(data: &[u8]) -> String {
+    let bytes = digest_sha1(data);
+    let mut s = String::with_capacity(40);
+    for b in &bytes { s.push_str(&format!("{:02x}", b)); }
+    s
+}
+
+/// HMAC-SHA-1 — RFC 2104 construction over SHA-1 with 64-byte block.
+pub fn hmac_sha1(key: &[u8], message: &[u8]) -> [u8; 20] {
+    const BLOCK: usize = 64;
+    let mut key_pad = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        let hashed = digest_sha1(key);
+        key_pad[..20].copy_from_slice(&hashed);
+    } else {
+        key_pad[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0u8; BLOCK];
+    let mut opad = [0u8; BLOCK];
+    for i in 0..BLOCK {
+        ipad[i] = key_pad[i] ^ 0x36;
+        opad[i] = key_pad[i] ^ 0x5C;
+    }
+    let mut inner_input = Vec::with_capacity(BLOCK + message.len());
+    inner_input.extend_from_slice(&ipad);
+    inner_input.extend_from_slice(message);
+    let inner = digest_sha1(&inner_input);
+    let mut outer_input = Vec::with_capacity(BLOCK + 20);
+    outer_input.extend_from_slice(&opad);
+    outer_input.extend_from_slice(&inner);
+    digest_sha1(&outer_input)
+}
+
 /// HMAC-SHA-256(K, M). Standard RFC 2104 construction:
 ///   inner = SHA-256(K' XOR 0x36 || M)
 ///   tag   = SHA-256(K' XOR 0x5C || inner)

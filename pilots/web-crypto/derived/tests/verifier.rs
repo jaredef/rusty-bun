@@ -236,3 +236,63 @@ fn hmac_sha256_differs_for_one_bit_message_change() {
     let b = rusty_web_crypto::hmac_sha256(key, b"hellp");  // one bit different
     assert_ne!(a, b);
 }
+
+// SHA-1 + HMAC-SHA-1 known-answer vectors.
+
+#[test]
+fn sha1_empty_string() {
+    // FIPS 180-1 spec: SHA-1("") = da39a3ee5e6b4b0d3255bfef95601890afd80709
+    let out = rusty_web_crypto::digest_sha1_hex(b"");
+    assert_eq!(out, "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+}
+
+#[test]
+fn sha1_abc() {
+    // FIPS 180-1: SHA-1("abc") = a9993e364706816aba3e25717850c26c9cd0d89d
+    let out = rusty_web_crypto::digest_sha1_hex(b"abc");
+    assert_eq!(out, "a9993e364706816aba3e25717850c26c9cd0d89d");
+}
+
+#[test]
+fn sha1_quick_brown_fox() {
+    let out = rusty_web_crypto::digest_sha1_hex(
+        b"The quick brown fox jumps over the lazy dog"
+    );
+    assert_eq!(out, "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12");
+}
+
+#[test]
+fn sha1_56_byte_boundary() {
+    // 55 bytes — one byte short of the padding boundary, so 0x80 + zeros
+    // fit in the same block.
+    let s = "a".repeat(55);
+    let out = rusty_web_crypto::digest_sha1_hex(s.as_bytes());
+    // From OpenSSL: echo -n "aaaa...a" (55) | sha1sum
+    assert_eq!(out, "c1c8bbdc22796e28c0e15163d20899b65621d65a");
+}
+
+#[test]
+fn hmac_sha1_rfc2202_test1() {
+    // RFC 2202 Test Case 1:
+    //   Key  = 0x0b * 20
+    //   Data = "Hi There"
+    //   HMAC = b617318655057264e28bc0b6fb378c8ef146be00
+    let key = [0x0bu8; 20];
+    let data = b"Hi There";
+    let out = rusty_web_crypto::hmac_sha1(&key, data);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "b617318655057264e28bc0b6fb378c8ef146be00");
+}
+
+#[test]
+fn hmac_sha1_rfc2202_test2() {
+    // RFC 2202 Test Case 2:
+    //   Key  = "Jefe"
+    //   Data = "what do ya want for nothing?"
+    //   HMAC = effcdf6ae5eb2fa2d27416d5f184df9c259a7c79
+    let out = rusty_web_crypto::hmac_sha1(b"Jefe", b"what do ya want for nothing?");
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79");
+}

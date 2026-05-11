@@ -28,14 +28,45 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, SocketAddr};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread::JoinHandle;
 use std::time::Duration;
 use std::collections::HashMap;
 
-#[derive(Debug)]
 enum Handle {
     Listener(TcpListener),
     Stream(TcpStream),
+    AsyncListener(AsyncListener),
+}
+
+// AsyncListener: a TcpListener whose accept loop runs on a background
+// thread. Accepted connections (stream-handle ids) flow through an mpsc
+// channel to be polled JS-side. Architecturally matches Bun's pattern
+// (background-thread accept + concurrent_tasks queue + main-thread
+// drain) per the Bun event-loop docs; the std::thread + mpsc combo is
+// the std-only equivalent of Bun's WorkPool + Waker (engagement
+// 2026-05-11; option A of the async-bridge decision).
+struct AsyncListener {
+    // Receiver wrapped in Arc<Mutex<>> so listener_poll can clone the Arc,
+    // release the registry lock, then block on recv_timeout independently.
+    // Critical: without this, the accept_loop's `put(Handle::Stream)` would
+    // deadlock against listener_poll holding the registry lock during recv.
+    rx: Arc<Mutex<Receiver<AsyncEvent>>>,
+    shutdown: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+    local_addr: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum AsyncEvent {
+    /// A new connection was accepted; consumer can read/write via stream_id.
+    Connection { stream_id: u64, peer: String },
+    /// The accept loop exited (shutdown signal or unrecoverable error).
+    Closed,
+    /// A non-fatal accept error.
+    Error(String),
 }
 
 struct Registry {
@@ -228,5 +259,121 @@ pub fn handle_kind(id: u64) -> Result<&'static str, SocketError> {
     Ok(match h {
         Handle::Listener(_) => "listener",
         Handle::Stream(_) => "stream",
+        Handle::AsyncListener(_) => "async-listener",
     })
+}
+
+// ─────────────────── Async-listener primitives (option A) ────────────
+//
+// Engagement 2026-05-11 design: thread-per-listener + mpsc channel +
+// main-thread poll. Matches Bun's background-thread+concurrent_tasks
+// architecture using std-only primitives. The main JS event loop
+// polls the channel via TCP.poll(id, maxWaitMs) and dispatches accepted
+// connections to fetch handlers.
+
+/// Bind a TCP listener in async mode. Spawns a background thread that
+/// runs the accept loop, pushing accepted connections into a channel.
+/// Returns the async-listener handle id + the bound local addr.
+pub fn listener_bind_async(addr: &str) -> Result<(u64, String), SocketError> {
+    let listener = TcpListener::bind(addr).map_err(|e| SocketError::Bind(e.to_string()))?;
+    let local = listener.local_addr().map_err(|e| SocketError::Bind(e.to_string()))?;
+    let local_str = local.to_string();
+    listener.set_nonblocking(true).map_err(|e| SocketError::Bind(e.to_string()))?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (tx, rx): (Sender<AsyncEvent>, Receiver<AsyncEvent>) = mpsc::channel();
+    let thread_shutdown = shutdown.clone();
+    let thread = std::thread::spawn(move || {
+        accept_loop(listener, tx, thread_shutdown);
+    });
+    let async_listener = AsyncListener {
+        rx: Arc::new(Mutex::new(rx)),
+        shutdown,
+        thread: Some(thread),
+        local_addr: local_str.clone(),
+    };
+    let id = put(Handle::AsyncListener(async_listener));
+    Ok((id, local_str))
+}
+
+fn accept_loop(listener: TcpListener, tx: Sender<AsyncEvent>, shutdown: Arc<AtomicBool>) {
+    // Non-blocking listener; poll every 10ms. Std-only equivalent of
+    // Bun's epoll/kqueue-based wait — slightly higher latency, same shape.
+    while !shutdown.load(Ordering::Acquire) {
+        match listener.accept() {
+            Ok((stream, peer)) => {
+                // Stream is non-blocking inherited from the listener.
+                // Reset to blocking — JS-side reads expect blocking semantics
+                // (the read happens after poll() returns a Connection event,
+                // so the bytes should already be on the wire or arriving soon).
+                if let Err(e) = stream.set_nonblocking(false) {
+                    let _ = tx.send(AsyncEvent::Error(format!("set_blocking: {}", e)));
+                    continue;
+                }
+                let stream_id = put(Handle::Stream(stream));
+                if tx.send(AsyncEvent::Connection { stream_id, peer: peer.to_string() }).is_err() {
+                    // Receiver dropped; exit loop.
+                    break;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                let _ = tx.send(AsyncEvent::Error(format!("accept: {}", e)));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+    let _ = tx.send(AsyncEvent::Closed);
+}
+
+/// Poll for the next async event from a bound async listener. Blocks
+/// up to `max_wait_ms` milliseconds; returns Ok(None) on timeout.
+pub fn listener_poll(id: u64, max_wait_ms: u64) -> Result<Option<AsyncEvent>, SocketError> {
+    // Clone the Arc<Mutex<Receiver>> out of the registry so we can release
+    // the registry lock BEFORE blocking on recv. Without this, the
+    // accept_loop background thread's put(Handle::Stream(...)) deadlocks
+    // against listener_poll holding the registry lock.
+    let rx = {
+        let r = registry().lock().expect("sockets: registry poisoned");
+        let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+        match h {
+            Handle::AsyncListener(al) => al.rx.clone(),
+            _ => return Err(SocketError::WrongKind),
+        }
+    };  // registry lock released here
+    let guard = rx.lock().expect("sockets: rx mutex poisoned");
+    match guard.recv_timeout(Duration::from_millis(max_wait_ms)) {
+        Ok(ev) => Ok(Some(ev)),
+        Err(RecvTimeoutError::Timeout) => Ok(None),
+        Err(RecvTimeoutError::Disconnected) => Ok(Some(AsyncEvent::Closed)),
+    }
+}
+
+/// Signal the async listener to shut down. Joins the background thread.
+/// Subsequent listener_poll on the id will return Closed.
+pub fn listener_stop_async(id: u64) -> Result<(), SocketError> {
+    // Take the listener out of the registry (this drops it from the slab).
+    let mut r = registry().lock().expect("sockets: registry poisoned");
+    let h = r.handles.remove(&id).ok_or(SocketError::NotFound)?;
+    drop(r); // release the registry lock before joining
+    match h {
+        Handle::AsyncListener(mut al) => {
+            al.shutdown.store(true, Ordering::Release);
+            if let Some(t) = al.thread.take() {
+                let _ = t.join();
+            }
+            Ok(())
+        }
+        _ => Err(SocketError::WrongKind),
+    }
+}
+
+pub fn async_listener_addr(id: u64) -> Result<String, SocketError> {
+    let r = registry().lock().expect("sockets: registry poisoned");
+    let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+    match h {
+        Handle::AsyncListener(al) => Ok(al.local_addr.clone()),
+        _ => Err(SocketError::WrongKind),
+    }
 }

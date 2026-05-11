@@ -1,0 +1,9 @@
+{
+  "name": "consumer-markdown-mini-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #41: vendored markdown-mini renderer exercising two-pass parsing (block + inline).",
+  "main": "./src/main.js",
+  "module": "./src/main.js",
+  "dependencies": { "markdown-mini": "^0.1.0" }
+}

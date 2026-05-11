@@ -631,6 +631,32 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::hmac_sha1(&key, &data).to_vec()
         })?,
     )?;
+    // SHA-384 / SHA-512 — modern higher-security variants. JWT HS384/HS512,
+    // higher-tier OAuth, FIPS 140-3 compliance contexts.
+    subtle.set(
+        "digestSha384Bytes",
+        Function::new(ctx.clone(), |data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::digest_sha384(&data).to_vec()
+        })?,
+    )?;
+    subtle.set(
+        "digestSha512Bytes",
+        Function::new(ctx.clone(), |data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::digest_sha512(&data).to_vec()
+        })?,
+    )?;
+    subtle.set(
+        "hmacSha384Bytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::hmac_sha384(&key, &data).to_vec()
+        })?,
+    )?;
+    subtle.set(
+        "hmacSha512Bytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::hmac_sha512(&key, &data).to_vec()
+        })?,
+    )?;
     // Constant-time comparison helper for verify.
     subtle.set(
         "timingSafeEqualBytes",
@@ -686,7 +712,7 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 throw new TypeError("WebCrypto: invalid algorithm");
             }
 
-            // Supported hash → (digest fn, hmac fn, spec-name, output bytes).
+            // Supported hash → (spec-name, digest fn, hmac fn).
             const HASHES = {
                 "SHA256": {
                     spec: "SHA-256",
@@ -697,6 +723,16 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     spec: "SHA-1",
                     digest: (b) => subtle.digestSha1Bytes(b),
                     hmac: (k, b) => subtle.hmacSha1Bytes(k, b),
+                },
+                "SHA384": {
+                    spec: "SHA-384",
+                    digest: (b) => subtle.digestSha384Bytes(b),
+                    hmac: (k, b) => subtle.hmacSha384Bytes(k, b),
+                },
+                "SHA512": {
+                    spec: "SHA-512",
+                    digest: (b) => subtle.digestSha512Bytes(b),
+                    hmac: (k, b) => subtle.hmacSha512Bytes(k, b),
                 },
             };
 

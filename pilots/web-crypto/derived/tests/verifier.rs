@@ -296,3 +296,80 @@ fn hmac_sha1_rfc2202_test2() {
     for b in &out { hex.push_str(&format!("{:02x}", b)); }
     assert_eq!(hex, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79");
 }
+
+// SHA-512 / SHA-384 + HMAC variants — FIPS + RFC 4231 known-answer vectors.
+
+#[test]
+fn sha512_empty_string() {
+    // FIPS: SHA-512("") = cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce
+    //                     47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e
+    let out = rusty_web_crypto::digest_sha512_hex(b"");
+    assert_eq!(out, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
+}
+
+#[test]
+fn sha512_abc() {
+    // FIPS: SHA-512("abc") = ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a
+    //                        2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+    let out = rusty_web_crypto::digest_sha512_hex(b"abc");
+    assert_eq!(out, "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+}
+
+#[test]
+fn sha384_empty_string() {
+    // FIPS: SHA-384("") = 38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da
+    //                     274edebfe76f65fbd51ad2f14898b95b
+    let out = rusty_web_crypto::digest_sha384_hex(b"");
+    assert_eq!(out, "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b");
+}
+
+#[test]
+fn sha384_abc() {
+    // FIPS: SHA-384("abc") = cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed
+    //                        8086072ba1e7cc2358baeca134c825a7
+    let out = rusty_web_crypto::digest_sha384_hex(b"abc");
+    assert_eq!(out, "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
+}
+
+#[test]
+fn hmac_sha512_rfc4231_test1() {
+    // RFC 4231 Test Case 1:
+    //   Key  = 0x0b * 20
+    //   Data = "Hi There"
+    //   HMAC = 87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cde
+    //          daa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854
+    let key = [0x0bu8; 20];
+    let data = b"Hi There";
+    let out = rusty_web_crypto::hmac_sha512(&key, data);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854");
+}
+
+#[test]
+fn hmac_sha384_rfc4231_test1() {
+    // RFC 4231 Test Case 1:
+    //   Key  = 0x0b * 20
+    //   Data = "Hi There"
+    //   HMAC = afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59c
+    //          faea9ea9076ede7f4af152e8b2fa9cb6
+    let key = [0x0bu8; 20];
+    let data = b"Hi There";
+    let out = rusty_web_crypto::hmac_sha384(&key, data);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6");
+}
+
+#[test]
+fn hmac_sha512_rfc4231_test2() {
+    // RFC 4231 Test Case 2:
+    //   Key  = "Jefe"
+    //   Data = "what do ya want for nothing?"
+    //   HMAC = 164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea250554
+    //          9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737
+    let out = rusty_web_crypto::hmac_sha512(b"Jefe", b"what do ya want for nothing?");
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737");
+}

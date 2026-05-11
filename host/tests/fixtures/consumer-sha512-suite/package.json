@@ -1,0 +1,8 @@
+{
+  "name": "consumer-sha512-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #26: SHA-384 + SHA-512 + HMAC variants via crypto.subtle. Modern higher-security HMAC variants — JWT HS384/HS512, FIPS 140-3 contexts.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

@@ -328,7 +328,11 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "normalize", "isAbsolute", "sep"]),
         "node:http" | "http" => ("nodeHttp", &["createServer", "request",
             "IncomingMessage", "ServerResponse", "ClientRequest", "Server"]),
-        "node:crypto" | "crypto" => ("crypto", &["randomUUID", "subtle"]),
+        // webcrypto is the Web Crypto API namespace (nanoid + many libs
+        // pull it from node:crypto). It is structurally identical to the
+        // globalThis.crypto object (.subtle + .getRandomValues + .randomUUID).
+        "node:crypto" | "crypto" => ("crypto", &["randomUUID", "subtle",
+            "webcrypto", "getRandomValues"]),
         "node:buffer" | "buffer" => ("Buffer", &[]),  // see special handling below
         "node:url" | "url" => ("URL", &[]),
         "node:os" | "os" => ("os", &["platform", "arch", "type", "tmpdir",
@@ -373,6 +377,19 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
     if name == "node:buffer" || name == "buffer" {
         return Some(
             "const __m = globalThis.Buffer;\nexport const Buffer = __m;\nexport default { Buffer: __m };\n".to_string()
+        );
+    }
+    if name == "node:crypto" || name == "crypto" {
+        // webcrypto = globalThis.crypto (Web Crypto API namespace).
+        // getRandomValues is a method on crypto, but Node also exposes it
+        // as a top-level export. Bind both for consumer compatibility.
+        return Some(
+            "const __c = globalThis.crypto;\n\
+             export const randomUUID = __c.randomUUID.bind(__c);\n\
+             export const subtle = __c.subtle;\n\
+             export const webcrypto = __c;\n\
+             export const getRandomValues = __c.getRandomValues.bind(__c);\n\
+             export default __c;\n".to_string()
         );
     }
     if name == "node:url" || name == "url" {
@@ -2749,6 +2766,8 @@ const BUFFER_CLASS_JS: &str = r#"
             throw new TypeError("Buffer.from: unsupported input");
         }
         static alloc(size) { return new Buffer(size); }
+        static allocUnsafe(size) { return new Buffer(size); }
+        static allocUnsafeSlow(size) { return new Buffer(size); }
         static byteLength(s) { return S.byteLength(s); }
         // Preserve the rusty-bun-only static-helper API alongside the
         // Bun-portable instance-method API. Both shapes work.

@@ -1,0 +1,8 @@
+{
+  "name": "consumer-hkdf-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #30: HKDF Extract-and-Expand via crypto.subtle.deriveBits over SHA-1/256/384/512.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

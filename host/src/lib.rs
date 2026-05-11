@@ -683,6 +683,37 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::pbkdf2_hmac_sha512(&password, &salt, iterations, dk_len as usize)
         })?,
     )?;
+    // HKDF (RFC 5869). HMAC-Extract-and-Expand KDF over all four
+    // SHA variants. Real consumer: JOSE A*GCMKW content-key derivation,
+    // OAuth2 PoP, Noise Protocol handshake-state expansion.
+    subtle.set(
+        "hkdfSha1Bytes",
+        Function::new(ctx.clone(), |ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, length: u32| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::hkdf_sha1(&ikm, &salt, &info, length as usize)
+                .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
+        })?,
+    )?;
+    subtle.set(
+        "hkdfSha256Bytes",
+        Function::new(ctx.clone(), |ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, length: u32| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::hkdf_sha256(&ikm, &salt, &info, length as usize)
+                .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
+        })?,
+    )?;
+    subtle.set(
+        "hkdfSha384Bytes",
+        Function::new(ctx.clone(), |ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, length: u32| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::hkdf_sha384(&ikm, &salt, &info, length as usize)
+                .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
+        })?,
+    )?;
+    subtle.set(
+        "hkdfSha512Bytes",
+        Function::new(ctx.clone(), |ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, length: u32| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::hkdf_sha512(&ikm, &salt, &info, length as usize)
+                .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
+        })?,
+    )?;
     // AES-GCM (FIPS 197 + SP 800-38D). WebCrypto encrypt/decrypt with
     // authenticated encryption, 12-byte IV (pilot scope), 16-byte tag.
     // Output layout: ciphertext || tag (matches WebCrypto / Bun).
@@ -762,24 +793,28 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     digest: (b) => subtle.digestSha256Bytes(b),
                     hmac: (k, b) => subtle.hmacSha256Bytes(k, b),
                     pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha256Bytes(p, s, i, l),
+                    hkdf: (ikm, salt, info, l) => subtle.hkdfSha256Bytes(ikm, salt, info, l),
                 },
                 "SHA1": {
                     spec: "SHA-1",
                     digest: (b) => subtle.digestSha1Bytes(b),
                     hmac: (k, b) => subtle.hmacSha1Bytes(k, b),
                     pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha1Bytes(p, s, i, l),
+                    hkdf: (ikm, salt, info, l) => subtle.hkdfSha1Bytes(ikm, salt, info, l),
                 },
                 "SHA384": {
                     spec: "SHA-384",
                     digest: (b) => subtle.digestSha384Bytes(b),
                     hmac: (k, b) => subtle.hmacSha384Bytes(k, b),
                     pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha384Bytes(p, s, i, l),
+                    hkdf: (ikm, salt, info, l) => subtle.hkdfSha384Bytes(ikm, salt, info, l),
                 },
                 "SHA512": {
                     spec: "SHA-512",
                     digest: (b) => subtle.digestSha512Bytes(b),
                     hmac: (k, b) => subtle.hmacSha512Bytes(k, b),
                     pbkdf2: (p, s, i, l) => subtle.pbkdf2HmacSha512Bytes(p, s, i, l),
+                    hkdf: (ikm, salt, info, l) => subtle.hkdfSha512Bytes(ikm, salt, info, l),
                 },
             };
 
@@ -809,6 +844,17 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
                         _bytes: bytes,
                         _algName: "PBKDF2",
+                    };
+                }
+                if (alg.name === "HKDF") {
+                    const bytes = toBytes(keyData);
+                    return {
+                        type: "secret",
+                        extractable: !!extractable,
+                        algorithm: { name: "HKDF" },
+                        usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                        _bytes: bytes,
+                        _algName: "HKDF",
                     };
                 }
                 if (alg.name === "AESGCM") {
@@ -845,28 +891,40 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             // deriveBits(algorithm, baseKey, length) → Promise<ArrayBuffer>
             // Pilot scope: algorithm = {name:"PBKDF2", hash, salt, iterations}.
             subtle.deriveBits = async function deriveBits(algorithm, baseKey, length) {
-                if (!algorithm || String(algorithm.name).toUpperCase() !== "PBKDF2") {
-                    throw new Error("Unsupported deriveBits algorithm");
+                const algName = String(algorithm && algorithm.name || "").toUpperCase().replace(/-/g, "");
+                if (typeof length !== "number" || length <= 0 || length % 8 !== 0) {
+                    throw new Error("deriveBits length must be a positive multiple of 8");
                 }
-                if (!baseKey || baseKey._algName !== "PBKDF2") {
-                    throw new TypeError("deriveBits: baseKey is not a PBKDF2 key");
-                }
-                if (!baseKey.usages.includes("deriveBits") && !baseKey.usages.includes("deriveKey")) {
+                if (!baseKey || !baseKey.usages.includes("deriveBits") && !baseKey.usages.includes("deriveKey")) {
                     throw new Error("Key not usable for deriveBits");
                 }
-                const hashName = typeof algorithm.hash === "string"
-                    ? algorithm.hash.toUpperCase().replace(/-/g, "")
-                    : String(algorithm.hash.name).toUpperCase().replace(/-/g, "");
-                const h = HASHES[hashName];
-                if (!h || !h.pbkdf2) throw new Error("Unsupported PBKDF2 hash: " + hashName);
-                const iterations = algorithm.iterations >>> 0;
-                if (iterations === 0) throw new Error("PBKDF2 iterations must be > 0");
-                if (typeof length !== "number" || length <= 0 || length % 8 !== 0) {
-                    throw new Error("PBKDF2 length must be a positive multiple of 8");
+                const hashName = algorithm && algorithm.hash
+                    ? (typeof algorithm.hash === "string"
+                        ? algorithm.hash.toUpperCase().replace(/-/g, "")
+                        : String(algorithm.hash.name).toUpperCase().replace(/-/g, ""))
+                    : null;
+                if (algName === "PBKDF2") {
+                    if (baseKey._algName !== "PBKDF2") {
+                        throw new TypeError("deriveBits: baseKey is not a PBKDF2 key");
+                    }
+                    const h = HASHES[hashName];
+                    if (!h || !h.pbkdf2) throw new Error("Unsupported PBKDF2 hash: " + hashName);
+                    const iterations = algorithm.iterations >>> 0;
+                    if (iterations === 0) throw new Error("PBKDF2 iterations must be > 0");
+                    const salt = toBytes(algorithm.salt);
+                    return toArrayBuffer(h.pbkdf2(baseKey._bytes, salt, iterations, length / 8));
                 }
-                const salt = toBytes(algorithm.salt);
-                const out = h.pbkdf2(baseKey._bytes, salt, iterations, length / 8);
-                return toArrayBuffer(out);
+                if (algName === "HKDF") {
+                    if (baseKey._algName !== "HKDF") {
+                        throw new TypeError("deriveBits: baseKey is not an HKDF key");
+                    }
+                    const h = HASHES[hashName];
+                    if (!h || !h.hkdf) throw new Error("Unsupported HKDF hash: " + hashName);
+                    const salt = algorithm.salt ? toBytes(algorithm.salt) : [];
+                    const info = algorithm.info ? toBytes(algorithm.info) : [];
+                    return toArrayBuffer(h.hkdf(baseKey._bytes, salt, info, length / 8));
+                }
+                throw new Error("Unsupported deriveBits algorithm: " + algName);
             };
 
             // encrypt(algorithm, key, data) → Promise<ArrayBuffer>

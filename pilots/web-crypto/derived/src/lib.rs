@@ -489,6 +489,54 @@ pub fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iterations: u32, dk_len:
     pbkdf2_inner::<_, 64>(hmac_sha512, password, salt, iterations, dk_len)
 }
 
+// ─────────────────────── HKDF (RFC 5869) ────────────────────────────
+//
+// HMAC-based Extract-and-Expand Key Derivation Function. Reuses the
+// HMAC family already in this pilot. Real consumer use: JOSE A*GCMKW
+// content-encryption-key derivation, OAuth2 PoP, Noise Protocol.
+
+fn hkdf_inner<F, const H: usize>(
+    prf: F, ikm: &[u8], salt: &[u8], info: &[u8], length: usize,
+) -> Result<Vec<u8>, String>
+where F: Fn(&[u8], &[u8]) -> [u8; H],
+{
+    // L must be <= 255 * HashLen (RFC 5869 §2.3).
+    if length > 255 * H {
+        return Err(format!("HKDF: length {} exceeds 255 * HashLen ({})", length, 255 * H));
+    }
+    // Extract: PRK = HMAC(salt, IKM). If salt is empty, use HashLen zero bytes.
+    let zero_salt = vec![0u8; H];
+    let prk = if salt.is_empty() { prf(&zero_salt, ikm) } else { prf(salt, ikm) };
+    // Expand: T(i) = HMAC(PRK, T(i-1) || info || i), concatenated until length bytes.
+    let n = (length + H - 1) / H;
+    let mut okm = Vec::with_capacity(n * H);
+    let mut prev: Vec<u8> = Vec::new();
+    for i in 1..=n {
+        let mut buf = Vec::with_capacity(prev.len() + info.len() + 1);
+        buf.extend_from_slice(&prev);
+        buf.extend_from_slice(info);
+        buf.push(i as u8);
+        let t = prf(&prk, &buf);
+        prev = t.to_vec();
+        okm.extend_from_slice(&t);
+    }
+    okm.truncate(length);
+    Ok(okm)
+}
+
+pub fn hkdf_sha1(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Result<Vec<u8>, String> {
+    hkdf_inner::<_, 20>(hmac_sha1, ikm, salt, info, length)
+}
+pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Result<Vec<u8>, String> {
+    hkdf_inner::<_, 32>(hmac_sha256, ikm, salt, info, length)
+}
+pub fn hkdf_sha384(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Result<Vec<u8>, String> {
+    hkdf_inner::<_, 48>(hmac_sha384, ikm, salt, info, length)
+}
+pub fn hkdf_sha512(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Result<Vec<u8>, String> {
+    hkdf_inner::<_, 64>(hmac_sha512, ikm, salt, info, length)
+}
+
 // ─────────────────────── AES (FIPS 197) ────────────────────────────
 //
 // AES-128 / AES-192 / AES-256 block cipher, encrypt-only path. GCM mode

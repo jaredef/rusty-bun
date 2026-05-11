@@ -1,0 +1,8 @@
+{
+  "name": "consumer-env-loader",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #21: env-file loader using vendored dotenv-shape package. Library uses node:fs internally — tests node-builtin resolution from inside third-party-package context.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

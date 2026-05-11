@@ -313,7 +313,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:querystring" | "querystring" |
         "node:assert" | "assert" |
         "node:assert/strict" | "assert/strict" |
-        "node:child_process" | "child_process"
+        "node:child_process" | "child_process" |
+        "node:net" | "net"
     )
 }
 
@@ -370,6 +371,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:child_process" | "child_process" => ("nodeChildProcess",
             &["spawn", "spawnSync", "exec", "execSync", "execFile",
               "execFileSync", "fork"]),
+        "node:net" | "net" => ("nodeNet",
+            &["Socket", "connect", "createConnection", "createServer"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -701,6 +704,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_keep_alive_js(&ctx)?;
     install_node_assert_js(&ctx)?;
     install_node_child_process_js(&ctx)?;
+    install_node_net_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -5655,6 +5659,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         // optional features (commander's executable subcommands) work.
         "node:child_process": () => globalThis.nodeChildProcess,
         "child_process": () => globalThis.nodeChildProcess,
+        "node:net": () => globalThis.nodeNet,
+        "net": () => globalThis.nodeNet,
     };
 
     function loadModule(absPath) {
@@ -7152,6 +7158,144 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
                 pathToFileURL,
                 domainToASCII,
                 domainToUnicode,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_net_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // node:net — minimal Socket class composing on Π2.6.b non-blocking TCP.
+    // Surface: net.Socket / net.connect(port, host?, cb?) / .createConnection /
+    // EventEmitter shape (on/once/emit) with data/error/end/close/connect events.
+    // Server (net.createServer) deferred — Bun.serve covers the HTTP-server case.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            class Socket {
+                constructor() {
+                    this._sid = null;
+                    this._listeners = new Map();
+                    this._closed = false;
+                    this._encoding = null;
+                }
+                on(ev, cb) {
+                    if (!this._listeners.has(ev)) this._listeners.set(ev, []);
+                    this._listeners.get(ev).push({ cb, once: false });
+                    return this;
+                }
+                once(ev, cb) {
+                    if (!this._listeners.has(ev)) this._listeners.set(ev, []);
+                    this._listeners.get(ev).push({ cb, once: true });
+                    return this;
+                }
+                off(ev, cb) {
+                    const arr = this._listeners.get(ev);
+                    if (!arr) return this;
+                    this._listeners.set(ev, arr.filter(l => l.cb !== cb));
+                    return this;
+                }
+                removeListener(ev, cb) { return this.off(ev, cb); }
+                emit(ev, ...args) {
+                    const arr = this._listeners.get(ev);
+                    if (!arr || arr.length === 0) return false;
+                    const snapshot = arr.slice();
+                    this._listeners.set(ev, arr.filter(l => !l.once));
+                    for (const l of snapshot) {
+                        try { l.cb.apply(this, args); } catch (e) {
+                            if (ev !== "error") this.emit("error", e);
+                        }
+                    }
+                    return true;
+                }
+                setEncoding(enc) { this._encoding = enc; return this; }
+                connect(port, host, cb) {
+                    if (typeof host === "function") { cb = host; host = "127.0.0.1"; }
+                    host = host || "127.0.0.1";
+                    if (cb) this.once("connect", cb);
+                    try {
+                        this._sid = globalThis.TCP.connect(host + ":" + port);
+                        globalThis.TCP.setNonblocking(this._sid, true);
+                    } catch (e) {
+                        queueMicrotask(() => this.emit("error", e));
+                        return this;
+                    }
+                    // Register in __keepAlive so the eval loop pumps __tick.
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.add(this);
+                    queueMicrotask(() => this.emit("connect"));
+                    return this;
+                }
+                write(data, encOrCb, cb) {
+                    if (typeof encOrCb === "function") cb = encOrCb;
+                    if (this._closed || this._sid == null) return false;
+                    const bytes = (typeof data === "string")
+                        ? new TextEncoder().encode(data)
+                        : (data instanceof Uint8Array ? data : new Uint8Array(data));
+                    globalThis.TCP.writeAll(this._sid, bytes);
+                    if (cb) queueMicrotask(cb);
+                    return true;
+                }
+                end(data, encOrCb) {
+                    if (data !== undefined) this.write(data, encOrCb);
+                    this._endRequested = true;
+                    return this;
+                }
+                destroy(err) {
+                    if (this._closed) return;
+                    this._closed = true;
+                    if (this._sid != null) {
+                        try { globalThis.TCP.close(this._sid); } catch (_) {}
+                        this._sid = null;
+                    }
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
+                    if (err) this.emit("error", err);
+                    queueMicrotask(() => this.emit("close", !!err));
+                }
+                // __tick: called by the eval-loop keep-alive pump. Reads any
+                // available bytes from the socket, emits "data" event, handles
+                // EOF + close lifecycle. Returns true if work was done.
+                __tick() {
+                    if (this._closed || this._sid == null) return false;
+                    const chunk = globalThis.TCP.tryRead(this._sid, 65536);
+                    if (chunk === null) return false; // would-block
+                    if (chunk.length === 0) {
+                        // FIN — orderly close
+                        this.emit("end");
+                        this.destroy();
+                        return true;
+                    }
+                    const payload = this._encoding === "utf8" || this._encoding === "utf-8"
+                        ? new TextDecoder().decode(chunk)
+                        : (typeof Buffer !== "undefined" ? Buffer.from(chunk) : chunk);
+                    this.emit("data", payload);
+                    if (this._endRequested) {
+                        this.destroy();
+                    }
+                    return true;
+                }
+            }
+
+            function connect(arg1, arg2, arg3) {
+                // net.connect(port, host?, cb?) | net.connect({port, host}, cb?)
+                let port, host, cb;
+                if (typeof arg1 === "object") {
+                    port = arg1.port; host = arg1.host || "127.0.0.1"; cb = arg2;
+                } else {
+                    port = arg1; host = arg2; cb = arg3;
+                    if (typeof host === "function") { cb = host; host = "127.0.0.1"; }
+                }
+                const s = new Socket();
+                s.connect(port, host, cb);
+                return s;
+            }
+
+            globalThis.nodeNet = {
+                Socket,
+                connect,
+                createConnection: connect,
+                // Server deferred (Bun.serve covers HTTP); throw on use.
+                createServer: () => {
+                    throw new Error("net.createServer not implemented; use Bun.serve for HTTP");
+                },
             };
         })();
     "#)?;

@@ -118,6 +118,31 @@ Live tracking lives in the trajectory header; the seed names the discipline.
 
   Doc 709 future amendment may fold this back at corpus tier; current evidence is one extension round, sufficient to name the sub-mode, insufficient to characterize its asymptotic behavior.
 
+13. **Substrate-amortization staging principle.** When a closure family shares an underlying mathematical or structural substrate (bigint arithmetic for RSA-OAEP/PSS; elliptic-curve arithmetic for ECDSA/ECDH/multiple-curves; presumably finite-field-extension arithmetic for any future pairing-based crypto), the optimal staging is **one substrate-introduction round** followed by **N closure rounds reusing the substrate**.
+
+  The substrate-introduction round looks like Phase-2-extension at large LOC: a new primitive class lands (~200-400 LOC of fundamental machinery: BigUInt, Curve struct, finite-field operations). M7 fold-back is **primitive at the substrate layer**. K is typically low (1, sometimes 2 if a single fixture exercises the new substrate immediately).
+
+  Closure rounds are **compositionally vacuous** at the rule layer: ~30-150 LOC each, threading the existing substrate to new surfaces (RSA-OAEP via MGF1 + EME-OAEP padding; RSA-PSS via EMSA-PSS encoding; ECDSA via FIPS 186-4 §6.4; ECDH via x-coord-of-d·Q). Each closure ships a Tier-J fixture; K may climb to 2-3 per round once the substrate is fluent.
+
+  This pattern was empirically observed twice in the 2026-05-11 engagement run:
+  - **Bigint substrate → RSA family**: `fb71d2d` (bigint primitives, no host wiring, no fixture — math-layer-only Phase-2-extension) → `2b86462` (RSA-OAEP closure, 4 hashes, fixture) → `660f94d` (RSA-PSS closure, fixture).
+  - **EC substrate → EC family**: `8cc2ac5` (P-256 substrate + ECDSA-P-256 closure together, ~250 LOC) → `aae8dc2` (ECDH-P-256 closure, ~30 LOC) → `5a6ab71` (curve-parameterization refactor → ECDSA + ECDH over P-384 and P-521, four surfaces in one round).
+
+  Doc 710 P1 is fully corroborated by these two runs: K-feasibility curve becomes gentler once a shared substrate is in place because the marginal cost of an additional closure has dropped from "introduce primitives + apply them" to "thread existing primitives through one more padding/dispatch rule."
+
+  Operational implication: when planning a basket-expansion against a family of related surfaces, *do not* attempt to close all surfaces in one round if doing so requires also landing a new substrate. Stage: substrate first (small or no fixture, primitive M7 fold-back), then close surfaces in subsequent rounds with high K. Avoids >800-LOC rounds and isolates substrate bugs from application-layer bugs.
+
+14. **Hand-typed multi-byte constant discipline.** Standard cryptographic constants (NIST curve parameters, RFC test vectors, FIPS coefficients) hand-typed into source code MUST be sanity-checked against an independent implementation (Python `cryptography`, OpenSSL, Bun WebCrypto, another standards-aware library) before being trusted by any downstream operation.
+
+  Mode-5 (author-side) typos in these constants are **silent**: every operation downstream produces wrong-but-plausible output because the math doesn't error on a value that just happens to not satisfy a curve equation or wire-vector. The 2026-05-11 engagement run surfaced three such bugs (bug-catcher F4, F5, F6):
+  - **F4**: RFC 7914 PBKDF2-HMAC-SHA-256 expected hex had two transposed hex digits in the verifier test; my implementation was correct, the hardcoded *test expectation* was wrong.
+  - **F5**: P-256 G_y in the pilot was 16 bytes of a different value (apparently copied from a typo'd reference); the curve equation failed silently and 2G computed to a non-canonical point that nevertheless lay on a *different* curve consistent with the typo'd G_y.
+  - **F6**: P-521 prime hex was missing 2 'f' digits (130 chars instead of 132 → bit_length 513 vs canonical 521); modular arithmetic gave plausible-but-wrong outputs, the on-curve check failed for the generator.
+
+  In all three, character-by-character visual review of my hand-typed value against the standard source did not catch the bug. The catching mechanism was always **sanity-check against an external independent implementation** — Python's `cryptography` library + Tonelli-Shanks-from-NIST-spec for F5, Python bigint + same curve formula for F6, Python PBKDF2-HMAC-SHA-256 vs my impl for F4.
+
+  Operational rule: any commit landing >32 bytes of hand-typed standard constants must include or be preceded by a sanity-check run against an external reference. The check costs ~30 seconds; the alternative is hours of debugging silently-wrong cryptography that LOOKS like it works.
+
 8. **Composition discipline (SIPE-T tier):** canonical-docs tests + M7 fold-back compose. Canonical tests use idioms that exercise language-level affordances (iteration protocols, async iteration, polymorphic argument shapes, prototype-chain checks) which per-method tests do not exercise. When a canonical test breaks, the failure mode is often indistinguishable at first glance from a higher-level bug (e.g., the CJS-loader round mistook URLSearchParams' missing `[Symbol.iterator]` for a module-resolution bug). M7 reflection on such breaks recovers the actual primitive gap — a *language-affordance gap* in the JS-side wrapper — and folds it back. Neither discipline alone catches these: per-method tests miss them because no individual method is broken; M7 alone would not surface them because nothing visible misbehaves until idiomatic composition is attempted. The two together name the gap. Treat this as a structural relationship between the two rules, not a third rule — the apparatus has reached the tier where the productive surface is **rule-composition**, not new-rule-discovery.
 
 ## IV. Future-move discipline
@@ -166,6 +191,18 @@ What is forbidden: "noted, will deal with later." That phrasing is the drift mec
 This rule was instituted after the first body-async asymmetry was nearly deferred under a "vacuous-with-asymmetry-noted" classification (the rusty-bun host's sync .text()/.json() body methods diverge from Bun's spec-async API). The classification was wrong — it normalized deferral. The keeper named the drift risk explicitly: *"each plank must be plumb or else it will drift out of plumb over subsequent planks."* M8 is the cybernetic compensation.
 
 **M6. Host-wirability is a pilot design constraint.** New pilots' Rust APIs are designed to wire cleanly through the JS host pattern (A8). Concretely: prefer pure-value APIs; avoid `Rc<RefCell<...>>` in public interfaces; stateful types should provide stateless algorithm helpers alongside their owned-state types so the host can wire the helpers without adapting the type's storage. A pilot is "host-wirable" when its public API can be exposed via `host/` with no apparatus refinements — verifying this is a pilot-completion check.
+
+**M10. Substrate-amortization staging.** When a queued surface family shares an underlying mathematical or structural substrate not yet in the apparatus, do NOT attempt to land both the substrate and all dependent surfaces in one round. Stage:
+  1. Substrate-introduction round (Phase-2-extension; primitive M7 fold-back; small or no Tier-J fixture; pilot tests only).
+  2. N closure rounds reusing the substrate, each landing one or more Tier-J fixtures (compositionally vacuous M7 fold-backs; K may climb).
+
+  The rule operationalizes §III.A8.13. Trigger: if the next planned round's pilot diff exceeds ~400 LOC AND a >50-LOC subset of the diff is shared-substrate machinery (bigint, EC, finite-field ext, etc.), split the round into substrate-first + surfaces-second. See §III.A8.13 for the empirical record (bigint→RSA family; EC→ECDSA/ECDH family) corroborating Doc 710 P1's substrate-amortization prediction.
+
+**M11. External-reference sanity-check for hand-typed multi-byte constants.** Any commit landing >32 bytes of hand-typed standard cryptographic constants (NIST curve parameters, RFC test vectors, FIPS coefficients, ASN.1 OIDs) must include or be preceded by a sanity-check run against an independent implementation (Python `cryptography`, OpenSSL, Bun WebCrypto, or another standards-aware library).
+
+  The rule operationalizes §III.A8.14. Visual character-by-character review is insufficient — Mode-5 typos in cryptographic constants are silent (the math doesn't error; downstream operations produce wrong-but-plausible output). Three such bugs surfaced in the 2026-05-11 engagement (bug-catcher F4/F5/F6); each was caught only by external sanity-check, never by visual review.
+
+  Operational cost: ~30 seconds of Python/Bun invocation per constant. The alternative is hours of debugging silently-wrong cryptography that LOOKS like it works.
 
 ## V. Deferred-list discipline
 

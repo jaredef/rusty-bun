@@ -7,6 +7,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 - **M8** — every Bun↔rusty-bun divergence surfaced by a differential must be reconciled in the round it is discovered.
 - **M9** — Tier-J fixtures are authored spec-first against Bun, not against rusty-bun's current surface; divergences surface during authoring, reconciliations land in the same commit; fixtures ship J.1.a directly. J.1.b becomes a transient never-occupied state under this discipline.
 - **M9.bis** — No dual-path emission in Tier-J fixtures. Single-path `process.stdout.write` (and equivalents) directly, no `if-typeof-defined-then-X-else-Y` graceful degradation. Reason: silent bypass of absent surfaces can mask basin boundaries that the persistence metric `N_persist` cannot detect; fixtures must fail-fast on missing surfaces so M8 can surface them.
+- **M10** — Substrate-amortization staging. When a queued surface family shares a not-yet-present substrate, split into substrate-introduction round + N closure rounds reusing it. Empirical record: bigint→RSA-OAEP/PSS, EC→ECDSA/ECDH/P-384/P-521. Two corroborations of Doc 710 P1 in the 2026-05-11 engagement.
+- **M11** — External-reference sanity-check for hand-typed multi-byte cryptographic constants. >32 bytes of hand-typed standard constant requires a sanity-check against an independent implementation. Mode-5 typos in such constants are silent (F4/F5/F6 in this engagement); visual review is insufficient.
 - **Telos lens (seed §VII):** sub-criterion 5 is a *per-fixture differential* count. Fixtures in J.1.a are differentially verified; J.1.b are host-internal regressions with explicit re-open conditions, NOT sub-criterion-5 evidence.
 
 **Phase-2 persistence tracker** (seed §III.A8.10):

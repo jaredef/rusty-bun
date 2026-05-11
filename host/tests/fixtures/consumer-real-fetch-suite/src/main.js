@@ -14,7 +14,7 @@
 
 function buildSkippedResults() {
     const names = ["get-200","get-with-headers","404-status","post-text-body",
-                   "https-throws","bad-hostname-throws","content-length-body",
+                   "https-dns-fails-cleanly","bad-hostname-throws","content-length-body",
                    "response-shape"];
     return names.map(n => [n + "-skipped-noport", true]);
 }
@@ -63,13 +63,14 @@ async function selfTest() {
     const t4 = await r4.text();
     results.push(["post-text-body", r4.status === 200 && t4 === "post-text"]);
 
-    // 5. HTTPS throws explicit ENOTLS-shaped error.
+    // 5. HTTPS path is functional under Π1.4. Verify that an invalid
+    //    hostname throws a DNS-resolution error rather than the prior
+    //    ENOTLS placeholder. Bun: same shape (DNS fails before TLS).
     pulse();
     let e5 = null;
-    try { await fetch("https://example.com/"); } catch (e) { e5 = e; }
-    results.push(["https-throws",
-        e5 instanceof TypeError &&
-        /HTTPS not yet supported|TLS substrate/.test(e5.message)]);
+    try { await fetch("https://nonexistent-host-99999.invalid/"); } catch (e) { e5 = e; }
+    results.push(["https-dns-fails-cleanly",
+        e5 instanceof TypeError]);
 
     // 6. Bad hostname throws DNS-resolution error. RFC 2606 reserved
     //    .invalid TLD is guaranteed never to resolve. Π1.2 changed

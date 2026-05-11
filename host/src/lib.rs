@@ -3410,12 +3410,10 @@ if (typeof globalThis.fetch === "undefined" ||
             body = init.body != null ? init.body : null;
         }
 
-        // Scheme + host validation per Tier-Π1.1 scope.
-        if (url.protocol !== "http:") {
-            if (url.protocol === "https:") {
-                throw new TypeError("rusty-bun-host: HTTPS not yet supported (Tier-Π1.4 TLS substrate pending). url=" + url.href);
-            }
-            throw new TypeError("rusty-bun-host: unsupported scheme '" + url.protocol + "' (only http: this round)");
+        // Scheme + host validation. http: + https: supported per Tier-Π1.1-Π1.4.
+        const isHttps = (url.protocol === "https:");
+        if (url.protocol !== "http:" && !isHttps) {
+            throw new TypeError("rusty-bun-host: unsupported scheme '" + url.protocol + "' (only http: and https:)");
         }
         let host = url.hostname;
         if (host === "localhost") host = "127.0.0.1";
@@ -3437,7 +3435,7 @@ if (typeof globalThis.fetch === "undefined" ||
                 }
             }
         }
-        const port = url.port ? parseInt(url.port, 10) : 80;
+        const port = url.port ? parseInt(url.port, 10) : (isHttps ? 443 : 80);
 
         // Build headers list as [name, value] pairs.
         const headerList = [];
@@ -3482,20 +3480,71 @@ if (typeof globalThis.fetch === "undefined" ||
         const reqPath = url.pathname + (url.search || "");
         const reqBytes = globalThis.HTTP.serializeRequest(method, reqPath, headerList, bodyBytes);
 
-        // Connect and send.
-        const sid = globalThis.TCP.connect(host + ":" + port);
+        // Connect and send. Π1.4: https:// routes through globalThis.__tls;
+        // http:// stays on globalThis.TCP. The TLS path uses a trust store
+        // built from either env-supplied NODE_EXTRA_CA_CERTS / RUSTY_BUN_CA
+        // (a PEM file path) plus, if absent, the system default location.
+        let sid;
+        let useTls = isHttps;
+        let caPem = "";
+        if (useTls) {
+            // Read CA bundle: prefer RUSTY_BUN_CA env override (for tests),
+            // then NODE_EXTRA_CA_CERTS, then system default paths.
+            const env = (globalThis.process && globalThis.process.env) || {};
+            const caCandidates = [];
+            if (env.RUSTY_BUN_CA) caCandidates.push(env.RUSTY_BUN_CA);
+            if (env.NODE_EXTRA_CA_CERTS) caCandidates.push(env.NODE_EXTRA_CA_CERTS);
+            const systemPaths = [
+                "/etc/ssl/certs/ca-certificates.crt",
+                "/etc/pki/tls/certs/ca-bundle.crt",
+                "/etc/ssl/cert.pem",
+                "/etc/ssl/ca-bundle.pem",
+            ];
+            for (const p of systemPaths) caCandidates.push(p);
+            for (const path of caCandidates) {
+                try {
+                    caPem = globalThis.fs.readFileSyncUtf8(path);
+                    if (caPem.length > 0) break;
+                } catch (_) {}
+            }
+            if (!caPem) {
+                throw new TypeError("rusty-bun-host: no CA bundle found for https; tried RUSTY_BUN_CA / NODE_EXTRA_CA_CERTS / system paths");
+            }
+            sid = globalThis.__tls.connect(host, port, caPem);
+        } else {
+            sid = globalThis.TCP.connect(host + ":" + port);
+        }
         try {
-            globalThis.TCP.writeAll(sid, reqBytes);
+            if (useTls) {
+                // __tls.write/read take Vec<u8>. reqBytes is a Uint8Array
+                // returned by serializeRequest; convert per F8 pattern.
+                const toFfiBytes = (b) => {
+                    const arr = new Array(b.length);
+                    for (let i = 0; i < b.length; i++) arr[i] = b[i];
+                    return arr;
+                };
+                globalThis.__tls.write(sid, toFfiBytes(reqBytes));
+            } else {
+                globalThis.TCP.writeAll(sid, reqBytes);
+            }
             // Read until orderly close: accumulate chunks.
             const chunks = [];
             let total = 0;
             while (true) {
-                const chunk = globalThis.TCP.read(sid, 65536);
+                let chunk;
+                if (useTls) {
+                    try {
+                        chunk = globalThis.__tls.read(sid);
+                    } catch (_) {
+                        // __tls.read errors on connection close; treat as FIN.
+                        break;
+                    }
+                } else {
+                    chunk = globalThis.TCP.read(sid, 65536);
+                }
                 if (chunk.length === 0) break;  // FIN
                 chunks.push(chunk);
                 total += chunk.length;
-                // Safety bound: 32 MB per response. Real fetch streams; this
-                // is the buffered-read path for the first iteration.
                 if (total > 32 * 1024 * 1024) {
                     throw new RangeError("rusty-bun-host fetch: response exceeds 32 MB buffered limit");
                 }
@@ -3503,7 +3552,11 @@ if (typeof globalThis.fetch === "undefined" ||
             // Concatenate.
             const full = new Uint8Array(total);
             let off = 0;
-            for (const c of chunks) { full.set(c, off); off += c.length; }
+            for (const c of chunks) {
+                const view = c instanceof Uint8Array ? c : new Uint8Array(c);
+                full.set(view, off);
+                off += view.length;
+            }
             // Parse via codec.
             const parsed = globalThis.HTTP.parseResponse(full);
             // Build Response.
@@ -3553,7 +3606,10 @@ if (typeof globalThis.fetch === "undefined" ||
             resp._url = url.href;
             return resp;
         } finally {
-            try { globalThis.TCP.close(sid); } catch (_) {}
+            try {
+                if (useTls) globalThis.__tls.close(sid);
+                else globalThis.TCP.close(sid);
+            } catch (_) {}
         }
     };
     globalThis.fetch.__isRustyBunReal = true;

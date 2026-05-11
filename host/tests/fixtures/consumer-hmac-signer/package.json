@@ -1,0 +1,8 @@
+{
+  "name": "consumer-hmac-signer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #23: HMAC-SHA-256 sign + verify via crypto.subtle.importKey/sign/verify. Real-world JWT/webhook-signature shape.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

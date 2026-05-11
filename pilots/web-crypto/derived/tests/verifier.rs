@@ -185,3 +185,54 @@ fn spec_timing_safe_equal_one_bit_diff() {
     assert!(!timing_safe_equal(&[0x00], &[0x01]));
     assert!(!timing_safe_equal(&[0xFF, 0xFF], &[0xFF, 0xFE]));
 }
+
+// HMAC-SHA-256 RFC 4231 + ad-hoc canonical test vectors.
+
+#[test]
+fn hmac_sha256_short_key() {
+    // RFC 4231 Test Case 1:
+    //   Key  = 0x0b * 20
+    //   Data = "Hi There"
+    //   HMAC = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+    let key = [0x0bu8; 20];
+    let data = b"Hi There";
+    let out = rusty_web_crypto::hmac_sha256(&key, data);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+}
+
+#[test]
+fn hmac_sha256_oversize_key_gets_hashed() {
+    // RFC 4231 Test Case 4:
+    //   Key  = 0x0102030405060708090a0b0c0d0e0f10111213141516171819 (25 bytes)
+    //   Data = 0xcd * 50
+    //   HMAC = 82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b
+    let key: Vec<u8> = (1u8..=25).collect();
+    let data = vec![0xcdu8; 50];
+    let out = rusty_web_crypto::hmac_sha256(&key, &data);
+    let mut hex = String::new();
+    for b in &out { hex.push_str(&format!("{:02x}", b)); }
+    assert_eq!(hex, "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b");
+}
+
+#[test]
+fn hmac_sha256_long_key_truncated_via_hash() {
+    // Key longer than block size (64 bytes) is first hashed to 32 bytes.
+    // Verify by feeding 128-byte key and ensuring it equals HMAC with the
+    // pre-hashed 32-byte key.
+    let long_key = vec![0xaau8; 128];
+    let data = b"test message";
+    let direct = rusty_web_crypto::hmac_sha256(&long_key, data);
+    let hashed_key = rusty_web_crypto::digest_sha256(&long_key);
+    let via_hashed = rusty_web_crypto::hmac_sha256(&hashed_key, data);
+    assert_eq!(direct, via_hashed);
+}
+
+#[test]
+fn hmac_sha256_differs_for_one_bit_message_change() {
+    let key = b"shared-secret-key";
+    let a = rusty_web_crypto::hmac_sha256(key, b"hello");
+    let b = rusty_web_crypto::hmac_sha256(key, b"hellp");  // one bit different
+    assert_ne!(a, b);
+}

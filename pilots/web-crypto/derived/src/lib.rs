@@ -136,6 +136,35 @@ pub fn digest_sha256_hex(data: &[u8]) -> String {
     s
 }
 
+/// HMAC-SHA-256(K, M). Standard RFC 2104 construction:
+///   inner = SHA-256(K' XOR 0x36 || M)
+///   tag   = SHA-256(K' XOR 0x5C || inner)
+/// where K' = K padded to 64 bytes (block size), with K first hashed if longer.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut key_pad = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        let hashed = digest_sha256(key);
+        key_pad[..32].copy_from_slice(&hashed);
+    } else {
+        key_pad[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0u8; BLOCK];
+    let mut opad = [0u8; BLOCK];
+    for i in 0..BLOCK {
+        ipad[i] = key_pad[i] ^ 0x36;
+        opad[i] = key_pad[i] ^ 0x5C;
+    }
+    let mut inner_input = Vec::with_capacity(BLOCK + message.len());
+    inner_input.extend_from_slice(&ipad);
+    inner_input.extend_from_slice(message);
+    let inner = digest_sha256(&inner_input);
+    let mut outer_input = Vec::with_capacity(BLOCK + 32);
+    outer_input.extend_from_slice(&opad);
+    outer_input.extend_from_slice(&inner);
+    digest_sha256(&outer_input)
+}
+
 // ───────────────────────── crypto.subtle stub ─────────────────────────
 
 pub mod subtle {

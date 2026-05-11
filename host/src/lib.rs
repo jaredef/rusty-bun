@@ -609,43 +609,132 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::digest_sha256(&data).to_vec()
         })?,
     )?;
+    // HMAC-SHA-256 raw computation. Per E.8 closure: feeds the JS-side
+    // crypto.subtle.importKey/sign/verify wrappers installed below.
+    subtle.set(
+        "hmacSha256Bytes",
+        Function::new(ctx.clone(), |key: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+            rusty_web_crypto::hmac_sha256(&key, &data).to_vec()
+        })?,
+    )?;
+    // Constant-time comparison helper for verify.
+    subtle.set(
+        "timingSafeEqualBytes",
+        Function::new(ctx.clone(), |a: Vec<u8>, b: Vec<u8>| -> bool {
+            rusty_web_crypto::timing_safe_equal(&a, &b)
+        })?,
+    )?;
     crypto.set("subtle", subtle)?;
     global.set("crypto", crypto)?;
-    // Spec-compliant crypto.subtle.digest(algorithm, data) → Promise<ArrayBuffer>.
-    // Per M8: aligns with Bun's WebCrypto surface so consumer code using the
-    // standard idiom works portably.
+    // Spec-compliant WebCrypto wrappers. Per M8/M9: aligns rusty-bun-host's
+    // crypto.subtle with Bun's surface so consumer code using the standard
+    // import/sign/verify/digest pattern works portably.
+    //
+    // E.8 partial closure: digest (SHA-256) + HMAC-SHA-256 import/sign/verify.
+    // Async/RSA/ECDSA/AES remain out of basin.
     ctx.eval::<(), _>(r#"
         (function() {
             const subtle = globalThis.crypto.subtle;
-            subtle.digest = async function digest(algorithm, data) {
-                const algName = (typeof algorithm === "string")
-                    ? algorithm
-                    : (algorithm && algorithm.name);
-                const norm = String(algName || "").toUpperCase().replace(/-/g, "");
-                if (norm !== "SHA256") {
-                    throw new Error("Unsupported digest algorithm: " + algName);
-                }
-                // Normalize input to byte array.
-                let bytes;
+
+            // Normalize WebCrypto data inputs (string / ArrayBuffer / TypedArray
+            // / DataView / Array) to a plain byte array for the FFI.
+            function toBytes(data) {
                 if (typeof data === "string") {
-                    bytes = Array.from(new TextEncoder().encode(data));
+                    return Array.from(new TextEncoder().encode(data));
                 } else if (data instanceof ArrayBuffer) {
-                    bytes = Array.from(new Uint8Array(data));
+                    return Array.from(new Uint8Array(data));
                 } else if (data && typeof data === "object" && "byteLength" in data) {
-                    // Typed array / DataView.
-                    bytes = Array.from(new Uint8Array(
+                    return Array.from(new Uint8Array(
                         data.buffer || data, data.byteOffset || 0, data.byteLength));
                 } else if (Array.isArray(data)) {
-                    bytes = data;
-                } else {
-                    throw new TypeError("digest: unsupported data type");
+                    return data.slice();
                 }
-                const out = subtle.digestSha256Bytes(bytes);
-                // Spec returns ArrayBuffer; produce one from the byte array.
-                const ab = new ArrayBuffer(out.length);
-                const view = new Uint8Array(ab);
-                view.set(out);
+                throw new TypeError("WebCrypto: unsupported data type");
+            }
+            function toArrayBuffer(bytes) {
+                const ab = new ArrayBuffer(bytes.length);
+                new Uint8Array(ab).set(bytes);
                 return ab;
+            }
+            function normalizeAlg(algorithm) {
+                if (typeof algorithm === "string") {
+                    return { name: algorithm.toUpperCase().replace(/-/g, "") };
+                }
+                if (algorithm && algorithm.name) {
+                    const norm = String(algorithm.name).toUpperCase().replace(/-/g, "");
+                    const hash = algorithm.hash
+                        ? (typeof algorithm.hash === "string"
+                            ? algorithm.hash.toUpperCase().replace(/-/g, "")
+                            : String(algorithm.hash.name).toUpperCase().replace(/-/g, ""))
+                        : null;
+                    return { name: norm, hash };
+                }
+                throw new TypeError("WebCrypto: invalid algorithm");
+            }
+
+            // digest(algorithm, data) → Promise<ArrayBuffer>
+            subtle.digest = async function digest(algorithm, data) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "SHA256") {
+                    throw new Error("Unsupported digest algorithm: " + alg.name);
+                }
+                return toArrayBuffer(subtle.digestSha256Bytes(toBytes(data)));
+            };
+
+            // importKey(format, keyData, algorithm, extractable, keyUsages)
+            // Pilot scope: format="raw", algorithm={name:"HMAC", hash:"SHA-256"}.
+            // Returns a CryptoKey-shaped object whose private _bytes carry the
+            // key material. Async per spec (returns Promise).
+            subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
+                if (format !== "raw") {
+                    throw new Error("Unsupported key format: " + format);
+                }
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "HMAC") {
+                    throw new Error("Unsupported key algorithm: " + alg.name);
+                }
+                if (alg.hash !== "SHA256") {
+                    throw new Error("Unsupported HMAC hash: " + alg.hash);
+                }
+                const bytes = toBytes(keyData);
+                return {
+                    type: "secret",
+                    extractable: !!extractable,
+                    algorithm: { name: "HMAC", hash: { name: "SHA-256" }, length: bytes.length * 8 },
+                    usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                    _bytes: bytes,  // implementation-private
+                };
+            };
+
+            // sign(algorithm, key, data) → Promise<ArrayBuffer>
+            subtle.sign = async function sign(algorithm, key, data) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "HMAC") {
+                    throw new Error("Unsupported sign algorithm: " + alg.name);
+                }
+                if (!key || !Array.isArray(key._bytes)) {
+                    throw new TypeError("sign: key is not a valid HMAC key");
+                }
+                if (!key.usages.includes("sign")) {
+                    throw new Error("Key not usable for sign");
+                }
+                return toArrayBuffer(subtle.hmacSha256Bytes(key._bytes, toBytes(data)));
+            };
+
+            // verify(algorithm, key, signature, data) → Promise<boolean>
+            subtle.verify = async function verify(algorithm, key, signature, data) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name !== "HMAC") {
+                    throw new Error("Unsupported verify algorithm: " + alg.name);
+                }
+                if (!key || !Array.isArray(key._bytes)) {
+                    throw new TypeError("verify: key is not a valid HMAC key");
+                }
+                if (!key.usages.includes("verify")) {
+                    throw new Error("Key not usable for verify");
+                }
+                const expected = subtle.hmacSha256Bytes(key._bytes, toBytes(data));
+                return subtle.timingSafeEqualBytes(toBytes(signature), expected);
             };
         })();
     "#)?;

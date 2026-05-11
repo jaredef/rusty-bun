@@ -256,7 +256,11 @@ Cases where the LLM-simulated derivation initially failed. The same failure patt
 - **Re-open condition.** Either (i) the embedded engine is upgraded to a QuickJS build with WeakRef support (mainline QuickJS-NG has discussed it; rquickjs would need to expose it), OR (ii) rquickjs is replaced with a different engine binding that exposes WeakRef + FinalizationRegistry.
 - **Per M8(b):** scope-limit recorded; no Tier-J fixture depending on WeakRef has been built, so no fixture removal needed. Future fixture-author attempts on this axis must check this entry first.
 
-### E8. crypto.subtle.importKey / sign / verify absent from rusty-bun-host (basin boundary)
+### E8. crypto.subtle.importKey / sign / verify absent from rusty-bun-host — PARTIALLY CLOSED 2026-05-11
+- **PARTIAL CLOSURE 2026-05-11**: HMAC-SHA-256 importKey/sign/verify now wired. The rusty-web-crypto pilot gains `hmac_sha256(key, message) -> [u8; 32]` (RFC 2104 construction, verified against RFC 4231 Test Cases 1 + 4); host's crypto.subtle gains `hmacSha256Bytes` + `timingSafeEqualBytes` Rust bindings plus JS-side WebCrypto wrappers (`importKey` returns CryptoKey-shape with private `_bytes`; `sign` returns `Promise<ArrayBuffer>`; `verify` uses constant-time equality). consumer-hmac-signer Tier-J fixture differentially verified 11/11 byte-identical, including the RFC 4231 wire-level vector.
+- **STILL OPEN**: async/RSA/ECDSA/AES key-wrap/derive surfaces. HMAC-SHA-1 / SHA-384 / SHA-512 also remain (only SHA-256 wired).
+- **Re-open conditions for the remaining gaps**: (i) per-algorithm extension of the pilot + host wiring for each new hash/MAC variant; (ii) RSA/ECDSA require asymmetric-key crypto pilots not yet in the apparatus (substantial work, likely a separate engagement).
+
 - **Source.** Direct probe 2026-05-10. Bun 1.3.11 has `crypto.subtle.importKey`, `crypto.subtle.sign`, `crypto.subtle.verify` as functions (full WebCrypto via JavaScriptCore). rusty-bun-host has `crypto.subtle.digest` (added in the consumer-request-signer round) and `crypto.subtle.digestSha256Hex`/`digestSha256Bytes` but no key-handle APIs.
 - **Severity.** Apparatus-side scope-limit; web-crypto pilot scope-bounded.
 - **What it means.** Consumer code performing HMAC / signature verification / asymmetric crypto operations on rusty-bun-host will fail. Real Bun supports the full surface. The rusty-bun web-crypto pilot covered SHA-256 + UUID v4 + getRandomValues + timing-safe — the constructive crypto primitives — but did not extend to the key-management surface.

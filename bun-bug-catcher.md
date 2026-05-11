@@ -325,11 +325,12 @@ Author-side typos and spec-misunderstandings surfaced during M9 spec-first fixtu
 - **What it attests.** Both Bun and rusty-bun-host execute clsx identically to its documented semantics. The failure was the fixture author's expectation, not either runtime.
 - **Author rule.** When vendoring third-party code, write expected values by *running the library and copying the actual output*, not by inferring semantics from the function name. The library's source is authoritative; one's intuition about what `clsx` "should do" is not.
 
-### F7. JS regex alternation ordering for nested-prefix patterns
-- **Source.** consumer-mustache-mini fixture initial Bun run, 2026-05-11. Author wrote `\{\{(...)\s*([\s\S]*?)\s*\}\}|(\{\{\{\s*[\s\S]*?\s*\}\}\})` to tokenize Mustache tags. Triple-stache `{{{name}}}` consistently mis-parsed as a double-stache with a `{name` capture.
-- **Spec.** ECMAScript regex alternation tries alternatives left-to-right at each position. Both alternatives can match starting at `{{{`, and the leftmost alternative (`\{\{...\}\}`) wins.
-- **Author rule.** When two alternatives share a prefix (one nested inside the other — `{{{` vs `{{`, `***` vs `**`, etc.), the **longer/more-specific alternative MUST come first**. Visual inspection reads the regex as "or" but the engine reads it as "try left first."
-- **F7 vs F4/F5/F6.** Those are *constant typos*; F7 is *regex-semantic ordering*. Both are silent: the regex doesn't error, the wrong-but-plausible result propagates. The catching mechanism is the same — run a small fixture under the comparator before relying on the parser.
+### F7. Shared-prefix regex alternation: longest alternative first
+- **The rule.** In JS regex alternation `A|B|C`, when two alternatives share a prefix (one is a longer extension of another — `{{{` vs `{{`, `***` vs `**`, `<![CDATA[` vs `<!`, `===` vs `==`), the **longer/more-specific alternative MUST come first** in the alternation. Otherwise the shorter alternative matches at the prefix and silently consumes only part of the intended token.
+- **Why visual review fails.** The author reads `A|B` as "match A or match B" (set semantics); the engine reads it as "try A first, then B" at each position. The bug is silent — the regex doesn't error, just produces a wrong-but-plausible parse.
+- **Catching mechanism.** Run a small fixture against the comparator runtime; the mismatch surfaces immediately. Same catch pattern as the F4/F5/F6 cryptographic-constant typos. Not catchable by reading the regex.
+- **F7 vs F4/F5/F6.** Those are *constant typos*; F7 is *regex-semantic ordering*. Same class of silent-failure-with-wrong-but-plausible-output, same external-comparator catch mechanism.
+- **Incident.** consumer-mustache-mini fixture initial Bun run, 2026-05-11. Author wrote `\{\{(...)\s*([\s\S]*?)\s*\}\}|(\{\{\{\s*[\s\S]*?\s*\}\}\})` to tokenize Mustache tags. Triple-stache `{{{name}}}` consistently mis-parsed as a double-stache with `{name` captured into the name field. Fixed by reordering the alternation to put `\{\{\{...\}\}\}` first.
 
 ### F1. BigInt-arithmetic operand-type strictness
 - **Source.** consumer-batch-loader fixture initial Bun run, 2026-05-10. Author wrote `id % 2 === 0n` (mixing Number `2` with BigInt `id`). Bun threw `TypeError: Invalid mix of BigInt and other type in remainder.`

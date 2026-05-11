@@ -1,0 +1,8 @@
+{
+  "name": "consumer-rsa-oaep-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #32: RSA-OAEP encrypt/decrypt via crypto.subtle with JWK imported keys.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

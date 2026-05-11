@@ -874,3 +874,82 @@ fn rsaep_rejects_out_of_range_message() {
     let m = BigUInt::from_be_bytes(&[33]);
     assert!(rusty_web_crypto::rsaep(&n, &e, &m).is_err());
 }
+
+// ─────────────── RSA-OAEP (RFC 8017 §7.1) ──────────────────────────
+
+fn sha256_vec(b: &[u8]) -> Vec<u8> { rusty_web_crypto::digest_sha256(b).to_vec() }
+
+#[test]
+fn mgf1_sha256_known_output() {
+    // MGF1 with SHA-256 over the seed bytes "foo" producing 32 bytes
+    // should equal SHA-256("foo" || 0x00000000). We compute that directly.
+    let mut expected_input = b"foo".to_vec();
+    expected_input.extend_from_slice(&0u32.to_be_bytes());
+    let expected = sha256_vec(&expected_input);
+    let mgf_out = rusty_web_crypto::mgf1(b"foo", 32, sha256_vec, 32);
+    assert_eq!(mgf_out, expected);
+}
+
+#[test]
+fn mgf1_truncates_to_mask_len() {
+    let out = rusty_web_crypto::mgf1(b"seed", 10, sha256_vec, 32);
+    assert_eq!(out.len(), 10);
+}
+
+#[test]
+fn mgf1_multi_block_expansion() {
+    // mask_len > hlen exercises the counter increment.
+    let out = rusty_web_crypto::mgf1(b"seed", 100, sha256_vec, 32);
+    assert_eq!(out.len(), 100);
+    // First 32 bytes match the single-block output.
+    let one_block = rusty_web_crypto::mgf1(b"seed", 32, sha256_vec, 32);
+    assert_eq!(&out[..32], &one_block[..]);
+}
+
+// 2048-bit RSA test key. Generated via Bun's crypto.subtle.generateKey
+// for this verifier — NOT used in production anywhere. e = 65537.
+fn test_rsa_2048() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let n = hex_decode("a02681ce8f5ba6fb58ad0c428a4524b8dc0b162a4ac15f056f1ab637b042193a0e3e245b03c838297fc5d827ef0e0c9227d8980e67a91c619d146e013c8478b322e2410741e42597a29af48b149ec132404d6076f538038060cd0059b1826997f0b6396fd91aa376bc586cfd70e275d0e855809b1ef907038f086f1db902049e5f33a63668101771bd3a46a65f8a7f52e5c540cf179eec179a964d559c1dec9f4e5a6ac076508bbabf62a698a1b4731a05d14aa8dce6ffbef565c4e220069c251f49b4fd6ad19b62be17bec75ab3acc592eb95b02f19ee7daf1e8f17b1f9a37fa0c8275448852ae6d4df48695c81a921141065527c9cefe0902c2841ab68e9ed");
+    let e = hex_decode("010001");
+    let d = hex_decode("1baacb5e1e121d64eacaea854c51e9a82e0b9446b62775fd0056c30817e1336e7e2b6a28771ccde70d75e683ef9ea3b9543cecf8001c8d14a8087180b12dc9945900716f89889a9df9af7f73cf9a259242dd9b3eb1da7d705e48cc38b29bef161ab5c0727c3547ec2959b56a8b67f426a51cb05d1c1ab5857dde5d23eb6457dba6656cf9ad2f96e0c53e37aef8a0790280087182acadd796ef2f2ee9c70592bbd560e1fbf265110d3b78d8ead0b4d4115923f600893bff695a7a16395b5d9e4e21aacc326623d6b26cdc21f704fc81a7818da3a293bd179d89513af18a218ff5cfe91f5d7d8f372d1b6d6b1984f6cb8c286478617cf1ab658389ece7c8da17c1");
+    (n, e, d)
+}
+
+#[test]
+fn rsa_oaep_sha256_roundtrip_2048() {
+    // Pilot's bigint is slow at 2048 bits — keep test count low.
+    let (n, e, d) = test_rsa_2048();
+    let message = b"hello rsa-oaep";
+    let label = b"";
+    let seed = vec![0x42u8; 32];
+    let ct = rusty_web_crypto::rsa_oaep_encrypt(&n, &e, message, label, &seed, sha256_vec, 32).unwrap();
+    assert_eq!(ct.len(), n.len());
+    let pt = rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, label, sha256_vec, 32).unwrap();
+    assert_eq!(&pt, message);
+}
+
+#[test]
+fn rsa_oaep_sha256_label_round_trip() {
+    let (n, e, d) = test_rsa_2048();
+    let message = b"secret";
+    let label = b"context-binding-label";
+    let seed = vec![0x01u8; 32];
+    let ct = rusty_web_crypto::rsa_oaep_encrypt(&n, &e, message, label, &seed, sha256_vec, 32).unwrap();
+    let pt = rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, label, sha256_vec, 32).unwrap();
+    assert_eq!(&pt, message);
+    // Wrong label must fail decrypt.
+    assert!(rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, b"wrong-label", sha256_vec, 32).is_err());
+}
+
+#[test]
+fn rsa_oaep_sha256_rejects_message_too_long() {
+    let (n, e, _d) = test_rsa_2048();
+    let k = n.len();  // 256
+    // Max message length = k - 2*hLen - 2 = 256 - 64 - 2 = 190 bytes.
+    let too_long = vec![0x00u8; 191];
+    let seed = vec![0x00u8; 32];
+    assert!(rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &too_long, b"", &seed, sha256_vec, 32).is_err());
+    let at_limit = vec![0x00u8; 190];
+    assert!(rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &at_limit, b"", &seed, sha256_vec, 32).is_ok());
+    let _ = k;
+}

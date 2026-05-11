@@ -892,6 +892,132 @@ pub fn rsadp(n: &BigUInt, d: &BigUInt, c: &BigUInt) -> Result<BigUInt, String> {
     Ok(c.mod_pow(d, n))
 }
 
+// ─────────────────────── MGF1 + RSA-OAEP (RFC 8017) ───────────────
+//
+// MGF1: mask generation function based on a hash. RFC 8017 §B.2.1.
+// T = || H( mgfSeed || I2OSP(counter, 4) ) for counter in 0..ceil(maskLen/hLen)
+// Output is T truncated to maskLen bytes.
+
+pub fn mgf1<F>(mgf_seed: &[u8], mask_len: usize, hash_fn: F, hlen: usize) -> Vec<u8>
+where F: Fn(&[u8]) -> Vec<u8>,
+{
+    let mut t = Vec::with_capacity(mask_len + hlen);
+    let n_iters = (mask_len + hlen - 1) / hlen;
+    for counter in 0..n_iters {
+        let mut input = Vec::with_capacity(mgf_seed.len() + 4);
+        input.extend_from_slice(mgf_seed);
+        input.extend_from_slice(&(counter as u32).to_be_bytes());
+        let h = hash_fn(&input);
+        t.extend_from_slice(&h);
+    }
+    t.truncate(mask_len);
+    t
+}
+
+/// RSAES-OAEP-ENCRYPT (RFC 8017 §7.1.1). `seed` must be `hlen` bytes
+/// of randomness (caller-supplied for testability; production code
+/// passes /dev/urandom output). Hash is parameterized via `hash_fn`.
+pub fn rsa_oaep_encrypt<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    n_bytes: &[u8], e_bytes: &[u8],
+    message: &[u8], label: &[u8], seed: &[u8],
+    hash_fn: F, hlen: usize,
+) -> Result<Vec<u8>, String> {
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let e = BigUInt::from_be_bytes(e_bytes);
+    let k = n_bytes.len();  // octet length of n; assumes leading zeros are present in n_bytes if needed
+    let k = if k == 0 { return Err("RSA-OAEP: empty modulus".into()) } else { k };
+    // mLen check: mLen <= k - 2*hLen - 2.
+    if message.len() > k.saturating_sub(2 * hlen + 2) {
+        return Err("RSA-OAEP: message too long".into());
+    }
+    if seed.len() != hlen {
+        return Err(format!("RSA-OAEP: seed length must be {}", hlen));
+    }
+    // lHash = Hash(L).
+    let l_hash = hash_fn(label);
+    // DB = lHash || PS || 0x01 || M  (length k - hLen - 1).
+    let ps_len = k - message.len() - 2 * hlen - 2;
+    let mut db = Vec::with_capacity(k - hlen - 1);
+    db.extend_from_slice(&l_hash);
+    db.extend(std::iter::repeat(0u8).take(ps_len));
+    db.push(0x01);
+    db.extend_from_slice(message);
+    debug_assert_eq!(db.len(), k - hlen - 1);
+    // dbMask = MGF1(seed, k - hLen - 1).
+    let db_mask = mgf1(seed, k - hlen - 1, hash_fn, hlen);
+    // maskedDB = DB ⊕ dbMask.
+    let masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    // seedMask = MGF1(maskedDB, hLen).
+    let seed_mask = mgf1(&masked_db, hlen, hash_fn, hlen);
+    // maskedSeed = seed ⊕ seedMask.
+    let masked_seed: Vec<u8> = seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+    // EM = 0x00 || maskedSeed || maskedDB.
+    let mut em = Vec::with_capacity(k);
+    em.push(0x00);
+    em.extend_from_slice(&masked_seed);
+    em.extend_from_slice(&masked_db);
+    debug_assert_eq!(em.len(), k);
+    // m = OS2IP(EM); c = m^e mod n; C = I2OSP(c, k).
+    let m_int = BigUInt::from_be_bytes(&em);
+    let c_int = rsaep(&n, &e, &m_int)?;
+    Ok(c_int.to_be_bytes(k))
+}
+
+/// RSAES-OAEP-DECRYPT (RFC 8017 §7.1.2).
+pub fn rsa_oaep_decrypt<F: Fn(&[u8]) -> Vec<u8> + Copy>(
+    n_bytes: &[u8], d_bytes: &[u8],
+    ciphertext: &[u8], label: &[u8],
+    hash_fn: F, hlen: usize,
+) -> Result<Vec<u8>, String> {
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let d = BigUInt::from_be_bytes(d_bytes);
+    let k = n_bytes.len();
+    if ciphertext.len() != k {
+        return Err("RSA-OAEP: ciphertext length mismatch".into());
+    }
+    if k < 2 * hlen + 2 {
+        return Err("RSA-OAEP: modulus too small for hash".into());
+    }
+    // c = OS2IP(C); m = c^d mod n; EM = I2OSP(m, k).
+    let c_int = BigUInt::from_be_bytes(ciphertext);
+    let m_int = rsadp(&n, &d, &c_int)?;
+    let em = m_int.to_be_bytes(k);
+    // lHash = Hash(L).
+    let l_hash = hash_fn(label);
+    // Split EM: Y (1 byte) || maskedSeed (hlen) || maskedDB (k - hlen - 1).
+    let y = em[0];
+    let masked_seed = &em[1 .. 1 + hlen];
+    let masked_db = &em[1 + hlen ..];
+    // seedMask = MGF1(maskedDB, hlen). seed = maskedSeed ⊕ seedMask.
+    let seed_mask = mgf1(masked_db, hlen, hash_fn, hlen);
+    let seed: Vec<u8> = masked_seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+    // dbMask = MGF1(seed, k - hlen - 1). DB = maskedDB ⊕ dbMask.
+    let db_mask = mgf1(&seed, k - hlen - 1, hash_fn, hlen);
+    let db: Vec<u8> = masked_db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    // Verify structure: DB = lHash' || PS || 0x01 || M, with lHash' == lHash,
+    // PS all-zeros, separator 0x01. Constant-time comparison of these checks
+    // is the spec recommendation; we use a single boolean accumulator to
+    // avoid leaking which check failed first.
+    let l_hash_prime = &db[..hlen];
+    let rest = &db[hlen..];
+    let mut sep_idx: Option<usize> = None;
+    for (i, &b) in rest.iter().enumerate() {
+        if b == 0x01 && sep_idx.is_none() {
+            sep_idx = Some(i);
+            break;
+        } else if b != 0x00 {
+            // First non-zero byte before 0x01 — invalid padding.
+            return Err("RSA-OAEP: decryption error".into());
+        }
+    }
+    let sep = sep_idx.ok_or_else(|| "RSA-OAEP: decryption error".to_string())?;
+    let ok = y == 0x00 && timing_safe_equal(l_hash_prime, &l_hash);
+    if !ok {
+        return Err("RSA-OAEP: decryption error".into());
+    }
+    Ok(rest[sep + 1 ..].to_vec())
+}
+
 // ─────────────────────── AES inverse cipher (FIPS 197 §5.3) ─────────
 
 const AES_INV_SBOX: [u8; 256] = [

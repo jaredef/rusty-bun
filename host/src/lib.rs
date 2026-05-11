@@ -595,6 +595,15 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
         "randomUUID",
         Function::new(ctx.clone(), || rusty_web_crypto::random_uuid_v4())?,
     )?;
+    crypto.set(
+        "getRandomBytes",
+        Function::new(ctx.clone(), |n: u32| -> JsResult<Vec<u8>> {
+            let mut buf = vec![0u8; n as usize];
+            rusty_web_crypto::get_random_values(&mut buf)
+                .map_err(|e| rquickjs::Error::new_from_js_message("crypto", "getRandomBytes", e.to_string()))?;
+            Ok(buf)
+        })?,
+    )?;
     let subtle = Object::new(ctx.clone())?;
     subtle.set(
         "digestSha256Hex",
@@ -714,6 +723,43 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("HKDF", "derive", e))
         })?,
     )?;
+    // RSA-OAEP (RFC 8017 §7.1). Public-key encryption with OAEP padding.
+    // Caller supplies a 32-byte seed (for SHA-256) — JS-side generates
+    // it from /dev/urandom via crypto.getRandomValues before calling.
+    subtle.set(
+        "rsaOaepEncryptBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, e: Vec<u8>, msg: Vec<u8>, label: Vec<u8>, seed: Vec<u8>, hash_name: String| -> JsResult<Vec<u8>> {
+            let r = match hash_name.as_str() {
+                "SHA-1"   => rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &msg, &label, &seed,
+                                 |b| rusty_web_crypto::digest_sha1(b).to_vec(), 20),
+                "SHA-256" => rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &msg, &label, &seed,
+                                 |b| rusty_web_crypto::digest_sha256(b).to_vec(), 32),
+                "SHA-384" => rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &msg, &label, &seed,
+                                 |b| rusty_web_crypto::digest_sha384(b).to_vec(), 48),
+                "SHA-512" => rusty_web_crypto::rsa_oaep_encrypt(&n, &e, &msg, &label, &seed,
+                                 |b| rusty_web_crypto::digest_sha512(b).to_vec(), 64),
+                other => Err(format!("RSA-OAEP: unsupported hash {}", other)),
+            };
+            r.map_err(|e| rquickjs::Error::new_from_js_message("RSA-OAEP", "encrypt", e))
+        })?,
+    )?;
+    subtle.set(
+        "rsaOaepDecryptBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, d: Vec<u8>, ct: Vec<u8>, label: Vec<u8>, hash_name: String| -> JsResult<Vec<u8>> {
+            let r = match hash_name.as_str() {
+                "SHA-1"   => rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, &label,
+                                 |b| rusty_web_crypto::digest_sha1(b).to_vec(), 20),
+                "SHA-256" => rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, &label,
+                                 |b| rusty_web_crypto::digest_sha256(b).to_vec(), 32),
+                "SHA-384" => rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, &label,
+                                 |b| rusty_web_crypto::digest_sha384(b).to_vec(), 48),
+                "SHA-512" => rusty_web_crypto::rsa_oaep_decrypt(&n, &d, &ct, &label,
+                                 |b| rusty_web_crypto::digest_sha512(b).to_vec(), 64),
+                other => Err(format!("RSA-OAEP: unsupported hash {}", other)),
+            };
+            r.map_err(|e| rquickjs::Error::new_from_js_message("RSA-OAEP", "decrypt", e))
+        })?,
+    )?;
     // AES-CBC (SP 800-38A §6.2 + PKCS#7 padding per RFC 5652 §6.3).
     subtle.set(
         "aesCbcEncryptBytes",
@@ -787,6 +833,18 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
     ctx.eval::<(), _>(r#"
         (function() {
             const subtle = globalThis.crypto.subtle;
+
+            // crypto.getRandomValues(typedArray) — fills the array with
+            // cryptographically random bytes and returns the same array.
+            globalThis.crypto.getRandomValues = function getRandomValues(typedArray) {
+                if (!typedArray || typeof typedArray.byteLength !== "number") {
+                    throw new TypeError("crypto.getRandomValues: argument must be a typed array");
+                }
+                const bytes = globalThis.crypto.getRandomBytes(typedArray.byteLength);
+                const u8 = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
+                for (let i = 0; i < bytes.length; i++) u8[i] = bytes[i];
+                return typedArray;
+            };
 
             // Normalize WebCrypto data inputs (string / ArrayBuffer / TypedArray
             // / DataView / Array) to a plain byte array for the FFI.
@@ -868,7 +926,48 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             // Pilot scope: format="raw", algorithm={name:"HMAC", hash:"SHA-256"|"SHA-1"}.
             // Returns a CryptoKey-shaped object whose private _bytes carry the
             // key material. Async per spec (returns Promise).
+            // base64url decode helper for JWK imports.
+            function b64urlToBytes(s) {
+                const b64 = String(s).replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4);
+                const bin = atob(b64);
+                const out = new Array(bin.length);
+                for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+                return out;
+            }
+
             subtle.importKey = async function importKey(format, keyData, algorithm, extractable, keyUsages) {
+                if (format === "jwk") {
+                    const alg = normalizeAlg(algorithm);
+                    if (alg.name === "RSAOAEP") {
+                        if (!keyData || keyData.kty !== "RSA") throw new TypeError("JWK kty must be RSA");
+                        const n = b64urlToBytes(keyData.n);
+                        const e = b64urlToBytes(keyData.e);
+                        const hashName = alg.hash
+                            ? (typeof alg.hash === "string" ? alg.hash : alg.hash)
+                            : "SHA-256";
+                        // Normalize hash spec name. Accept "SHA-256" or "SHA256" forms.
+                        const hashSpec = String(hashName).toUpperCase().replace(/^SHA/, "SHA-").replace(/^SHA--/, "SHA-").replace("SHA-SHA-", "SHA-");
+                        // Private key if d is present; public-only otherwise.
+                        if (keyData.d != null) {
+                            const d = b64urlToBytes(keyData.d);
+                            return {
+                                type: "private", extractable: !!extractable,
+                                algorithm: { name: "RSA-OAEP", modulusLength: n.length * 8,
+                                             publicExponent: e, hash: { name: hashSpec } },
+                                usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                                _n: n, _e: e, _d: d, _hashSpec: hashSpec, _algName: "RSA-OAEP",
+                            };
+                        }
+                        return {
+                            type: "public", extractable: !!extractable,
+                            algorithm: { name: "RSA-OAEP", modulusLength: n.length * 8,
+                                         publicExponent: e, hash: { name: hashSpec } },
+                            usages: Array.isArray(keyUsages) ? keyUsages.slice() : [],
+                            _n: n, _e: e, _hashSpec: hashSpec, _algName: "RSA-OAEP",
+                        };
+                    }
+                    throw new Error("JWK importKey: unsupported algorithm " + alg.name);
+                }
                 if (format !== "raw") {
                     throw new Error("Unsupported key format: " + format);
                 }
@@ -976,6 +1075,19 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 if (!key || !key.usages.includes("encrypt")) {
                     throw new Error("Key not usable for encrypt");
                 }
+                if (alg.name === "RSAOAEP") {
+                    if (key._algName !== "RSA-OAEP") throw new TypeError("encrypt: key is not RSA-OAEP");
+                    const hashSpec = key._hashSpec;
+                    const hlen = { "SHA-1": 20, "SHA-256": 32, "SHA-384": 48, "SHA-512": 64 }[hashSpec];
+                    if (!hlen) throw new Error("RSA-OAEP: unsupported hash " + hashSpec);
+                    const label = algorithm.label ? toBytes(algorithm.label) : [];
+                    // Generate random seed via crypto.getRandomValues.
+                    const seedArr = new Uint8Array(hlen);
+                    globalThis.crypto.getRandomValues(seedArr);
+                    const seed = Array.from(seedArr);
+                    return toArrayBuffer(subtle.rsaOaepEncryptBytes(
+                        key._n, key._e, toBytes(data), label, seed, hashSpec));
+                }
                 if (alg.name === "AESGCM") {
                     if (key._algName !== "AES-GCM") throw new TypeError("encrypt: key is not AES-GCM");
                     if (!algorithm.iv) throw new TypeError("AES-GCM: iv required");
@@ -1007,6 +1119,14 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 const alg = normalizeAlg(algorithm);
                 if (!key || !key.usages.includes("decrypt")) {
                     throw new Error("Key not usable for decrypt");
+                }
+                if (alg.name === "RSAOAEP") {
+                    if (key._algName !== "RSA-OAEP" || !key._d) {
+                        throw new TypeError("decrypt: key is not an RSA-OAEP private key");
+                    }
+                    const label = algorithm.label ? toBytes(algorithm.label) : [];
+                    return toArrayBuffer(subtle.rsaOaepDecryptBytes(
+                        key._n, key._d, toBytes(data), label, key._hashSpec));
                 }
                 if (alg.name === "AESGCM") {
                     if (key._algName !== "AES-GCM") throw new TypeError("decrypt: key is not AES-GCM");

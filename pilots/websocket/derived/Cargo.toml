@@ -1,0 +1,10 @@
+[package]
+name = "rusty-websocket"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rusty-web-crypto = { path = "../../web-crypto/derived" }

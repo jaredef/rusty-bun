@@ -232,7 +232,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:util" | "util" |
         "node:util/types" | "util/types" |
         "node:stream" | "stream" |
-        "node:stream/promises" | "stream/promises"
+        "node:stream/promises" | "stream/promises" |
+        "node:querystring" | "querystring"
     )
 }
 
@@ -275,6 +276,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "Stream"]),
         "node:stream/promises" | "stream/promises" => ("nodeStreamPromises",
             &["pipeline", "finished"]),
+        "node:querystring" | "querystring" => ("nodeQuerystring",
+            &["parse", "stringify", "escape", "unescape", "decode", "encode"]),
         _ => return None,
     };
     // node:buffer exports `{ Buffer }` not the Buffer itself.
@@ -285,7 +288,17 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
     }
     if name == "node:url" || name == "url" {
         return Some(
-            "const __URL = globalThis.URL;\nconst __USP = globalThis.URLSearchParams;\nexport const URL = __URL;\nexport const URLSearchParams = __USP;\nexport default { URL: __URL, URLSearchParams: __USP };\n".to_string()
+            "const __nu = globalThis.nodeUrl;\n\
+             export const URL = __nu.URL;\n\
+             export const URLSearchParams = __nu.URLSearchParams;\n\
+             export const parse = __nu.parse;\n\
+             export const format = __nu.format;\n\
+             export const resolve = __nu.resolve;\n\
+             export const fileURLToPath = __nu.fileURLToPath;\n\
+             export const pathToFileURL = __nu.pathToFileURL;\n\
+             export const domainToASCII = __nu.domainToASCII;\n\
+             export const domainToUnicode = __nu.domainToUnicode;\n\
+             export default __nu;\n".to_string()
         );
     }
     let mut s = format!("const __m = globalThis.{};\nexport default __m;\n", global_var);
@@ -349,6 +362,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_events_js(&ctx)?;
     install_node_util_js(&ctx)?;
     install_node_stream_js(&ctx)?;
+    install_node_querystring_and_url_full_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -4788,6 +4802,10 @@ const COMMONJS_LOADER_JS: &str = r#"
         "stream": () => globalThis.nodeStream,
         "node:stream/promises": () => globalThis.nodeStreamPromises,
         "stream/promises": () => globalThis.nodeStreamPromises,
+        "node:querystring": () => globalThis.nodeQuerystring,
+        "querystring": () => globalThis.nodeQuerystring,
+        "node:url": () => globalThis.nodeUrl,
+        "url": () => globalThis.nodeUrl,
     };
 
     function loadModule(absPath) {
@@ -5723,6 +5741,188 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             globalThis.nodeStreamPromises = {
                 pipeline: pipelinePromise,
                 finished: finishedPromise,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // Π3.11: node:querystring (legacy URL-query parser/serializer) +
+    // node:url full (legacy parse/format + WHATWG fileURLToPath /
+    // pathToFileURL helpers). URL + URLSearchParams classes are already
+    // wired by install_url_class_js + install_url_search_params_class_js;
+    // this round attaches the function-style legacy and WHATWG helpers
+    // under a `nodeUrl` namespace.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            // ─── querystring ────────────────────────────────────────
+            // Differs from URLSearchParams: returns plain {key: value} or
+            // {key: [v1, v2]} objects for multi-valued keys. encode/decode
+            // use plus-sign for space (form-urlencoded), not %20.
+            function qsParse(str, sep, eq, options) {
+                sep = sep || "&";
+                eq = eq || "=";
+                const max = options && typeof options.maxKeys === "number" ? options.maxKeys : 1000;
+                const decode = (options && options.decodeURIComponent) || qsUnescape;
+                const out = Object.create(null);
+                if (typeof str !== "string" || str.length === 0) return out;
+                const pairs = str.split(sep);
+                const limit = Math.min(pairs.length, max);
+                for (let i = 0; i < limit; i++) {
+                    const pair = pairs[i];
+                    if (!pair) continue;
+                    const idx = pair.indexOf(eq);
+                    let k, v;
+                    if (idx >= 0) {
+                        k = pair.slice(0, idx);
+                        v = pair.slice(idx + eq.length);
+                    } else {
+                        k = pair;
+                        v = "";
+                    }
+                    k = decode(k.replace(/\+/g, " "));
+                    v = decode(v.replace(/\+/g, " "));
+                    if (Object.prototype.hasOwnProperty.call(out, k)) {
+                        if (Array.isArray(out[k])) out[k].push(v);
+                        else out[k] = [out[k], v];
+                    } else {
+                        out[k] = v;
+                    }
+                }
+                return out;
+            }
+            function qsStringify(obj, sep, eq, options) {
+                sep = sep || "&";
+                eq = eq || "=";
+                const encode = (options && options.encodeURIComponent) || qsEscape;
+                if (obj == null || typeof obj !== "object") return "";
+                const parts = [];
+                for (const k of Object.keys(obj)) {
+                    const ek = encode(String(k));
+                    const v = obj[k];
+                    if (Array.isArray(v)) {
+                        for (const vv of v) parts.push(ek + eq + encode(String(vv)));
+                    } else if (v === null || v === undefined) {
+                        parts.push(ek + eq);
+                    } else {
+                        parts.push(ek + eq + encode(String(v)));
+                    }
+                }
+                return parts.join(sep);
+            }
+            function qsEscape(s) {
+                // form-urlencoded: spaces → +, then percent-encode the rest.
+                return encodeURIComponent(String(s)).replace(/%20/g, "+");
+            }
+            function qsUnescape(s) {
+                try { return decodeURIComponent(String(s)); } catch (_) { return String(s); }
+            }
+            const nodeQuerystring = {
+                parse: qsParse,
+                stringify: qsStringify,
+                escape: qsEscape,
+                unescape: qsUnescape,
+                decode: qsParse,
+                encode: qsStringify,
+            };
+            globalThis.nodeQuerystring = nodeQuerystring;
+
+            // ─── node:url full ───────────────────────────────────────
+            // Legacy url.parse / url.format / url.resolve + WHATWG
+            // fileURLToPath / pathToFileURL. URL + URLSearchParams come
+            // from existing global wirings.
+            function urlParse(urlStr, parseQueryString, slashesDenoteHost) {
+                let u;
+                try { u = new URL(urlStr); }
+                catch (_) {
+                    // Some legacy callers pass paths without scheme.
+                    try { u = new URL(urlStr, "file:///"); }
+                    catch (_e) { return { href: urlStr, protocol: null, host: null, hostname: null,
+                        port: null, pathname: null, search: null, query: null, hash: null }; }
+                }
+                const search = u.search || "";
+                const query = parseQueryString ? qsParse(search.slice(1)) : (search ? search.slice(1) : null);
+                const out = {
+                    protocol: u.protocol || null,
+                    slashes: !!u.host,
+                    auth: (u.username || u.password) ? (u.username + (u.password ? ":" + u.password : "")) : null,
+                    host: u.host || null,
+                    port: u.port || null,
+                    hostname: u.hostname || null,
+                    hash: u.hash || null,
+                    search: search || null,
+                    query: query,
+                    pathname: u.pathname || null,
+                    path: (u.pathname || "") + search,
+                    href: u.href,
+                };
+                return out;
+            }
+            function urlFormat(obj) {
+                if (typeof obj === "string") return obj;
+                if (obj instanceof URL) return obj.href;
+                let s = "";
+                if (obj.protocol) {
+                    s += obj.protocol;
+                    if (!obj.protocol.endsWith(":")) s += ":";
+                }
+                if (obj.slashes !== false && (obj.host || obj.hostname)) s += "//";
+                if (obj.auth) s += obj.auth + "@";
+                if (obj.host) s += obj.host;
+                else if (obj.hostname) {
+                    s += obj.hostname;
+                    if (obj.port) s += ":" + obj.port;
+                }
+                if (obj.pathname) s += obj.pathname;
+                if (obj.search) s += (obj.search.startsWith("?") ? obj.search : "?" + obj.search);
+                else if (obj.query) {
+                    const qstr = typeof obj.query === "string" ? obj.query : qsStringify(obj.query);
+                    if (qstr) s += "?" + qstr;
+                }
+                if (obj.hash) s += (obj.hash.startsWith('#') ? obj.hash : '#' + obj.hash);
+                return s;
+            }
+            function urlResolve(from, to) {
+                try { return new URL(to, from).href; }
+                catch (_) { return to; }
+            }
+            function fileURLToPath(input) {
+                const href = typeof input === "string" ? input : (input && input.href);
+                if (!href || !href.startsWith("file:")) {
+                    throw new TypeError("The argument 'url' must be a file URL. Received: " + href);
+                }
+                let p = href.slice(href.indexOf("file:") + 5);
+                if (p.startsWith("//")) p = p.slice(2);
+                // Strip leading host (e.g. "localhost") if present:
+                if (p.length > 0 && p[0] !== "/") {
+                    const slash = p.indexOf("/");
+                    if (slash >= 0) p = p.slice(slash);
+                }
+                return decodeURIComponent(p);
+            }
+            function pathToFileURL(p) {
+                let path = String(p);
+                if (!path.startsWith("/")) {
+                    // Resolve against cwd.
+                    const cwd = (globalThis.process && globalThis.process.cwd) ? globalThis.process.cwd() : "/";
+                    path = cwd.replace(/\/+$/, "") + "/" + path;
+                }
+                return new URL("file://" + encodeURI(path).replace(/#/g, "%23").replace(/\?/g, "%3F"));
+            }
+            function domainToASCII(d) { return String(d); }
+            function domainToUnicode(d) { return String(d); }
+
+            globalThis.nodeUrl = {
+                URL: globalThis.URL,
+                URLSearchParams: globalThis.URLSearchParams,
+                parse: urlParse,
+                format: urlFormat,
+                resolve: urlResolve,
+                fileURLToPath,
+                pathToFileURL,
+                domainToASCII,
+                domainToUnicode,
             };
         })();
     "#)?;

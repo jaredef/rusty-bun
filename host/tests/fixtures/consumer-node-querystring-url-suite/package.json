@@ -1,0 +1,8 @@
+{
+  "name": "consumer-node-querystring-url-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #60: node:querystring + node:url full. Tier-Π3.11 closure round.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

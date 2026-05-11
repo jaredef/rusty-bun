@@ -245,6 +245,42 @@ pub fn stream_local_addr(id: u64) -> Result<String, SocketError> {
     }
 }
 
+/// Π2.6.b: set non-blocking mode on a TcpStream so reads return WouldBlock
+/// instead of suspending the JS thread. Required for canonical in-process
+/// client↔server interleaving via the host's __keepAlive cooperative loop.
+pub fn stream_set_nonblocking(id: u64, on: bool) -> Result<(), SocketError> {
+    let stream = {
+        let r = registry().lock().expect("sockets: registry poisoned");
+        let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+        match h {
+            Handle::Stream(s) => s.try_clone().map_err(|e| SocketError::Read(e.to_string()))?,
+            _ => return Err(SocketError::WrongKind),
+        }
+    };
+    stream.set_nonblocking(on).map_err(|e| SocketError::Read(e.to_string()))
+}
+
+/// Π2.6.b: non-blocking read. Returns Ok(Some(bytes)) on data,
+/// Ok(None) on WouldBlock, Ok(Some(empty)) on orderly close (EOF).
+/// Caller-side cooperative loop alternates this with __tickKeepAlive
+/// + microtask yield to let in-process peers run.
+pub fn stream_try_read(id: u64, max: usize) -> Result<Option<Vec<u8>>, SocketError> {
+    let mut stream = {
+        let r = registry().lock().expect("sockets: registry poisoned");
+        let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+        match h {
+            Handle::Stream(s) => s.try_clone().map_err(|e| SocketError::Read(e.to_string()))?,
+            _ => return Err(SocketError::WrongKind),
+        }
+    };
+    let mut buf = vec![0u8; max];
+    match stream.read(&mut buf) {
+        Ok(n) => { buf.truncate(n); Ok(Some(buf)) }
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(SocketError::Read(e.to_string())),
+    }
+}
+
 /// Close a handle (listener or stream) by removing it from the registry.
 /// Drop runs the OS close.
 pub fn handle_close(id: u64) -> Result<(), SocketError> {

@@ -1469,6 +1469,36 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "close", e.to_string()))
         })?,
     )?;
+    // Π2.6.b: non-blocking stream primitives. fetch()'s read-response
+    // loop alternates streamTryRead with __tickKeepAlive + microtask
+    // yield so a same-process Bun.serve({autoServe:true}) round-trips.
+    ns.set(
+        "streamSetNonblocking",
+        Function::new(ctx.clone(), |id: f64, on: bool| -> JsResult<()> {
+            rusty_sockets::stream_set_nonblocking(id as u64, on)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "setNonblocking", e.to_string()))
+        })?,
+    )?;
+    // streamTryRead returns either a byte array (possibly empty = EOF) or
+    // a sentinel string "wouldblock" for the JS side to detect. f64-or-array
+    // return is awkward through rquickjs; the string sentinel keeps the
+    // JS facade trivial.
+    // streamTryRead returns Vec<i32>:
+    //   - [-1]            → WouldBlock (sentinel)
+    //   - []              → EOF (orderly close)
+    //   - [b0, b1, ...]   → data bytes (each 0..255)
+    // The negative sentinel cannot collide with byte values (0..255 only).
+    ns.set(
+        "streamTryRead",
+        Function::new(ctx.clone(), |id: f64, max: f64| -> JsResult<Vec<i32>> {
+            match rusty_sockets::stream_try_read(id as u64, max as usize) {
+                Ok(Some(buf)) => Ok(buf.iter().map(|&b| b as i32).collect()),
+                Ok(None) => Ok(vec![-1]),
+                Err(e) => Err(rquickjs::Error::new_from_js_message(
+                    "sockets", "tryRead", e.to_string())),
+            }
+        })?,
+    )?;
     // Async listener primitives (engagement option A; std-only equivalent of
     // Bun's WorkPool + concurrent_tasks + Waker pattern).
     ns.set(
@@ -1537,6 +1567,16 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 connect(addr) { return raw.streamConnect(addr); },
                 connectTimeout(addr, ms) { return raw.streamConnectTimeout(addr, ms); },
                 read(id, max) { return new Uint8Array(raw.streamRead(id, max)); },
+                setNonblocking(id, on) { raw.streamSetNonblocking(id, !!on); },
+                // Π2.6.b: nonblocking read. Returns:
+                //   - null  on WouldBlock
+                //   - Uint8Array(0) on EOF (orderly close)
+                //   - Uint8Array(N) on data
+                tryRead(id, max) {
+                    const arr = raw.streamTryRead(id, max);
+                    if (arr.length === 1 && arr[0] === -1) return null;
+                    return new Uint8Array(arr);
+                },
                 write(id, data) { return raw.streamWrite(id, toByteArray(data)); },
                 writeAll(id, data) { raw.streamWriteAll(id, toByteArray(data)); },
                 peerAddr(id) { return raw.streamPeerAddr(id); },
@@ -3642,25 +3682,79 @@ if (typeof globalThis.fetch === "undefined" ||
                 globalThis.TCP.writeAll(sid, reqBytes);
             }
             // Read until orderly close: accumulate chunks.
+            // Π2.6.b: for plain TCP (not TLS), use nonblocking reads so a
+            // same-process Bun.serve({autoServe:true}) can interleave its
+            // __tick + handler. WouldBlock → tick keep-alive registry
+            // (lets the server run) + microtask yield + retry.
             const chunks = [];
             let total = 0;
+            if (!useTls) {
+                globalThis.TCP.setNonblocking(sid, true);
+            }
+            let idleSpins = 0;
+            const maxIdleSpins = 200000; // ~bounded retry budget (no real timer)
             while (true) {
                 let chunk;
                 if (useTls) {
                     try {
                         chunk = globalThis.__tls.read(sid);
                     } catch (_) {
-                        // __tls.read errors on connection close; treat as FIN.
                         break;
                     }
                 } else {
-                    chunk = globalThis.TCP.read(sid, 65536);
+                    chunk = globalThis.TCP.tryRead(sid, 65536);
+                    if (chunk === null) {
+                        // WouldBlock — pump keep-alive (so in-process server's
+                        // __tick can accept + dispatch + write) then yield to
+                        // drain the microtask queue (the server handler is
+                        // queued as an async IIFE; yielding lets it run).
+                        if (globalThis.__tickKeepAlive) globalThis.__tickKeepAlive();
+                        await Promise.resolve();
+                        idleSpins++;
+                        if (idleSpins > maxIdleSpins) {
+                            throw new Error("rusty-bun-host fetch: read stalled (no data, no progress)");
+                        }
+                        continue;
+                    }
+                    idleSpins = 0;
                 }
                 if (chunk.length === 0) break;  // FIN
                 chunks.push(chunk);
                 total += chunk.length;
                 if (total > 32 * 1024 * 1024) {
                     throw new RangeError("rusty-bun-host fetch: response exceeds 32 MB buffered limit");
+                }
+                // HTTP/1.1 typically frames by Content-Length or
+                // Transfer-Encoding: chunked. If the headers carry one
+                // of these and parseResponse succeeds on the buffered
+                // bytes, the response is complete — exit without waiting
+                // for FIN (Bun.serve keeps the connection open). Without
+                // a length-framing header, fall back to read-until-close.
+                if (!useTls) {
+                    const peekFull = new Uint8Array(total);
+                    let off = 0;
+                    for (const c of chunks) { peekFull.set(c, off); off += c.length; }
+                    // Quick header-only check to see if framing is present.
+                    const hdrEnd = (() => {
+                        for (let i = 0; i + 3 < peekFull.length; i++) {
+                            if (peekFull[i] === 0x0d && peekFull[i+1] === 0x0a &&
+                                peekFull[i+2] === 0x0d && peekFull[i+3] === 0x0a) return i + 4;
+                        }
+                        return -1;
+                    })();
+                    if (hdrEnd >= 0) {
+                        const headerText = new TextDecoder().decode(peekFull.subarray(0, hdrEnd)).toLowerCase();
+                        const framed = headerText.includes("content-length:") ||
+                                       headerText.includes("transfer-encoding:");
+                        if (framed) {
+                            try {
+                                globalThis.HTTP.parseResponse(peekFull);
+                                chunks.length = 0;
+                                chunks.push(peekFull);
+                                break;
+                            } catch (_) { /* not complete yet */ }
+                        }
+                    }
                 }
             }
             // Concatenate.

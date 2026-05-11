@@ -4335,3 +4335,34 @@ fn bun_gzip_sync_decodes_under_bun() {
     "#).unwrap();
     assert_eq!(r, "ok");
 }
+
+// ════════════════════ Π2.6.b: autoServe self-fetch ════════════════════
+
+#[test]
+fn autoserve_self_fetch_round_trips() {
+    // Canonical Π2.6.b proof: a single JS module starts Bun.serve with
+    // autoServe:true, then fetches itself. The cooperative loop (fetch's
+    // nonblocking tryRead + __tickKeepAlive + microtask yield) lets the
+    // server's __tick handler run between fetch's read attempts.
+    let r = rusty_bun_host::eval_string_async(r#"
+        const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            autoServe: true,
+            fetch(req) {
+                const u = new URL(req.url);
+                return new Response("hello from " + u.pathname, {
+                    status: 200,
+                    headers: { "content-type": "text/plain" },
+                });
+            },
+        });
+        const port = server.port;
+        const resp = await fetch("http://127.0.0.1:" + port + "/echo");
+        const body = await resp.text();
+        const status = resp.status;
+        server.stop();
+        return status + ":" + body;
+    "#).unwrap();
+    assert_eq!(r, "200:hello from /echo");
+}

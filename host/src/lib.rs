@@ -138,6 +138,21 @@ fn try_directory_with_index(abs_dir: &std::path::Path) -> Option<std::path::Path
                     .or_else(|| parsed.get("main"))
                     .and_then(|v| v.as_str());
                 if let Some(main) = main_str {
+                    // ESM-preference heuristic: when a package has no
+                    // `module` field and no `exports` map but ships a
+                    // parallel `esm/` directory, prefer the ESM build —
+                    // matches the dayjs/moment/many-UMD-libs convention
+                    // and keeps the loader from choking on UMD's
+                    // `module.exports = ...` references.
+                    let has_module_field = parsed.get("module").is_some();
+                    if !has_module_field {
+                        for esm_path in &["esm/index.mjs", "esm/index.js"] {
+                            let esm_target = abs_dir.join(esm_path);
+                            if let Some(f) = try_extensions(&esm_target) {
+                                return Some(f);
+                            }
+                        }
+                    }
                     let target = abs_dir.join(main);
                     if let Some(f) = try_extensions(&target) {
                         return Some(f);

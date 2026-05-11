@@ -800,6 +800,21 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             rusty_web_crypto::ecdsa_p256_sha256_verify(&qx, &qy, &msg, &sig).is_ok()
         })?,
     )?;
+    // RSASSA-PKCS1-v1_5 (RFC 8017 §8.2). Deterministic legacy RSA
+    // signature — JWS RS256/384/512, X.509 CA, code-signing.
+    subtle.set(
+        "rsaPkcs1V15SignBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, d: Vec<u8>, hash: Vec<u8>, hash_name: String| -> JsResult<Vec<u8>> {
+            rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, &hash_name)
+                .map_err(|e| rquickjs::Error::new_from_js_message("PKCS1-v1_5", "sign", e))
+        })?,
+    )?;
+    subtle.set(
+        "rsaPkcs1V15VerifyBytes",
+        Function::new(ctx.clone(), |n: Vec<u8>, e: Vec<u8>, hash: Vec<u8>, sig: Vec<u8>, hash_name: String| -> bool {
+            rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &hash, &sig, &hash_name).is_ok()
+        })?,
+    )?;
     // RSA-PSS (RFC 8017 §8.1). Signing requires private key + salt;
     // verify requires public key + signature + claimed salt length.
     subtle.set(
@@ -1076,8 +1091,9 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                             _x: x, _y: y, _algName: specName, _curve: keyData.crv,
                         };
                     }
-                    if (alg.name === "RSAOAEP" || alg.name === "RSAPSS") {
-                        const specName = alg.name === "RSAOAEP" ? "RSA-OAEP" : "RSA-PSS";
+                    if (alg.name === "RSAOAEP" || alg.name === "RSAPSS" || alg.name === "RSASSAPKCS1V1_5") {
+                        const specName = { "RSAOAEP": "RSA-OAEP", "RSAPSS": "RSA-PSS",
+                                           "RSASSAPKCS1V1_5": "RSASSA-PKCS1-v1_5" }[alg.name];
                         if (!keyData || keyData.kty !== "RSA") throw new TypeError("JWK kty must be RSA");
                         const n = b64urlToBytes(keyData.n);
                         const e = b64urlToBytes(keyData.e);
@@ -1374,6 +1390,22 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                     return toArrayBuffer(subtle.ecdsaSignBytes(
                         key._curve, hashName, key._d, toBytes(data), Array.from(kArr)));
                 }
+                if (alg.name === "RSASSAPKCS1V1_5") {
+                    if (key._algName !== "RSASSA-PKCS1-v1_5" || !key._d) {
+                        throw new TypeError("sign: key is not an RSASSA-PKCS1-v1_5 private key");
+                    }
+                    const hashName = key._hashSpec;
+                    const HASH_FNS = {
+                        "SHA-1": subtle.digestSha1Bytes,
+                        "SHA-256": subtle.digestSha256Bytes,
+                        "SHA-384": subtle.digestSha384Bytes,
+                        "SHA-512": subtle.digestSha512Bytes,
+                    };
+                    const hashFn = HASH_FNS[hashName];
+                    if (!hashFn) throw new Error("RSASSA-PKCS1-v1_5: unsupported hash " + hashName);
+                    return toArrayBuffer(subtle.rsaPkcs1V15SignBytes(
+                        key._n, key._d, hashFn(toBytes(data)), hashName));
+                }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS" || !key._d) {
                         throw new TypeError("sign: key is not an RSA-PSS private key");
@@ -1409,6 +1441,22 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         : "SHA-256";
                     return subtle.ecdsaVerifyBytes(
                         key._curve, hashName, key._x, key._y, toBytes(data), toBytes(signature));
+                }
+                if (alg.name === "RSASSAPKCS1V1_5") {
+                    if (key._algName !== "RSASSA-PKCS1-v1_5") {
+                        throw new TypeError("verify: key is not RSASSA-PKCS1-v1_5");
+                    }
+                    const hashName = key._hashSpec;
+                    const HASH_FNS = {
+                        "SHA-1": subtle.digestSha1Bytes,
+                        "SHA-256": subtle.digestSha256Bytes,
+                        "SHA-384": subtle.digestSha384Bytes,
+                        "SHA-512": subtle.digestSha512Bytes,
+                    };
+                    const hashFn = HASH_FNS[hashName];
+                    if (!hashFn) throw new Error("RSASSA-PKCS1-v1_5: unsupported hash " + hashName);
+                    return subtle.rsaPkcs1V15VerifyBytes(
+                        key._n, key._e, hashFn(toBytes(data)), toBytes(signature), hashName);
                 }
                 if (alg.name === "RSAPSS") {
                     if (key._algName !== "RSA-PSS") {

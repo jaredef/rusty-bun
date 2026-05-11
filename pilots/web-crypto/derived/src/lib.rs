@@ -892,6 +892,75 @@ pub fn rsadp(n: &BigUInt, d: &BigUInt, c: &BigUInt) -> Result<BigUInt, String> {
     Ok(c.mod_pow(d, n))
 }
 
+// ───────────────────── RSASSA-PKCS1-v1_5 (RFC 8017 §8.2 + §9.2) ────
+//
+// Legacy RSA signature scheme — deterministic, no salt, no MGF.
+// JWS JWT RS256/RS384/RS512, X.509 CA signatures, code-signing.
+//
+// EM = 0x00 || 0x01 || PS || 0x00 || T  where:
+//   T = DigestInfo prefix || hash output (DER-encoded AlgorithmIdentifier + OCTET STRING)
+//   PS = (k - 3 - tLen) bytes of 0xff
+// Sign: m = OS2IP(EM); s = m^d mod n; S = I2OSP(s, k)
+// Verify: recompute expected EM, compare in constant time.
+
+fn digest_info_prefix(hash_name: &str) -> Result<&'static [u8], String> {
+    // DER-encoded DigestInfo prefix per RFC 8017 §9.2 note 1.
+    match hash_name {
+        "SHA-1"   => Ok(&[0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14]),
+        "SHA-256" => Ok(&[0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,0x05,0x00,0x04,0x20]),
+        "SHA-384" => Ok(&[0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,0x05,0x00,0x04,0x30]),
+        "SHA-512" => Ok(&[0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,0x05,0x00,0x04,0x40]),
+        other => Err(format!("PKCS1-v1_5: unsupported hash {}", other)),
+    }
+}
+
+fn emsa_pkcs1_v1_5_encode(hash: &[u8], em_len: usize, hash_name: &str) -> Result<Vec<u8>, String> {
+    let prefix = digest_info_prefix(hash_name)?;
+    let t_len = prefix.len() + hash.len();
+    if em_len < t_len + 11 {
+        return Err("PKCS1-v1_5: intended encoded message length too short".into());
+    }
+    let ps_len = em_len - t_len - 3;
+    let mut em = Vec::with_capacity(em_len);
+    em.push(0x00);
+    em.push(0x01);
+    em.extend(std::iter::repeat(0xffu8).take(ps_len));
+    em.push(0x00);
+    em.extend_from_slice(prefix);
+    em.extend_from_slice(hash);
+    debug_assert_eq!(em.len(), em_len);
+    Ok(em)
+}
+
+pub fn rsa_pkcs1_v15_sign(
+    n_bytes: &[u8], d_bytes: &[u8], hash: &[u8], hash_name: &str,
+) -> Result<Vec<u8>, String> {
+    let k = n_bytes.len();
+    let em = emsa_pkcs1_v1_5_encode(hash, k, hash_name)?;
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let d = BigUInt::from_be_bytes(d_bytes);
+    let m_int = BigUInt::from_be_bytes(&em);
+    let s_int = rsadp(&n, &d, &m_int)?;
+    Ok(s_int.to_be_bytes(k))
+}
+
+pub fn rsa_pkcs1_v15_verify(
+    n_bytes: &[u8], e_bytes: &[u8], hash: &[u8], signature: &[u8], hash_name: &str,
+) -> Result<(), String> {
+    let k = n_bytes.len();
+    if signature.len() != k { return Err("PKCS1-v1_5: signature length mismatch".into()); }
+    let n = BigUInt::from_be_bytes(n_bytes);
+    let e = BigUInt::from_be_bytes(e_bytes);
+    let s_int = BigUInt::from_be_bytes(signature);
+    let m_int = rsaep(&n, &e, &s_int)?;
+    let em_recovered = m_int.to_be_bytes(k);
+    let em_expected = emsa_pkcs1_v1_5_encode(hash, k, hash_name)?;
+    if !timing_safe_equal(&em_recovered, &em_expected) {
+        return Err("PKCS1-v1_5: signature verification failed".into());
+    }
+    Ok(())
+}
+
 // ─────────────────────── P-256 elliptic curve ──────────────────────
 //
 // NIST P-256 / secp256r1 / prime256v1. Short Weierstrass curve

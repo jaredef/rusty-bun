@@ -1228,3 +1228,56 @@ fn debug_p521_g_on_curve() {
     let r = rusty_web_crypto::ecdh(&curve, &d, &gx_bytes, &gy_bytes);
     assert!(r.is_ok(), "G not on curve per my code: {:?}", r);
 }
+
+// ─────────────── RSASSA-PKCS1-v1_5 (RFC 8017 §8.2) ─────────────────
+
+#[test]
+fn rsa_pkcs1_v15_sha256_sign_verify_roundtrip() {
+    let (n, e, d) = test_rsa_2048();
+    let message = b"jwt-signing-payload";
+    let hash = rusty_web_crypto::digest_sha256(message);
+    let sig = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, "SHA-256").unwrap();
+    assert_eq!(sig.len(), n.len());
+    rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &hash, &sig, "SHA-256").unwrap();
+}
+
+#[test]
+fn rsa_pkcs1_v15_deterministic() {
+    let (n, _e, d) = test_rsa_2048();
+    let hash = rusty_web_crypto::digest_sha256(b"msg");
+    let sig1 = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, "SHA-256").unwrap();
+    let sig2 = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, "SHA-256").unwrap();
+    assert_eq!(sig1, sig2, "PKCS1-v1_5 must be deterministic — no nonce");
+}
+
+#[test]
+fn rsa_pkcs1_v15_verify_rejects_wrong_hash() {
+    let (n, e, d) = test_rsa_2048();
+    let h1 = rusty_web_crypto::digest_sha256(b"original");
+    let sig = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &h1, "SHA-256").unwrap();
+    let h2 = rusty_web_crypto::digest_sha256(b"tampered");
+    assert!(rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &h2, &sig, "SHA-256").is_err());
+}
+
+#[test]
+fn rsa_pkcs1_v15_verify_rejects_tampered_signature() {
+    let (n, e, d) = test_rsa_2048();
+    let hash = rusty_web_crypto::digest_sha256(b"msg");
+    let mut sig = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, "SHA-256").unwrap();
+    sig[10] ^= 0x01;
+    assert!(rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &hash, &sig, "SHA-256").is_err());
+}
+
+#[test]
+fn rsa_pkcs1_v15_sha384_sha512() {
+    let (n, e, d) = test_rsa_2048();
+    for hash_name in ["SHA-384", "SHA-512"] {
+        let hash = match hash_name {
+            "SHA-384" => rusty_web_crypto::digest_sha384(b"x").to_vec(),
+            "SHA-512" => rusty_web_crypto::digest_sha512(b"x").to_vec(),
+            _ => unreachable!(),
+        };
+        let sig = rusty_web_crypto::rsa_pkcs1_v15_sign(&n, &d, &hash, hash_name).unwrap();
+        rusty_web_crypto::rsa_pkcs1_v15_verify(&n, &e, &hash, &sig, hash_name).unwrap();
+    }
+}

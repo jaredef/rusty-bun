@@ -1,0 +1,8 @@
+{
+  "name": "consumer-jwt-rs256-suite",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tier-J consumer #37: JWS JWT RS256 (RSASSA-PKCS1-v1_5 + SHA-256) sign/verify — the JWT spec's canonical asymmetric scheme.",
+  "main": "./src/main.js",
+  "module": "./src/main.js"
+}

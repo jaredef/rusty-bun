@@ -5,7 +5,7 @@
     "": {
       "name": "consumer-dayjs-app",
       "dependencies": {
-        "dayjs": "^1",
+        "dayjs": "^1.11.20",
       },
     },
   },

@@ -3587,15 +3587,49 @@ const BUFFER_CLASS_JS: &str = r#"
 (function() {
     const S = globalThis.__bufferStatic;
     class Buffer extends Uint8Array {
-        static from(input, encoding) {
+        static from(input, encoding, length) {
             if (typeof input === "string") {
-                // Currently only utf8 string→bytes is wired in S.
-                const arr = S.from(input);
-                return new Buffer(arr);
+                const enc = (encoding || "utf8").toLowerCase();
+                if (enc === "utf8" || enc === "utf-8") {
+                    return new Buffer(S.from(input));
+                }
+                if (enc === "latin1" || enc === "binary" || enc === "ascii") {
+                    const buf = new Buffer(input.length);
+                    for (let i = 0; i < input.length; i++) buf[i] = input.charCodeAt(i) & 0xff;
+                    return buf;
+                }
+                if (enc === "hex") {
+                    const clean = input.replace(/[^0-9a-fA-F]/g, "");
+                    const buf = new Buffer(Math.floor(clean.length / 2));
+                    for (let i = 0; i < buf.length; i++) buf[i] = parseInt(clean.substr(i*2, 2), 16);
+                    return buf;
+                }
+                if (enc === "base64") {
+                    // Browser atob accepts standard base64; tolerate URL-safe.
+                    let s = input.replace(/-/g, "+").replace(/_/g, "/").replace(/\s+/g, "");
+                    // Pad to multiple of 4.
+                    const pad = (4 - (s.length % 4)) % 4;
+                    s += "=".repeat(pad);
+                    const decoded = atob(s);
+                    const buf = new Buffer(decoded.length);
+                    for (let i = 0; i < decoded.length; i++) buf[i] = decoded.charCodeAt(i);
+                    return buf;
+                }
+                if (enc === "base64url") {
+                    return Buffer.from(input, "base64");
+                }
+                // Unknown encoding — treat as utf8.
+                return new Buffer(S.from(input));
             }
             if (Array.isArray(input) || input instanceof Uint8Array || ArrayBuffer.isView(input)) {
                 const buf = new Buffer(input.length || input.byteLength || 0);
                 buf.set(input);
+                return buf;
+            }
+            if (input && typeof input === "object" && input.type === "Buffer" && Array.isArray(input.data)) {
+                // JSON-serialized Buffer ({type:"Buffer", data:[...]}).
+                const buf = new Buffer(input.data.length);
+                buf.set(input.data);
                 return buf;
             }
             throw new TypeError("Buffer.from: unsupported input");
@@ -3645,8 +3679,100 @@ const BUFFER_CLASS_JS: &str = r#"
             if (enc === "utf8" || enc === "utf-8") return S.decodeUtf8(arr);
             if (enc === "base64") return S.encodeBase64(arr);
             if (enc === "hex") return S.encodeHex(arr);
+            if (enc === "latin1" || enc === "binary") {
+                let s = "";
+                for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+                return s;
+            }
+            if (enc === "ascii") {
+                let s = "";
+                for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i] & 0x7f);
+                return s;
+            }
+            if (enc === "base64url") {
+                return S.encodeBase64(arr).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            }
             throw new Error("Unsupported encoding: " + encoding);
         }
+        // Buffer.prototype.write(string, [offset], [length], [encoding])
+        // Per Node API, writes the string into the buffer starting at
+        // offset using the given encoding, returns the number of bytes
+        // written. base64url (E.40) and many encoding libs depend on it.
+        write(string, ...args) {
+            let offset = 0, length = this.length, encoding = "utf8";
+            for (const a of args) {
+                if (typeof a === "number" && offset === 0) offset = a;
+                else if (typeof a === "number") length = a;
+                else if (typeof a === "string") encoding = a;
+            }
+            const enc = (encoding || "utf8").toLowerCase();
+            let bytes;
+            if (enc === "utf8" || enc === "utf-8") {
+                bytes = new TextEncoder().encode(String(string));
+            } else if (enc === "latin1" || enc === "binary" || enc === "ascii") {
+                bytes = new Uint8Array(String(string).length);
+                for (let i = 0; i < bytes.length; i++) bytes[i] = String(string).charCodeAt(i) & 0xff;
+            } else if (enc === "hex") {
+                const s = String(string);
+                bytes = new Uint8Array(Math.floor(s.length / 2));
+                for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(s.substr(i*2, 2), 16);
+            } else if (enc === "base64") {
+                const decoded = atob(String(string).replace(/-/g, "+").replace(/_/g, "/"));
+                bytes = new Uint8Array(decoded.length);
+                for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+            } else {
+                bytes = new TextEncoder().encode(String(string));
+            }
+            const writeLen = Math.min(bytes.length, length, this.length - offset);
+            for (let i = 0; i < writeLen; i++) this[offset + i] = bytes[i];
+            return writeLen;
+        }
+        // Buffer.prototype.fill(value, [offset], [end], [encoding])
+        fill(value, offset, end) {
+            offset = offset || 0;
+            end = end !== undefined ? end : this.length;
+            if (typeof value === "string") {
+                const tmp = Buffer.from(value);
+                for (let i = offset; i < end; i++) this[i] = tmp[(i - offset) % tmp.length];
+            } else {
+                const v = (Number(value) || 0) & 0xff;
+                for (let i = offset; i < end; i++) this[i] = v;
+            }
+            return this;
+        }
+        // Buffer.prototype.slice(start, end) — preserves Buffer-ness
+        // (subarray returns Uint8Array; consumers that test isBuffer
+        // need the result to be Buffer too).
+        slice(start, end) {
+            const u = this.subarray(start, end);
+            return Buffer.from(u);
+        }
+        // Buffer.prototype.copy(target, targetStart, sourceStart, sourceEnd)
+        copy(target, targetStart, sourceStart, sourceEnd) {
+            targetStart = targetStart || 0;
+            sourceStart = sourceStart || 0;
+            sourceEnd = sourceEnd !== undefined ? sourceEnd : this.length;
+            let written = 0;
+            for (let i = sourceStart; i < sourceEnd && targetStart + written < target.length; i++) {
+                target[targetStart + written] = this[i];
+                written++;
+            }
+            return written;
+        }
+        // indexOf / includes (string or buffer search)
+        indexOf(value, byteOffset) {
+            byteOffset = byteOffset || 0;
+            const needle = (typeof value === "string") ? Buffer.from(value)
+                : (value instanceof Uint8Array ? value : Buffer.from([value & 0xff]));
+            outer: for (let i = byteOffset; i <= this.length - needle.length; i++) {
+                for (let j = 0; j < needle.length; j++) {
+                    if (this[i + j] !== needle[j]) continue outer;
+                }
+                return i;
+            }
+            return -1;
+        }
+        includes(value, byteOffset) { return this.indexOf(value, byteOffset) !== -1; }
         // Node Buffer numeric readers — ulid + many bincode-shape libs
         // rely on these. Defaults to offset 0; throws on out-of-range
         // per Node convention (unless noAssert is true, deprecated).

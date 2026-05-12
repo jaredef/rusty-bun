@@ -30,6 +30,11 @@ use rquickjs::{
 /// (Tier-H.3); CommonJS is still wired JS-side via `bootRequire(absPath)`.
 pub fn new_runtime() -> JsResult<(Runtime, Context)> {
     let runtime = Runtime::new()?;
+    // Bump the QuickJS stack ceiling. Default (~256KB) trips on
+    // codegen-heavy libs like ajv that recursively walk schema ASTs.
+    // 8MB matches V8/Bun's default; rusty-bun is not memory-pressured
+    // at engagement scale so the larger ceiling is safe.
+    runtime.set_max_stack_size(8 * 1024 * 1024);
     runtime.set_loader(NodeResolver, FsLoader);
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> JsResult<()> {
@@ -441,7 +446,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:readline/promises" | "readline/promises" |
         "node:module" | "module" |
         "node:cluster" | "cluster" |
-        "node:tls" | "tls"
+        "node:tls" | "tls" |
+        "node:v8" | "v8"
     )
 }
 
@@ -573,6 +579,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["TLSSocket", "connect", "createSecureContext", "rootCertificates",
               "DEFAULT_MIN_VERSION", "DEFAULT_MAX_VERSION", "DEFAULT_CIPHERS",
               "checkServerIdentity"]),
+        "node:v8" | "v8" => ("nodeV8",
+            &["serialize", "deserialize", "getHeapStatistics",
+              "getHeapSpaceStatistics", "cachedDataVersionTag",
+              "setFlagsFromString", "writeHeapSnapshot"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -835,6 +845,16 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
             out.push_str(rest);
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
+        } else if !indent_end.is_empty() && rest.starts_with("static(") {
+            // Method named `static` in shorthand class body — QuickJS rejects
+            // `static` as a method name (reserved keyword in class bodies).
+            // prettier's bundled fast-glob walker has `dynamic()` + `static()`
+            // method pair. Rename to `_static`.
+            out.push_str(indent_end);
+            out.push_str("_static");
+            out.push_str(&rest[6..]);
+            out.push_str(&body[indent_end.len() + rest.len()..]);
+            out.push_str(nl);
         } else {
             out.push_str(line);
         }
@@ -971,7 +991,16 @@ impl Loader for FsLoader {
         let source = rewrite_destructure_exports(&source);
         let source = strip_string_module_exports_alias(&source);
         let source = rewrite_regex_u_class_escapes(&source);
-        Module::declare(ctx.clone(), name, source)
+        let declared = Module::declare(ctx.clone(), name, source)?;
+        // Per Doc 714 sub-§4.c — populate import.meta.url for each
+        // transitively-loaded module. Prettier (and many modern libs)
+        // call fileURLToPath(import.meta.url) at top of file; without
+        // this they crash with "argument 'url' must be a file URL".
+        if let Ok(meta) = declared.meta() {
+            let _ = meta.set("url", format!("file://{}", name));
+            let _ = meta.set("main", false);
+        }
+        Ok(declared)
     }
 }
 
@@ -1307,6 +1336,12 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_buffer_class_js(&ctx)?;
     install_set_methods_polyfill(&ctx)?;
     install_finalization_registry_stub(&ctx)?;
+    // Node-compat: `global` and `self` aliases for globalThis. queue-microtask
+    // and many browser-portable libs check typeof global / typeof self.
+    ctx.eval::<(), _>(r#"
+        if (typeof globalThis.global === "undefined") globalThis.global = globalThis;
+        if (typeof globalThis.self === "undefined") globalThis.self = globalThis;
+    "#)?;
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
@@ -7942,6 +7977,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "cluster": () => globalThis.nodeCluster,
         "node:tls": () => globalThis.nodeTls,
         "tls": () => globalThis.nodeTls,
+        "node:v8": () => globalThis.nodeV8,
+        "v8": () => globalThis.nodeV8,
     };
 
     function loadModule(absPath) {
@@ -10589,6 +10626,40 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 },
                 Module: class {},
                 syncBuiltinESMExports() {},
+            };
+            // node:v8 stub — V8-specific module. We use QuickJS, so the
+            // engine-specific bits don't apply; consumers (prettier's bundled
+            // utilities, some logging libs) check typeof for fallback paths.
+            globalThis.nodeV8 = {
+                serialize(value) {
+                    // structuredClone via JSON for the safe-subset; real Node
+                    // uses HostObject IDs for cycles/typed-arrays. Sufficient
+                    // for consumers that round-trip plain data.
+                    return new TextEncoder().encode(JSON.stringify(value));
+                },
+                deserialize(buf) {
+                    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+                    return JSON.parse(new TextDecoder().decode(bytes));
+                },
+                getHeapStatistics() {
+                    return {
+                        total_heap_size: 0, total_heap_size_executable: 0,
+                        total_physical_size: 0, total_available_size: 0,
+                        used_heap_size: 0, heap_size_limit: 0,
+                        malloced_memory: 0, peak_malloced_memory: 0,
+                        does_zap_garbage: 0, number_of_native_contexts: 1,
+                        number_of_detached_contexts: 0,
+                    };
+                },
+                getHeapSpaceStatistics() { return []; },
+                cachedDataVersionTag() { return 0; },
+                setFlagsFromString() {},
+                writeHeapSnapshot() { return ""; },
+                // V8 promise/microtask helpers used by some libs
+                getHeapCodeStatistics() {
+                    return { code_and_metadata_size: 0, bytecode_and_metadata_size: 0,
+                             external_script_source_size: 0 };
+                },
             };
             // node:cluster stub — rusty-bun is single-process. Master flag
             // is true, worker is undefined. Surface matches the read-mostly

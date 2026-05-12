@@ -7932,6 +7932,9 @@ consumer_test!(consumer_babelparser_app_byte_identical_to_bun, "consumer-babelpa
 consumer_test!(consumer_postcss_app_byte_identical_to_bun, "consumer-postcss-app");
 consumer_test!(consumer_fastxmlparser_app_byte_identical_to_bun, "consumer-fastxmlparser-app");
 consumer_test!(consumer_graphql_app_byte_identical_to_bun, "consumer-graphql-app");
+consumer_test!(consumer_typescript_app_byte_identical_to_bun, "consumer-typescript-app");
+consumer_test!(consumer_ajv_app_byte_identical_to_bun, "consumer-ajv-app");
+consumer_test!(consumer_prettier_app_byte_identical_to_bun, "consumer-prettier-app");
 
 #[test]
 fn consumer_micromatch_app_byte_identical_to_bun() {

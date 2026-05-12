@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "parse-duration": "^2.1.6"
+  }
+}

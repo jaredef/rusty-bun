@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "strip-json-comments": "^5.0.3"
+  }
+}

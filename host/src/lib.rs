@@ -440,7 +440,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:readline" | "readline" |
         "node:readline/promises" | "readline/promises" |
         "node:module" | "module" |
-        "node:cluster" | "cluster"
+        "node:cluster" | "cluster" |
+        "node:tls" | "tls"
     )
 }
 
@@ -568,6 +569,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["isMaster", "isPrimary", "isWorker", "worker", "workers",
               "schedulingPolicy", "SCHED_NONE", "SCHED_RR",
               "fork", "disconnect", "setupMaster", "setupPrimary"]),
+        "node:tls" | "tls" => ("nodeTls",
+            &["TLSSocket", "connect", "createSecureContext", "rootCertificates",
+              "DEFAULT_MIN_VERSION", "DEFAULT_MAX_VERSION", "DEFAULT_CIPHERS",
+              "checkServerIdentity"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -7849,6 +7854,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "module": () => globalThis.nodeModule,
         "node:cluster": () => globalThis.nodeCluster,
         "cluster": () => globalThis.nodeCluster,
+        "node:tls": () => globalThis.nodeTls,
+        "tls": () => globalThis.nodeTls,
     };
 
     function loadModule(absPath) {
@@ -10657,6 +10664,161 @@ fn install_node_net_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 // Server deferred (Bun.serve covers HTTP); throw on use.
                 createServer: () => {
                     throw new Error("net.createServer not implemented; use Bun.serve for HTTP");
+                },
+            };
+
+            // node:tls — TLSSocket composing on the Π1.4 __tls registry.
+            // Surface matches node:net.Socket so consumers that swap net→tls
+            // (nodemailer, mongodb driver, redis client) get the same shape.
+            class TLSSocket {
+                constructor() {
+                    this._sid = null;
+                    this._listeners = new Map();
+                    this._closed = false;
+                    this._encoding = null;
+                    this.authorized = true;
+                }
+                on(ev, cb) {
+                    if (!this._listeners.has(ev)) this._listeners.set(ev, []);
+                    this._listeners.get(ev).push({ cb, once: false });
+                    return this;
+                }
+                once(ev, cb) {
+                    if (!this._listeners.has(ev)) this._listeners.set(ev, []);
+                    this._listeners.get(ev).push({ cb, once: true });
+                    return this;
+                }
+                off(ev, cb) {
+                    const arr = this._listeners.get(ev);
+                    if (!arr) return this;
+                    this._listeners.set(ev, arr.filter(l => l.cb !== cb));
+                    return this;
+                }
+                removeListener(ev, cb) { return this.off(ev, cb); }
+                emit(ev, ...args) {
+                    const arr = this._listeners.get(ev);
+                    if (!arr || arr.length === 0) return false;
+                    const snapshot = arr.slice();
+                    this._listeners.set(ev, arr.filter(l => !l.once));
+                    for (const l of snapshot) {
+                        try { l.cb.apply(this, args); } catch (e) {
+                            if (ev !== "error") this.emit("error", e);
+                        }
+                    }
+                    return true;
+                }
+                setEncoding(enc) { this._encoding = enc; return this; }
+                connect(opts, cb) {
+                    const host = opts.host || opts.servername || "127.0.0.1";
+                    const port = opts.port || 443;
+                    if (cb) this.once("secureConnect", cb);
+                    // Load CA bundle once via the same fallback chain fetch uses.
+                    let caPem = null;
+                    if (opts.ca) caPem = opts.ca;
+                    else {
+                        const env = (process && process.env) || {};
+                        const candidates = [env.RUSTY_BUN_CA, env.NODE_EXTRA_CA_CERTS,
+                            "/etc/ssl/certs/ca-certificates.crt",
+                            "/etc/pki/tls/certs/ca-bundle.crt",
+                            "/etc/ssl/cert.pem"].filter(Boolean);
+                        for (const p of candidates) {
+                            try { caPem = require("node:fs").readFileSync(p, "utf8"); if (caPem) break; }
+                            catch (_) {}
+                        }
+                    }
+                    if (!caPem) {
+                        queueMicrotask(() => this.emit("error", new Error("node:tls: no CA bundle found")));
+                        return this;
+                    }
+                    try {
+                        this._sid = globalThis.__tls.connect(host, port, caPem);
+                    } catch (e) {
+                        queueMicrotask(() => this.emit("error", e));
+                        return this;
+                    }
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.add(this);
+                    queueMicrotask(() => {
+                        this.emit("secureConnect");
+                        this.emit("connect");
+                    });
+                    return this;
+                }
+                write(data, encOrCb, cb) {
+                    if (typeof encOrCb === "function") cb = encOrCb;
+                    if (this._closed || this._sid == null) return false;
+                    const bytes = (typeof data === "string")
+                        ? new TextEncoder().encode(data)
+                        : (data instanceof Uint8Array ? data : new Uint8Array(data));
+                    globalThis.__tls.write(this._sid, Array.from(bytes));
+                    if (cb) queueMicrotask(cb);
+                    return true;
+                }
+                end(data, encOrCb) {
+                    if (data !== undefined) this.write(data, encOrCb);
+                    this._endRequested = true;
+                    return this;
+                }
+                destroy(err) {
+                    if (this._closed) return;
+                    this._closed = true;
+                    if (this._sid != null) {
+                        try { globalThis.__tls.close(this._sid); } catch (_) {}
+                        this._sid = null;
+                    }
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
+                    if (err) this.emit("error", err);
+                    queueMicrotask(() => this.emit("close", !!err));
+                }
+                __tick() {
+                    if (this._closed || this._sid == null) return false;
+                    const chunk = globalThis.__tls.read(this._sid);
+                    if (chunk === null || chunk.length === 0) {
+                        // For now treat empty as no-data (we don't have a non-blocking
+                        // tryRead for TLS). Consumers that need streaming pull bytes
+                        // via explicit calls.
+                        return false;
+                    }
+                    const payload = this._encoding === "utf8" || this._encoding === "utf-8"
+                        ? new TextDecoder().decode(new Uint8Array(chunk))
+                        : (typeof Buffer !== "undefined" ? Buffer.from(chunk) : new Uint8Array(chunk));
+                    this.emit("data", payload);
+                    if (this._endRequested) { this.destroy(); }
+                    return true;
+                }
+                getPeerCertificate() { return {}; }
+                getCipher() { return { name: "TLS_AES_128_GCM_SHA256", version: "TLSv1.3" }; }
+                getProtocol() { return "TLSv1.3"; }
+            }
+
+            function tlsConnect(opts, cb) {
+                // tls.connect(port, host?, opts?, cb?) | tls.connect(opts, cb?)
+                if (typeof opts === "number") {
+                    const port = opts;
+                    let host = "127.0.0.1", options = {}, callback = null;
+                    for (const a of [arguments[1], arguments[2], arguments[3]]) {
+                        if (typeof a === "string") host = a;
+                        else if (typeof a === "function") callback = a;
+                        else if (a && typeof a === "object") options = a;
+                    }
+                    opts = Object.assign({ port, host }, options);
+                    cb = callback;
+                }
+                const s = new TLSSocket();
+                s.connect(opts, cb);
+                return s;
+            }
+
+            globalThis.nodeTls = {
+                TLSSocket,
+                connect: tlsConnect,
+                createSecureContext: () => ({}),
+                rootCertificates: [],
+                DEFAULT_MIN_VERSION: "TLSv1.2",
+                DEFAULT_MAX_VERSION: "TLSv1.3",
+                DEFAULT_CIPHERS: "",
+                checkServerIdentity: () => undefined,
+                createServer: () => {
+                    throw new Error("tls.createServer not implemented; use Bun.serve for HTTPS");
                 },
             };
         })();

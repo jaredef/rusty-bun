@@ -696,6 +696,16 @@ fn install_error_polyfills<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     // but don't transform.
     ctx.eval::<(), _>(r#"
         (function() {
+            // globalThis.self — many browser-compat / UMD libs check
+            // `typeof self !== "undefined"` to find the global scope.
+            // Prism, jsdom-shim, some validators, many polyfills branch
+            // on this. Alias self → globalThis so they take the browser path.
+            if (typeof globalThis.self === "undefined") {
+                Object.defineProperty(globalThis, "self", {
+                    value: globalThis,
+                    writable: true, configurable: true,
+                });
+            }
             if (typeof Error.captureStackTrace !== "function") {
                 // V8 semantics: if Error.prepareStackTrace is set, V8 calls
                 // it with (err, structuredCallSiteArray) and uses its return

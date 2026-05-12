@@ -5314,6 +5314,20 @@ const NODE_HTTP_JS: &str = r#"
             if (chunk !== undefined) this._body.push(String(chunk));
             this.headersSent = true;
             this.ended = true;
+            // Bridge: when running under createServer().listen() the
+            // adapter sets _resolve so .end() converts to a Web Response.
+            if (typeof this._resolve === "function") {
+                try {
+                    const r = new Response(this.body(), {
+                        status: this.statusCode,
+                        statusText: this.statusMessage || undefined,
+                        headers: Object.assign({}, this._headers),
+                    });
+                    this._resolve(r);
+                } catch (e) {
+                    if (typeof this._reject === "function") this._reject(e);
+                }
+            }
             return this;
         }
         // Pilot helper: serialize body to string.
@@ -5353,32 +5367,91 @@ const NODE_HTTP_JS: &str = r#"
             this._port = 0;
             this._listening = false;
             this._closed = false;
+            this._bunServer = null;
         }
         on(event, handler) {
             if (event === "request") this._handler = handler;
             return this;
         }
-        listen(port, cb) {
-            this._port = port;
-            this._listening = true;
-            if (typeof cb === "function") {
-                Promise.resolve().then(cb);
+        // listen(port?, host?, cb?) — Bun.serve bridge. The Node-style
+        // request handler (req, res) is wrapped in a Web-fetch handler:
+        // build IncomingMessage from Request, hand it + a ServerResponse
+        // to the user's handler, await res.end() resolving to a Response.
+        // Enables express/koa/fastify-style code that calls .listen() to
+        // run end-to-end via Π2.6.b cooperative-yield self-fetch.
+        listen(...args) {
+            // Parse args: listen(port?, host?, cb?) or listen(opts, cb)
+            let port = 0, host = "127.0.0.1", cb = null;
+            for (const a of args) {
+                if (typeof a === "number") { port = a; }
+                else if (typeof a === "string") { host = a; }
+                else if (typeof a === "function") { cb = a; }
+                else if (a && typeof a === "object") {
+                    if (typeof a.port === "number") port = a.port;
+                    if (typeof a.host === "string") host = a.host;
+                }
             }
+            if (this._listening) {
+                if (cb) Promise.resolve().then(cb);
+                return this;
+            }
+            // Gate: the Bun.serve bridge needs the async eval loop. In
+            // sync-eval contexts (eval_i64/eval_bool/eval_string from
+            // unit tests of the data-layer surface), keep the old
+            // flag-only behavior — listen() is non-binding.
+            if (!globalThis.__asyncEvalActive || !this._handler) {
+                this._port = port || this._port;
+                this._listening = true;
+                if (cb) Promise.resolve().then(cb);
+                return this;
+            }
+            const handler = this._handler;
+            this._bunServer = Bun.serve({
+                port, hostname: host, autoServe: true,
+                fetch: (req) => new Promise((resolve, reject) => {
+                    const u = new URL(req.url);
+                    const headerObj = {};
+                    req.headers.forEach((v, n) => { headerObj[n] = v; });
+                    // Buffer the request body, then build the Node-style req+res.
+                    req.text().then((body) => {
+                        const incoming = new IncomingMessage({
+                            method: req.method,
+                            url: u.pathname + u.search,
+                            httpVersion: "1.1",
+                            headers: headerObj,
+                            body,
+                            complete: true,
+                        });
+                        const res = new ServerResponse();
+                        res._resolve = resolve;
+                        res._reject = reject;
+                        try { handler(incoming, res); }
+                        catch (e) { reject(e); }
+                    }).catch(reject);
+                }),
+            });
+            this._port = this._bunServer.port;
+            this._listening = true;
+            if (cb) Promise.resolve().then(cb);
             return this;
         }
         close(cb) {
+            if (this._bunServer && this._bunServer.stop) {
+                try { this._bunServer.stop(); } catch (_) {}
+            }
             this._listening = false;
             this._closed = true;
-            if (typeof cb === "function") {
-                Promise.resolve().then(cb);
-            }
+            if (typeof cb === "function") Promise.resolve().then(cb);
             return this;
         }
         get listening() { return this._listening; }
         get port() { return this._port; }
-        // Pilot-only invocation: route a synthetic IncomingMessage through
-        // the handler and return the populated ServerResponse. Real Node
-        // delivers via socket; this is data-layer dispatch.
+        address() {
+            return this._listening
+                ? { address: "127.0.0.1", family: "IPv4", port: this._port }
+                : null;
+        }
+        // Pilot helper preserved: synchronous data-layer dispatch.
         dispatch(req) {
             const incoming = req instanceof IncomingMessage ? req : new IncomingMessage(req);
             const res = new ServerResponse();
@@ -8451,6 +8524,11 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
     context.with(|ctx| -> Result<(), String> {
         ctx.globals().set("__esmResult", rquickjs::Value::new_undefined(ctx.clone()))
             .map_err(|e| format!("init result slot: {:?}", e))?;
+        // Gate marker: async eval context. Used by node:http.Server.listen
+        // to decide whether to bridge to Bun.serve (only safe when this
+        // eval loop is driving microtasks + __keepAlive).
+        ctx.globals().set("__asyncEvalActive", true)
+            .map_err(|e| format!("init async flag: {:?}", e))?;
         let _promise = Module::evaluate(ctx.clone(), entry_name.as_str(), source.as_str())
             .map_err(|e| format!("declare entry: {:?}", e))?;
         Ok(())
@@ -8530,6 +8608,7 @@ pub fn eval_string_async(source: &str) -> Result<String, String> {
         r#"
         globalThis.__asyncResult = undefined;
         globalThis.__asyncError = undefined;
+        globalThis.__asyncEvalActive = true;
         Promise.resolve().then(async () => {{
             try {{
                 globalThis.__asyncResult = await (async () => {{ {} }})();

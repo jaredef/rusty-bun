@@ -4704,3 +4704,32 @@ fn consumer_debug_app_byte_identical_to_bun() {
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
 
+
+#[test]
+fn node_http_create_server_listen_round_trip() {
+    // node:http.createServer + .listen + Π2.6.b self-fetch round-trip.
+    // Bridges the Node-style (req, res) handler to Bun.serve internally.
+    let r = rusty_bun_host::eval_string_async(r#"
+        const http = globalThis.nodeHttp;
+        const server = http.createServer((req, res) => {
+            const body = req._body || "";  // body bridged in via IncomingMessage init
+            res.writeHead(201, { "content-type": "text/plain", "x-method": req.method });
+            res.end("node-style says: " + req.method + " " + req.url + " body=" + body);
+        });
+        server.listen(0, "127.0.0.1");
+        const port = server.port;
+        const base = "http://127.0.0.1:" + port;
+        const lines = [];
+        {
+            const r = await fetch(base + "/hello");
+            lines.push("1 " + r.status + " " + r.headers.get("x-method") + " " + (await r.text()));
+        }
+        {
+            const r = await fetch(base + "/echo", { method: "POST", body: "ping" });
+            lines.push("2 " + r.status + " " + r.headers.get("x-method") + " " + (await r.text()));
+        }
+        server.close();
+        return lines.join("\n");
+    "#).unwrap();
+    assert_eq!(r, "1 201 GET node-style says: GET /hello body=\n2 201 POST node-style says: POST /echo body=ping");
+}

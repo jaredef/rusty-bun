@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "p-timeout": "^7.0.1"
+  }
+}

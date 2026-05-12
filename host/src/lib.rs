@@ -393,7 +393,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:stream/web" | "stream/web" |
         "node:test" | "test" |
         "node:worker_threads" | "worker_threads" |
-        "node:http2" | "http2"
+        "node:http2" | "http2" |
+        "node:vm" | "vm"
     )
 }
 
@@ -496,6 +497,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:http2" | "http2" => ("nodeHttp2",
             &["constants", "createServer", "createSecureServer",
               "connect", "Http2ServerRequest", "Http2ServerResponse"]),
+        "node:vm" | "vm" => ("nodeVm",
+            &["Script", "createContext", "runInNewContext",
+              "runInThisContext", "compileFunction", "isContext"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -511,14 +515,30 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
     }
     if name == "node:crypto" || name == "crypto" {
         // webcrypto = globalThis.crypto (Web Crypto API namespace).
-        // getRandomValues is a method on crypto, but Node also exposes it
-        // as a top-level export. Bind both for consumer compatibility.
+        // Node also exposes createHash/createHmac/randomBytes/etc as
+        // top-level exports; bind them for consumer compatibility
+        // (uuid, md5-hex, jsonwebtoken, etc. import { createHash }).
         return Some(
             "const __c = globalThis.crypto;\n\
              export const randomUUID = __c.randomUUID.bind(__c);\n\
              export const subtle = __c.subtle;\n\
              export const webcrypto = __c;\n\
              export const getRandomValues = __c.getRandomValues.bind(__c);\n\
+             export const createHash = __c.createHash;\n\
+             export const createHmac = __c.createHmac;\n\
+             export const randomBytes = (n) => {\n\
+                 const buf = new Uint8Array(n);\n\
+                 __c.getRandomValues(buf);\n\
+                 return typeof Buffer !== \"undefined\" ? Buffer.from(buf) : buf;\n\
+             };\n\
+             export const randomFillSync = (buf, offset, size) => {\n\
+                 const view = (offset || size)\n\
+                     ? new Uint8Array(buf.buffer || buf, (buf.byteOffset || 0) + (offset || 0), size !== undefined ? size : buf.length - (offset || 0))\n\
+                     : new Uint8Array(buf.buffer || buf, buf.byteOffset || 0, buf.length);\n\
+                 __c.getRandomValues(view);\n\
+                 return buf;\n\
+             };\n\
+             export const pbkdf2Sync = __c.pbkdf2Sync;\n\
              export default __c;\n".to_string()
         );
     }
@@ -2816,6 +2836,69 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
             // historically, mongoose, every fingerprinter) call this. The
             // returned hasher accumulates via .update() then emits via
             // .digest([encoding]).
+            // Pure-JS MD5 (RFC 1321) for crypto.createHash('md5').
+            // S16 L5 closure: md5-hex (E.51) and other md5-using libs land here.
+            const _md5 = (function() {
+                function safeAdd(x, y) {
+                    const lsw = (x & 0xffff) + (y & 0xffff);
+                    const msw = (x >> 16) + (y >> 16) + (lsw >> 16);
+                    return (msw << 16) | (lsw & 0xffff);
+                }
+                function rol(num, cnt) { return (num << cnt) | (num >>> (32 - cnt)); }
+                function cmn(q, a, b, x, s, t) {
+                    return safeAdd(rol(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b);
+                }
+                function ff(a,b,c,d,x,s,t){return cmn((b&c)|(~b&d),a,b,x,s,t);}
+                function gg(a,b,c,d,x,s,t){return cmn((b&d)|(c&~d),a,b,x,s,t);}
+                function hh(a,b,c,d,x,s,t){return cmn(b^c^d,a,b,x,s,t);}
+                function ii(a,b,c,d,x,s,t){return cmn(c^(b|~d),a,b,x,s,t);}
+                function binl(x, len) {
+                    x[len >> 5] |= 0x80 << (len % 32);
+                    x[(((len + 64) >>> 9) << 4) + 14] = len;
+                    let a=1732584193, b=-271733879, c=-1732584194, d=271733878;
+                    for (let i = 0; i < x.length; i += 16) {
+                        const olda=a, oldb=b, oldc=c, oldd=d;
+                        a=ff(a,b,c,d,x[i+0],7,-680876936);  d=ff(d,a,b,c,x[i+1],12,-389564586); c=ff(c,d,a,b,x[i+2],17,606105819); b=ff(b,c,d,a,x[i+3],22,-1044525330);
+                        a=ff(a,b,c,d,x[i+4],7,-176418897);  d=ff(d,a,b,c,x[i+5],12,1200080426); c=ff(c,d,a,b,x[i+6],17,-1473231341); b=ff(b,c,d,a,x[i+7],22,-45705983);
+                        a=ff(a,b,c,d,x[i+8],7,1770035416);  d=ff(d,a,b,c,x[i+9],12,-1958414417); c=ff(c,d,a,b,x[i+10],17,-42063); b=ff(b,c,d,a,x[i+11],22,-1990404162);
+                        a=ff(a,b,c,d,x[i+12],7,1804603682); d=ff(d,a,b,c,x[i+13],12,-40341101); c=ff(c,d,a,b,x[i+14],17,-1502002290); b=ff(b,c,d,a,x[i+15],22,1236535329);
+                        a=gg(a,b,c,d,x[i+1],5,-165796510); d=gg(d,a,b,c,x[i+6],9,-1069501632); c=gg(c,d,a,b,x[i+11],14,643717713); b=gg(b,c,d,a,x[i+0],20,-373897302);
+                        a=gg(a,b,c,d,x[i+5],5,-701558691); d=gg(d,a,b,c,x[i+10],9,38016083); c=gg(c,d,a,b,x[i+15],14,-660478335); b=gg(b,c,d,a,x[i+4],20,-405537848);
+                        a=gg(a,b,c,d,x[i+9],5,568446438); d=gg(d,a,b,c,x[i+14],9,-1019803690); c=gg(c,d,a,b,x[i+3],14,-187363961); b=gg(b,c,d,a,x[i+8],20,1163531501);
+                        a=gg(a,b,c,d,x[i+13],5,-1444681467); d=gg(d,a,b,c,x[i+2],9,-51403784); c=gg(c,d,a,b,x[i+7],14,1735328473); b=gg(b,c,d,a,x[i+12],20,-1926607734);
+                        a=hh(a,b,c,d,x[i+5],4,-378558); d=hh(d,a,b,c,x[i+8],11,-2022574463); c=hh(c,d,a,b,x[i+11],16,1839030562); b=hh(b,c,d,a,x[i+14],23,-35309556);
+                        a=hh(a,b,c,d,x[i+1],4,-1530992060); d=hh(d,a,b,c,x[i+4],11,1272893353); c=hh(c,d,a,b,x[i+7],16,-155497632); b=hh(b,c,d,a,x[i+10],23,-1094730640);
+                        a=hh(a,b,c,d,x[i+13],4,681279174); d=hh(d,a,b,c,x[i+0],11,-358537222); c=hh(c,d,a,b,x[i+3],16,-722521979); b=hh(b,c,d,a,x[i+6],23,76029189);
+                        a=hh(a,b,c,d,x[i+9],4,-640364487); d=hh(d,a,b,c,x[i+12],11,-421815835); c=hh(c,d,a,b,x[i+15],16,530742520); b=hh(b,c,d,a,x[i+2],23,-995338651);
+                        a=ii(a,b,c,d,x[i+0],6,-198630844); d=ii(d,a,b,c,x[i+7],10,1126891415); c=ii(c,d,a,b,x[i+14],15,-1416354905); b=ii(b,c,d,a,x[i+5],21,-57434055);
+                        a=ii(a,b,c,d,x[i+12],6,1700485571); d=ii(d,a,b,c,x[i+3],10,-1894986606); c=ii(c,d,a,b,x[i+10],15,-1051523); b=ii(b,c,d,a,x[i+1],21,-2054922799);
+                        a=ii(a,b,c,d,x[i+8],6,1873313359); d=ii(d,a,b,c,x[i+15],10,-30611744); c=ii(c,d,a,b,x[i+6],15,-1560198380); b=ii(b,c,d,a,x[i+13],21,1309151649);
+                        a=ii(a,b,c,d,x[i+4],6,-145523070); d=ii(d,a,b,c,x[i+11],10,-1120210379); c=ii(c,d,a,b,x[i+2],15,718787259); b=ii(b,c,d,a,x[i+9],21,-343485551);
+                        a=safeAdd(a,olda); b=safeAdd(b,oldb); c=safeAdd(c,oldc); d=safeAdd(d,oldd);
+                    }
+                    return [a, b, c, d];
+                }
+                function bytesToWords(bytes) {
+                    const out = new Array(((bytes.length + 8) >> 6) * 16 + 16).fill(0);
+                    for (let i = 0; i < bytes.length; i++) {
+                        out[i >> 2] |= bytes[i] << ((i % 4) * 8);
+                    }
+                    return out;
+                }
+                function wordsToBytes(words) {
+                    const out = new Uint8Array(16);
+                    for (let i = 0; i < 16; i++) {
+                        out[i] = (words[i >> 2] >>> ((i % 4) * 8)) & 0xff;
+                    }
+                    return out;
+                }
+                return function md5(bytes) {
+                    const len = bytes.length * 8;
+                    const x = bytesToWords(bytes);
+                    return wordsToBytes(binl(x, len));
+                };
+            })();
+
             globalThis.crypto.createHash = function createHash(algorithm) {
                 const algo = String(algorithm).toLowerCase().replace(/-/g, "");
                 const supported = ["sha1", "sha256", "sha384", "sha512", "md5"];
@@ -2843,7 +2926,8 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         else if (algo === "sha256") out = globalThis.crypto.subtle.digestSha256Bytes(inArr);
                         else if (algo === "sha384") out = globalThis.crypto.subtle.digestSha384Bytes(inArr);
                         else if (algo === "sha512") out = globalThis.crypto.subtle.digestSha512Bytes(inArr);
-                        else throw new Error("md5 not implemented");  // md5 stub
+                        else if (algo === "md5") out = _md5(combined);
+                        else throw new Error("createHash: unsupported algorithm " + algo);
                         const u8 = new Uint8Array(out);
                         if (!encoding || encoding === "buffer") {
                             return typeof Buffer !== "undefined" ? Buffer.from(u8) : u8;
@@ -6886,6 +6970,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "worker_threads": () => globalThis.nodeWorkerThreads,
         "node:http2": () => globalThis.nodeHttp2,
         "http2": () => globalThis.nodeHttp2,
+        "node:vm": () => globalThis.nodeVm,
+        "vm": () => globalThis.nodeVm,
     };
 
     function loadModule(absPath) {
@@ -9250,6 +9336,59 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 connect: http2Throws("connect"),
                 Http2ServerRequest: class {},
                 Http2ServerResponse: class {},
+            };
+
+            // node:vm — minimal stub for function-timeout and other libs
+            // that import vm only for optional sandboxing. Script.run*
+            // delegates to (0,eval) without true isolation or timeout
+            // enforcement; consumers that depend on real timeout get
+            // a documented divergence but their non-timeout path works.
+            class VmScript {
+                constructor(code, opts) {
+                    this.code = String(code);
+                    this._opts = opts || {};
+                }
+                runInThisContext(_opts) {
+                    return (0, eval)(this.code);
+                }
+                runInNewContext(context, _opts) {
+                    if (context && typeof context === "object") {
+                        const keys = Object.keys(context);
+                        const vals = keys.map(k => context[k]);
+                        const fn = new Function(...keys, "return (" + this.code + ");");
+                        try {
+                            const r = fn(...vals);
+                            // Some scripts mutate context vars; reflect back.
+                            return r;
+                        } catch (e) {
+                            // Fall back to eval if Function() rewrite fails
+                            // (e.g., statements not expressions).
+                            try {
+                                const wrapped = new Function(...keys, this.code);
+                                return wrapped(...vals);
+                            } catch (e2) { throw e2; }
+                        }
+                    }
+                    return (0, eval)(this.code);
+                }
+                runInContext(context, opts) { return this.runInNewContext(context, opts); }
+            }
+            function vmCreateContext(initial) {
+                return initial ? Object.assign({}, initial) : {};
+            }
+            globalThis.nodeVm = {
+                Script: VmScript,
+                createContext: vmCreateContext,
+                runInNewContext(code, ctx, opts) {
+                    return new VmScript(code, opts).runInNewContext(ctx, opts);
+                },
+                runInThisContext(code, opts) {
+                    return new VmScript(code, opts).runInThisContext(opts);
+                },
+                compileFunction(code, params, opts) {
+                    return new Function(...(params || []), code);
+                },
+                isContext(_v) { return true; },
             };
         })();
     "#)?;

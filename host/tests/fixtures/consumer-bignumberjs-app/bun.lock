@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "bignumber.js": "^11.1.1",
+      },
+    },
+  },
+  "packages": {
+    "bignumber.js": ["bignumber.js@11.1.1", "", {}, "sha512-LNkCYMieJqAts/Sj5094B92c5q+yRPlXWpABJnHMbUjB/F8AUjELmSmYX5mxbNiY/QnGnJvJIrnRuW5gUqbW5Q=="],
+  }
+}

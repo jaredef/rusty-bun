@@ -894,6 +894,9 @@ impl Loader for FsLoader {
                 "abstract", "boolean", "byte", "char", "double", "final", "float",
                 "goto", "int", "long", "native", "short", "synchronized", "throws",
                 "transient", "volatile",
+                // Globals / strict-mode-restricted that QuickJS rejects as
+                // lexical binding names ("invalid lexical variable name"):
+                "undefined", "eval", "arguments",
             ];
             for k in keys {
                 if RESERVED.contains(&k.as_str()) { continue; }

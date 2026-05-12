@@ -1,148 +1,79 @@
-# Edge → Substrate Stratum Map
+# Edge → Substrate Stratum Map (revision 2)
 
-Pin-Art bilateral reading at the substrate-stratum level. Edges E.1–E.56
-clustered by the engine primitive each edge probes. Per §A8.18, the
-geometry is K substrate strata exposed through N edge observations.
+Pin-Art bilateral reading. Edges cluster around K substrate primitives;
+each stratum decomposes into L hierarchical *constraint layers* that
+the closure arc must lift in dependency order. The recorded edge is
+the topmost-revealed layer; everything above is invisible until you
+lift the lower one.
 
-## Section 1 — Stratum map (dependency order, engine-foundation first)
+## Constraint hierarchy (L axis)
 
-### S1. Regex /u strict-escape semantics
-**Axis:** QuickJS rejects some backslash-escape sequences under /u flag
-that the ECMAScript spec and V8 permit.
-- E.29 camelcase ^9 — `\-` in `[...]` after re-compile with `'gu'` — **CLOSED** (RegExp wrapper)
-- E.43 camelcase-keys ^10 — transitive — **CLOSED**
-- E.56 ajv-regex — different /u escape in Ajv internals — **OPEN**
-- *Suspected members:* E.12 hono arrow-field, E.13 strict-mode reserved
+| Layer | Question | Visible only when … |
+|---|---|---|
+| L0 parse | Does the engine accept the source? | — |
+| L1 load | Does the loader run in bounded time? | L0 passes |
+| L2 namespace | Are required APIs present? | L1 passes |
+| L3 surface | Do APIs have correct shape? | L2 passes |
+| L4 idiom | Do shapes support consumer call patterns? | L3 passes |
+| L5 semantics | Do correct ops produce correct bytes? | L4 passes |
+| L6 timing | Does scheduling match? | L5 passes |
 
-### S2. Wall-clock timer scheduling
-**Axis:** setTimeout(fn, ms) honoring ms instead of microtask-immediate.
-- E.54 delay ^7 — **CLOSED** (deadline-based + tick pump)
-- E.55 p-series — transitive — **CLOSED**
-- E.18 polka cooperative-loop — likely subsumed (re-test needed)
-- E.19 megastack same — likely subsumed
-- E.44 p-throttle ^8 — likely subsumed
-- E.41 p-wait-for ^6 — partial (TimeoutError naming still diverges)
+A single recorded edge is a **stratum × layer** coordinate. The
+consumer hits its lowest-failing layer and stops; everything above is
+silent. This is why one substrate fix can retire 2–10 consumers
+transitively: the consumers were all stalled at the SAME layer of the
+SAME stratum, and the fix lifts them all to the next layer (which is
+often already closed for the simpler consumers).
 
-### S3. Node-builtin module namespace
-**Axis:** which node:* identifiers resolve to a JS object via the loader.
-- E.17 fastify ^5 — was missing 11 node:* modules — **MOSTLY CLOSED** (stops at S6 Ajv regex)
-- *Beneficiaries:* any modern Node-targeted lib (pino, megastack, polka, etc.) — gain landed by induction even without individual fixtures
+## Strata × layers (S6 illustrative)
 
-### S4. Conditional-exports resolver (CJS path)
-**Axis:** recursive walk of nested `"import"/"require"/"default"` keys.
-- toad-cache (substrate-only; no E.NN assigned) — **CLOSED**
-- *Beneficiaries:* any package shipping nested-conditional `exports` field
+The S6 (http / fastify) closure arc proceeded in layer order:
 
-### S5. http.Server API-surface shape
-**Axis:** `createServer(opts, handler)` two-arg form + Server.setTimeout +
-event-emitter shape stubs.
-- E.17 fastify constructor — **CLOSED**
+| Stratum | L0 | L1 | L2 | L3 | L4 | L5 | L6 |
+|---|---|---|---|---|---|---|---|
+| **S6 http** | `\-` in /u | preprocessor backtracking | `process.nextTick` | `require('node:url').URL` undefined | ES6 class vs `.call(this)` | (req/res byte parity) | (real socket loop) |
+| S1 regex /u | shared with S6 L0 | | | | | | |
+| S2 timers | | | shared with S6 L2 | | | | wall-clock fidelity |
+| S3 node:* | | | 12-stub gap | | | | |
+| S4 exports | | | | conditional-exports recurse | | | |
+| S5 server | | | | http.Server two-arg + setTimeout | EE shape + assignSocket | | |
 
-### S6. Regex /u strict-escape semantics (deep)
-**Axis:** same as S1 but inside engine-bundled deps (Ajv); current
-RegExp wrapper preprocessor doesn't catch all cases.
-- E.56 ajv-regex — **OPEN**, blocks fastify operation
+S6 spanned L0–L4 because fastify is a deep consumer of the http
+stratum. Most observed strata only manifest at one or two layers
+because the consumer set hasn't reached deeper.
 
-### S7. ESM/CJS class-inheritance boundary
-**Axis:** CJS bridge preserving prototype chain across require/import.
-- E.14 — **OPEN**
+## Refined work-to-closure bound
 
-### S8. Π2.6.b cooperative-loop (legacy, pre-timers)
-**Axis:** non-blocking-TCP yield budget before real wall-clock timers.
-- Most members likely subsumed by S2 — needs re-test of E.18/E.19
+- **K** = substrate strata (engine primitives) ~ 18
+- **L** = layers per stratum, bounded ~ 7
+- **L̄ exercised** = mean layers a real consumer actually exercises per
+  stratum on the in-basin axis, ~ 2–5
+- **Total measured fix points to telos** ≈ K × L̄
+- Still much smaller than N (recorded edges) because edges collapse on
+  TWO axes: many edges → one (stratum, layer); many (stratum, layer)
+  → one substrate widening.
 
-### S9. fs/promises async surface
-**Axis:** node:fs Promise-returning surface beyond sync subset.
-- E.20 glob ^10 — **OPEN** (readdir, real recursive walk)
+## Consumer-depth prediction
 
-### S10. Stream Transform / TransformStream
-**Axis:** WHATWG TransformStream wire + node:stream.Transform parity.
-- E.21 csv-parse — **OPEN**
-- E.37 ndjson-parser — **OPEN**
+For an unprobed consumer, expected fail-layer is predictable from its
+idioms:
 
-### S11. Intl namespace
-**Axis:** locale-aware NumberFormat / DateTimeFormat / Collator.
-- E.9 compound — **OPEN**
-- E.22 luxon — **OPEN**
-- E.35 pretty-bytes — **OPEN**
+| Consumer shape | Expected deepest layer |
+|---|---|
+| pure-data utility (lodash-like) | L2 |
+| CJS lib with require chain | L3 |
+| framework using Node-style inheritance | L4 |
+| framework with custom output formatting | L5 |
+| framework with async I/O / real socket | L6 |
 
-### S12. WebCrypto asymmetric primitives
-**Axis:** ECDSA / ECDH / Ed25519 elliptic-curve big-integer arithmetic.
-- E.8 partial (HMAC/PBKDF2/HKDF/AES/RSA closed; EC/Ed25519 open)
+This is the canonicalization. A stratum-closure arc is bounded by L;
+its depth equals max-layer-exercised. §A8.18's substrate-standing
+geometry is exactly the layered nature: each consumer riding the same
+stratum lands at zero cost up to the deepest layer the prior consumer
+already lifted.
 
-### S13. globalThis aliases (window/self UMD)
-**Axis:** browser-shaped global object writes.
-- E.24 prism — **OPEN**
+---
 
-### S14. ES2022+ syntax density
-**Axis:** private class fields + decorator-style annotations.
-- E.25 p-limit — **OPEN**
-- E.26 chalk — **OPEN**
-
-### S15. GC reference object model
-**Axis:** WeakRef / FinalizationRegistry.
-- E.7 — **OPEN** (QuickJS structural absence)
-
-### S16. Numeric / bytes formatting divergence
-**Axis:** Buffer.from raw octet path, hex output formatting.
-- E.40 base64url — **OPEN**
-- E.51 md5-hex — **OPEN**
-
-### S17. Error stack format (V8 vs QuickJS)
-**Axis:** stack-string shape consumers parse.
-- E.45 clean-stack — **OPEN**
-
-### S18. ANSI-aware string width (Unicode emoji widths)
-**Axis:** east-asian + emoji width tables.
-- E.47 wrap-ansi — **OPEN**
-- E.50 cli-truncate — **OPEN**
-
-### S19. Heterogeneous declare-entry exceptions (unresolved)
-**Axis:** distinct top-level module-evaluation throws lumped by surface
-symptom; each likely a distinct stratum.
-- E.27 dotenv ^16, E.28 pug ^3, E.30 jsonpath-plus, E.31 jsonschema,
-  E.32 cbor-x, E.33 msgpackr, E.34 ohash, E.36 yargs-parser, E.38 shortid,
-  E.39 supports-color, E.42 iconv-lite, E.46 node-emoji, E.48 bson,
-  E.49 tiny-pinyin, E.52 normal-distribution, E.53 unraw
-- *Sub-strata not yet bisected.*
-
-## Section 2 — Axis count
-
-- **Identified strata:** S1–S18 = 18 (S19 is a placeholder bucket pending
-  per-edge bisection; honest K is 18 + however many distinct primitives
-  hide inside S19).
-- **N (recorded edges):** 56
-- **K/N ratio:** 18/56 ≈ **0.32** at current resolution.
-- **Conjecture refinement:** raw K/N at this resolution does NOT show
-  K << N. But three of the 18 named strata (S1, S2, S3) account for
-  10+ edges and 3 transitive closures landed for free in this session.
-  Cluster sizes are bimodal: a few large clusters (S1, S2, S3, S19)
-  and many singletons.
-
-**Highest-leverage open strata:**
-1. S6 Ajv regex /u-deep — single fix unblocks fastify's full operation
-2. S19 declare-entry bucket — bisecting yields 5–10 sub-strata, probably
-   reveals several large clusters
-3. S11 Intl — closes E.9 + E.22 + E.35 + likely several S19 members
-4. S2 timers second pass — confirms E.18/E.19/E.44 collapsed
-
-**Most engine-deep open strata:**
-- S15 WeakRef (QuickJS absent — engine upgrade)
-- S12 EC arithmetic (rusty-bigint extension)
-- S14 ES2022+ syntax (QuickJS parser features)
-
-## Section 3 — Pin-Art reading
-
-K/N ≈ 0.32 at current resolution **does not refute K << N**; it confirms
-that the *upper bound* on stratum count is much smaller than edge count
-but the *current resolution* on the declare-entry bucket (S19, 16 edges)
-is too coarse — each S19 member is a separate pin reading awaiting
-bisection. The engagement's actual position on the SIPE-T curve: the
-in-basin axes (S1–S5 closed/mostly-closed this session) hit cluster
-ratios of 2–11×; the open frontier (S6–S18) is genuine engine work
-where one substrate widening still retires a cluster but the strata
-sit deeper in the engine stack (regex semantics, Intl namespace, EC
-arithmetic, GC model). Total work to telos closure is K' (after S19
-bisection), and K' is bounded by the number of *primitive substrate
-points where Bun and rusty-bun-host's QuickJS-derived engine diverge*,
-not by N — a finite, enumerable count, deeper than wide.
+(Earlier revision-1 content — flat edge-to-stratum bucketing — was
+the same map without the L axis. The L hierarchy is the structural
+finding that makes the map predictive instead of descriptive.)

@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "circular-json": "^0.5.9",
+      },
+    },
+  },
+  "packages": {
+    "circular-json": ["circular-json@0.5.9", "", {}, "sha512-4ivwqHpIFJZBuhN3g/pEcdbnGUywkBblloGbkglyloVjjR3uT6tieI89MVOfbP2tHX5sgb01FuLgAOzebNlJNQ=="],
+  }
+}

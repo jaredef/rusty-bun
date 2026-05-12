@@ -4883,6 +4883,15 @@ globalThis.AbortSignal = class AbortSignal {
         }
         return result;
     }
+    static timeout(ms) {
+        const s = new AbortSignal();
+        setTimeout(() => {
+            const err = new Error("The operation was aborted due to timeout");
+            err.name = "TimeoutError";
+            s._doAbort(err);
+        }, ms);
+        return s;
+    }
 };
 
 globalThis.AbortController = class AbortController {

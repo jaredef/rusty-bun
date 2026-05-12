@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "p-wait-for": "^6.0.0",
+      },
+    },
+  },
+  "packages": {
+    "p-wait-for": ["p-wait-for@6.0.0", "", {}, "sha512-2kKzMtjS8TVcpCOU/gr3vZ4K/WIyS1AsEFXFWapM/0lERCdyTbB6ZeuCIp+cL1aeLZfQoMdZFCBTHiK4I9UtOw=="],
+  }
+}

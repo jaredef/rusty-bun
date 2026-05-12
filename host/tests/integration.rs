@@ -4733,3 +4733,21 @@ fn node_http_create_server_listen_round_trip() {
     "#).unwrap();
     assert_eq!(r, "1 201 GET node-style says: GET /hello body=\n2 201 POST node-style says: POST /echo body=ping");
 }
+
+#[test]
+fn consumer_yaml_app_byte_identical_to_bun() {
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-yaml-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}

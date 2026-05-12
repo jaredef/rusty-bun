@@ -438,7 +438,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:vm" | "vm" |
         "node:string_decoder" | "string_decoder" |
         "node:readline" | "readline" |
-        "node:readline/promises" | "readline/promises"
+        "node:readline/promises" | "readline/promises" |
+        "node:module" | "module"
     )
 }
 
@@ -559,6 +560,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:readline/promises" | "readline/promises" =>
             ("nodeReadlinePromises",
              &["createInterface", "Interface", "Readline"]),
+        "node:module" | "module" => ("nodeModule",
+            &["createRequire", "builtinModules", "isBuiltin",
+              "Module", "syncBuiltinESMExports"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -894,6 +898,7 @@ impl Loader for FsLoader {
 
         let source = strip_reserved_class_field_decls(&source);
         let source = rewrite_destructure_exports(&source);
+        let source = strip_string_module_exports_alias(&source);
         let source = rewrite_regex_u_class_escapes(&source);
         Module::declare(ctx.clone(), name, source)
     }
@@ -902,6 +907,30 @@ impl Loader for FsLoader {
 /// S6 closure: rewrite `\-` inside character classes within regex
 /// literals carrying /u flag. ECMAScript permits but QuickJS strict
 /// /u rejects. Replace with `-` (literal hyphen, /u-clean).
+/// Strip `export { X as 'module.exports' }` lines. ECMAScript permits
+/// string-literal export names as of the "Arbitrary module namespace
+/// identifier names" proposal (Stage 4), but QuickJS rejects names
+/// containing `.`. The CJS-compat idiom is meaningless to ESM consumers
+/// anyway; just dropping the export keeps the module load-able.
+fn strip_string_module_exports_alias(source: &str) -> String {
+    if !source.contains("as 'module.exports'") && !source.contains("as \"module.exports\"") {
+        return source.to_string();
+    }
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if (trimmed.starts_with("export {") || trimmed.starts_with("export{"))
+            && (line.contains("as 'module.exports'") || line.contains("as \"module.exports\""))
+        {
+            // Drop this line entirely. The default export is what
+            // actually matters for ESM consumers.
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 fn rewrite_regex_u_class_escapes(source: &str) -> String {
     // Fast-skip: if source has no `\-`, nothing to rewrite. Avoids both
     // the cost of the byte walk and any chance of corrupting UTF-8.
@@ -1372,10 +1401,13 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     process.set("arch", if cfg!(target_arch = "x86_64") { "x64" }
         else if cfg!(target_arch = "aarch64") { "arm64" }
         else { "unknown" })?;
-    process.set("version", "v0.0.0-rusty-bun-host")?;
+    // Claim Node v20 compat. yargs-parser, undici, fastify and many
+    // modern libs gate on minimum Node major; we satisfy "≥ 20" while
+    // recording the actual rusty-bun-host version too.
+    process.set("version", "v20.0.0")?;
     process.set("versions", {
         let v = Object::new(ctx.clone())?;
-        v.set("node", "0.0.0")?;
+        v.set("node", "20.0.0")?;
         v.set("rusty_bun_host", "0.0.0")?;
         v
     })?;
@@ -7270,6 +7302,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "readline": () => globalThis.nodeReadline,
         "node:readline/promises": () => globalThis.nodeReadlinePromises,
         "readline/promises": () => globalThis.nodeReadlinePromises,
+        "node:module": () => globalThis.nodeModule,
+        "module": () => globalThis.nodeModule,
     };
 
     function loadModule(absPath) {
@@ -9856,6 +9890,34 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 Interface: class {},
                 Readline: class {},
             };
+
+            // node:module — createRequire is the common consumer call;
+            // returns a require fn that resolves from a given URL/path.
+            // We compose on globalThis.require which already resolves
+            // node:* builtins and walks node_modules from cwd. yargs-parser,
+            // many ESM-from-CJS libs use this.
+            const builtinModulesList = [
+                "fs","path","http","https","crypto","buffer","url","os",
+                "process","dns","events","util","stream","querystring",
+                "assert","child_process","net","tty","zlib","vm",
+                "diagnostics_channel","perf_hooks","async_hooks","timers",
+                "timers/promises","console","fs/promises","stream/web",
+                "test","worker_threads","http2","string_decoder","readline",
+                "readline/promises","module"
+            ];
+            globalThis.nodeModule = {
+                createRequire(_url) {
+                    // Return a function with the same shape as globalThis.require.
+                    return globalThis.require;
+                },
+                builtinModules: builtinModulesList,
+                isBuiltin(name) {
+                    const n = name.startsWith("node:") ? name.substring(5) : name;
+                    return builtinModulesList.includes(n);
+                },
+                Module: class {},
+                syncBuiltinESMExports() {},
+            };
         })();
     "#)?;
     Ok(())
@@ -11186,6 +11248,7 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
     // parse time exactly as it would for an imported file.
     let source = strip_reserved_class_field_decls(&source);
     let source = rewrite_destructure_exports(&source);
+    let source = strip_string_module_exports_alias(&source);
     let source = rewrite_regex_u_class_escapes(&source);
     let entry_name = entry_path.to_string();
     context.with(|ctx| -> Result<(), String> {

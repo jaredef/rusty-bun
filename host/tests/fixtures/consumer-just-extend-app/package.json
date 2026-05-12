@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "just-clone": "^6.2.0",
+    "just-extend": "^6.2.0",
+    "just-omit": "^2.2.0",
+    "just-pick": "^4.2.0"
+  }
+}

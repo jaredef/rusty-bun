@@ -861,8 +861,15 @@ impl Loader for FsLoader {
                 eprintln!("[fsloader] CJS keys for {}: {:?}", name, keys);
             }
 
+            // Node CJS↔ESM interop: when CJS sets __esModule:true,
+            // `import x from cjs` resolves to module.exports.default,
+            // not the whole module.exports object. This matters for
+            // TS-emitted CJS (unraw, many tsc outputs) where
+            // exports.default = fn while named exports are siblings.
             let mut esm_src = format!(
-                "const __m = globalThis.__cjsBridge[{}];\nexport default __m;\n",
+                "const __m = globalThis.__cjsBridge[{0}];\n\
+                 const __default = (__m && __m.__esModule && 'default' in __m) ? __m.default : __m;\n\
+                 export default __default;\n",
                 json_str(name)
             );
             // ESM bodies are strict-mode; reserved words can't be used as

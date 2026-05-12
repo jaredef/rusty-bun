@@ -7868,6 +7868,51 @@ fn consumer_ohash2_app_byte_identical_to_bun() {
 
 
 #[test]
+fn api_surface_enumerator_reports_coverage() {
+    // Per Doc 714 sub-§4.c: enumerate the documented Node + Bun + Web
+    // platform surface, generate L2/L3 micro-tests, run under both
+    // rusty-bun-host and Bun, compute coverage + diff to surface gaps.
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/api-surface-enumerator/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    eprintln!("RB stdout (first 400):\n{}", rb.chars().take(400).collect::<String>());
+    eprintln!("BUN stdout (first 400):\n{}", bun_out.chars().take(400).collect::<String>());
+    let rb_v: serde_json::Value = serde_json::from_str(rb.trim()).expect("rb json");
+    let bun_v: serde_json::Value = serde_json::from_str(&bun_out).expect("bun json");
+
+    let rb_summary = &rb_v["summary"];
+    let bun_summary = &bun_v["summary"];
+    eprintln!("RUSTY-BUN coverage: {} / {} = {}%",
+        rb_summary["passed"], rb_summary["total"], rb_summary["percent"]);
+    eprintln!("BUN     coverage: {} / {} = {}%",
+        bun_summary["passed"], bun_summary["total"], bun_summary["percent"]);
+
+    // Report gaps: surfaces Bun has that rusty-bun lacks.
+    let rb_fail: std::collections::HashSet<String> = rb_v["failures"].as_array().unwrap()
+        .iter().map(|f| format!("{}/{}", f["category"].as_str().unwrap_or(""), f["name"].as_str().unwrap_or(""))).collect();
+    let bun_fail: std::collections::HashSet<String> = bun_v["failures"].as_array().unwrap()
+        .iter().map(|f| format!("{}/{}", f["category"].as_str().unwrap_or(""), f["name"].as_str().unwrap_or(""))).collect();
+    let gaps: Vec<&String> = rb_fail.difference(&bun_fail).collect();
+    let mut sorted_gaps: Vec<String> = gaps.iter().map(|s| s.to_string()).collect();
+    sorted_gaps.sort();
+    if !sorted_gaps.is_empty() {
+        eprintln!("\nRUSTY-BUN GAPS (Bun has, rusty-bun lacks): {}", sorted_gaps.len());
+        for g in &sorted_gaps { eprintln!("  {}", g); }
+    }
+}
+
+
+#[test]
 fn consumer_yup_app_byte_identical_to_bun() {
     use rusty_bun_host::eval_esm_module;
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

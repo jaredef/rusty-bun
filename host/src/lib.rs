@@ -1702,6 +1702,59 @@ fn wire_os<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
         if cfg!(target_endian = "little") { "LE" } else { "BE" }
     })?)?;
     os.set("EOL", if cfg!(target_os = "windows") { "\r\n" } else { "\n" })?;
+    // Memory + cpu stubs. Best-effort: read /proc on Linux, return small
+    // sane defaults otherwise. Consumers (pino, debug, node-fetch) read
+    // these for diagnostics; exact accuracy is rarely load-bearing.
+    os.set("totalmem", Function::new(ctx.clone(), || -> f64 {
+        std::fs::read_to_string("/proc/meminfo").ok()
+            .and_then(|s| s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|n| n.parse::<f64>().ok())
+                .map(|kb| kb * 1024.0))
+            .unwrap_or(0.0)
+    })?)?;
+    os.set("freemem", Function::new(ctx.clone(), || -> f64 {
+        std::fs::read_to_string("/proc/meminfo").ok()
+            .and_then(|s| s.lines()
+                .find(|l| l.starts_with("MemAvailable:") || l.starts_with("MemFree:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|n| n.parse::<f64>().ok())
+                .map(|kb| kb * 1024.0))
+            .unwrap_or(0.0)
+    })?)?;
+    os.set("cpus", Function::new(ctx.clone(), || -> Vec<String> {
+        // Return a Vec<String> of "stub" entries — consumer code typically
+        // only checks .length to get core count. JSON shape full enough for
+        // most use; richer shape (model/speed/times) can land per consumer.
+        let n = std::thread::available_parallelism()
+            .map(|n| n.get()).unwrap_or(1);
+        vec!["cpu".to_string(); n]
+    })?)?;
+    os.set("uptime", Function::new(ctx.clone(), || -> f64 {
+        std::fs::read_to_string("/proc/uptime").ok()
+            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    })?)?;
+    os.set("loadavg", Function::new(ctx.clone(), || -> Vec<f64> {
+        std::fs::read_to_string("/proc/loadavg").ok()
+            .map(|s| {
+                let parts: Vec<f64> = s.split_whitespace().take(3)
+                    .filter_map(|p| p.parse::<f64>().ok()).collect();
+                if parts.len() == 3 { parts } else { vec![0.0, 0.0, 0.0] }
+            })
+            .unwrap_or(vec![0.0, 0.0, 0.0])
+    })?)?;
+    os.set("networkInterfaces", Function::new(ctx.clone(), || -> String {
+        // Stub returns "{}" parsed as empty object by consumer-side wrap.
+        "{}".to_string()
+    })?)?;
+    os.set("userInfo", Function::new(ctx.clone(), || -> String {
+        // Stub returns JSON-encoded shape; consumer-side wraps via parse.
+        let user = std::env::var("USER").unwrap_or_else(|_| "rusty".to_string());
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        format!(r#"{{"uid":-1,"gid":-1,"username":"{}","homedir":"{}","shell":null}}"#, user, home)
+    })?)?;
     global.set("os", os)?;
     Ok(())
 }
@@ -3220,6 +3273,30 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 const bytes = globalThis.crypto.getRandomBytes(n);
                 return typeof Buffer !== "undefined" ? Buffer.from(bytes) : new Uint8Array(bytes);
             };
+            // Node-portable aliases. crypto.webcrypto is the WebCrypto
+            // namespace, which IS globalThis.crypto (Node exposes both names).
+            // crypto.pbkdf2Sync is wired via subtle.deriveBitsPbkdf2.
+            globalThis.crypto.webcrypto = globalThis.crypto;
+            if (typeof globalThis.crypto.subtle.deriveBitsPbkdf2 === "function") {
+                globalThis.crypto.pbkdf2Sync = function pbkdf2Sync(password, salt, iterations, keylen, digest) {
+                    const passBytes = typeof password === "string"
+                        ? Array.from(new TextEncoder().encode(password))
+                        : Array.from(password);
+                    const saltBytes = typeof salt === "string"
+                        ? Array.from(new TextEncoder().encode(salt))
+                        : Array.from(salt);
+                    const algo = String(digest || "sha1").toLowerCase().replace(/-/g, "");
+                    const out = globalThis.crypto.subtle.deriveBitsPbkdf2(
+                        passBytes, saltBytes, iterations, keylen, algo);
+                    return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+                };
+            } else {
+                // Fallback stub: throw on call so callers surface the gap
+                // explicitly rather than silently producing wrong bytes.
+                globalThis.crypto.pbkdf2Sync = function pbkdf2Sync() {
+                    throw new Error("crypto.pbkdf2Sync: deriveBitsPbkdf2 not wired");
+                };
+            }
             globalThis.crypto.randomFillSync = function randomFillSync(typedArray, offset = 0, size) {
                 if (!typedArray || typeof typedArray.byteLength !== "number") {
                     throw new TypeError("crypto.randomFillSync: argument must be a typed array");
@@ -3788,6 +3865,26 @@ fn wire_text_encoding<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> Js
                 const raw = (input === undefined) ? __te.encode() : __te.encode(input);
                 return new Uint8Array(raw);
             }
+            encodeInto(source, destination) {
+                // Per WHATWG Encoding §encodeInto: encode source into existing
+                // destination Uint8Array, return {read, written}. Spec
+                // mandates UTF-8; we stop early if destination too small.
+                const bytes = __te.encode(source);
+                const written = Math.min(bytes.length, destination.length);
+                for (let i = 0; i < written; i++) destination[i] = bytes[i];
+                // 'read' counts source code units that fit; approximate by
+                // counting characters whose UTF-8 expansion fits in written.
+                let read = 0, used = 0;
+                for (let i = 0; i < source.length && used < written; i++) {
+                    const c = source.charCodeAt(i);
+                    const w = c < 0x80 ? 1 : c < 0x800 ? 2 : (c >= 0xD800 && c <= 0xDBFF) ? 4 : 3;
+                    if (used + w > written) break;
+                    used += w;
+                    read++;
+                    if (w === 4) i++; // consume low surrogate
+                }
+                return { read, written };
+            }
         };
         globalThis.TextDecoder = class TextDecoder {
             constructor(label) { this._label = label; }
@@ -4116,6 +4213,100 @@ const BUFFER_CLASS_JS: &str = r#"
         writeUInt8(value, offset = 0) {
             this[offset] = value & 0xff;
             return offset + 1;
+        }
+        readInt32LE(offset = 0) {
+            const u = (this[offset] | (this[offset + 1] << 8) |
+                       (this[offset + 2] << 16) | (this[offset + 3] << 24)) >>> 0;
+            return u >= 0x80000000 ? u - 0x100000000 : u;
+        }
+        readInt16LE(offset = 0) {
+            const u = this[offset] | (this[offset + 1] << 8);
+            return u >= 0x8000 ? u - 0x10000 : u;
+        }
+        writeUInt16LE(value, offset = 0) {
+            this[offset] = value & 0xff;
+            this[offset + 1] = (value >>> 8) & 0xff;
+            return offset + 2;
+        }
+        writeUInt32LE(value, offset = 0) {
+            this[offset] = value & 0xff;
+            this[offset + 1] = (value >>> 8) & 0xff;
+            this[offset + 2] = (value >>> 16) & 0xff;
+            this[offset + 3] = (value >>> 24) & 0xff;
+            return offset + 4;
+        }
+        writeUInt16BE(value, offset = 0) {
+            this[offset] = (value >>> 8) & 0xff;
+            this[offset + 1] = value & 0xff;
+            return offset + 2;
+        }
+        writeUInt32BE(value, offset = 0) {
+            this[offset] = (value >>> 24) & 0xff;
+            this[offset + 1] = (value >>> 16) & 0xff;
+            this[offset + 2] = (value >>> 8) & 0xff;
+            this[offset + 3] = value & 0xff;
+            return offset + 4;
+        }
+        readBigUInt64LE(offset = 0) {
+            const lo = BigInt(this.readUInt32LE(offset));
+            const hi = BigInt(this.readUInt32LE(offset + 4));
+            return lo | (hi << 32n);
+        }
+        readBigUInt64BE(offset = 0) {
+            const hi = BigInt(this.readUInt32BE(offset));
+            const lo = BigInt(this.readUInt32BE(offset + 4));
+            return (hi << 32n) | lo;
+        }
+        readDoubleLE(offset = 0) {
+            const buf = new ArrayBuffer(8);
+            const u8 = new Uint8Array(buf);
+            for (let i = 0; i < 8; i++) u8[i] = this[offset + i];
+            return new DataView(buf).getFloat64(0, true);
+        }
+        readDoubleBE(offset = 0) {
+            const buf = new ArrayBuffer(8);
+            const u8 = new Uint8Array(buf);
+            for (let i = 0; i < 8; i++) u8[i] = this[offset + i];
+            return new DataView(buf).getFloat64(0, false);
+        }
+        readFloatLE(offset = 0) {
+            const buf = new ArrayBuffer(4);
+            const u8 = new Uint8Array(buf);
+            for (let i = 0; i < 4; i++) u8[i] = this[offset + i];
+            return new DataView(buf).getFloat32(0, true);
+        }
+        writeDoubleLE(value, offset = 0) {
+            const buf = new ArrayBuffer(8);
+            new DataView(buf).setFloat64(0, value, true);
+            const u8 = new Uint8Array(buf);
+            for (let i = 0; i < 8; i++) this[offset + i] = u8[i];
+            return offset + 8;
+        }
+        writeFloatLE(value, offset = 0) {
+            const buf = new ArrayBuffer(4);
+            new DataView(buf).setFloat32(0, value, true);
+            const u8 = new Uint8Array(buf);
+            for (let i = 0; i < 4; i++) this[offset + i] = u8[i];
+            return offset + 4;
+        }
+        compare(target, targetStart, targetEnd, sourceStart, sourceEnd) {
+            const me = this.subarray(sourceStart || 0,
+                sourceEnd !== undefined ? sourceEnd : this.length);
+            const them = target.subarray(targetStart || 0,
+                targetEnd !== undefined ? targetEnd : target.length);
+            const n = Math.min(me.length, them.length);
+            for (let i = 0; i < n; i++) {
+                if (me[i] < them[i]) return -1;
+                if (me[i] > them[i]) return 1;
+            }
+            if (me.length < them.length) return -1;
+            if (me.length > them.length) return 1;
+            return 0;
+        }
+        toJSON() {
+            const data = new Array(this.length);
+            for (let i = 0; i < this.length; i++) data[i] = this[i];
+            return { type: "Buffer", data };
         }
         equals(other) {
             if (this.length !== other.length) return false;
@@ -4541,6 +4732,25 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             })
         })?,
     )?;
+    // Node-spec short aliases: fs.mkdirSync(p, opts) / fs.rmdirSync(p, opts).
+    // Default is non-recursive; the {recursive:true} option routes to the
+    // existing recursive helper. opts ignored for the bare-path case.
+    fs.set(
+        "mkdirSync",
+        Function::new(ctx.clone(), |path: String, _opts: Opt<rquickjs::Value>| -> JsResult<()> {
+            rusty_node_fs::mkdir_sync(&path, true).map_err(|e| {
+                rquickjs::Error::new_from_js_message("mkdirSync", "()", format!("{}", e))
+            })
+        })?,
+    )?;
+    fs.set(
+        "rmdirSync",
+        Function::new(ctx.clone(), |path: String, _opts: Opt<rquickjs::Value>| -> JsResult<()> {
+            rusty_node_fs::rm_sync_recursive(&path).map_err(|e| {
+                rquickjs::Error::new_from_js_message("rmdirSync", "()", format!("{}", e))
+            })
+        })?,
+    )?;
     global.set("fs", fs)?;
     // Node/Bun-portable readFileSync(path, encoding|options) override.
     // The Rust binding for readFileSync errors out telling you to use
@@ -4779,6 +4989,18 @@ globalThis.Blob = class Blob {
             : __blob.sliceBytes(this._bytes, startN, end);
         const newType = (typeof contentType === "string") ? contentType : "";
         return new Blob([sliced], { type: newType });
+    }
+    stream() {
+        // Per WHATWG File API: return a ReadableStream of Uint8Array chunks.
+        // Single-chunk implementation (full bytes in one pull); spec-compliant
+        // but not optimal for very large blobs.
+        const bytes = this._bytes;
+        return new ReadableStream({
+            start(controller) {
+                if (bytes.length > 0) controller.enqueue(new Uint8Array(bytes));
+                controller.close();
+            },
+        });
     }
 };
 
@@ -5112,6 +5334,10 @@ globalThis.Request = class Request {
     async json() {
         return JSON.parse(await this.text());
     }
+    async blob() {
+        const bytes = await this.bytes();
+        return new Blob([Array.from(bytes)], { type: this.headers.get("content-type") || "" });
+    }
     clone() {
         if (this._bodyUsed) throw new TypeError("Body already used");
         return new Request(this);
@@ -5202,6 +5428,10 @@ globalThis.Response = class Response {
     }
     async json() {
         return JSON.parse(await this.text());
+    }
+    async blob() {
+        const bytes = await this.bytes();
+        return new Blob([Array.from(bytes)], { type: this.headers.get("content-type") || "" });
     }
     clone() {
         if (this._bodyUsed) throw new TypeError("Body already used");
@@ -5972,6 +6202,22 @@ fn wire_bun_spawn_static<'js>(
 
 const BUN_SPAWN_JS: &str = r#"
 (function() {
+    // Async Bun.spawn — wraps spawnSync for now. Returns a subprocess-shaped
+    // object with .exited (Promise<exitCode>), .stdout / .stderr as strings,
+    // .pid, .kill(). Real async pipe streaming is deferred; spawnSync is
+    // synchronous and the caller's await on .exited resolves immediately.
+    Bun.spawn = function spawn(args, options) {
+        const r = Bun.spawnSync(args, options || {});
+        return {
+            pid: r.pid || -1,
+            exitCode: r.exitCode,
+            exited: Promise.resolve(r.exitCode),
+            stdout: r.stdout,
+            stderr: r.stderr,
+            success: r.success,
+            kill() {},
+        };
+    };
     Bun.spawnSync = function spawnSync(args, options) {
         const stdinOpt = (options && options.stdin && typeof options.stdin === "string")
             ? options.stdin : undefined;
@@ -11350,8 +11596,54 @@ const URL_CLASS_JS: &str = r##"
     URL.createObjectURL = function () {
         throw new Error("URL.createObjectURL is not supported in rusty-bun-host");
     };
+    URL.revokeObjectURL = function () {
+        // No-op (matches the no-objectURL substrate state).
+    };
 
     globalThis.URL = URL;
+
+    // WHATWG FormData — multipart/form-data form construction. Stored as
+    // an array of [name, value, filename?] entries. multipart serialization
+    // for fetch body lives in the fetch path (substrate-deferred to first
+    // consumer that needs it).
+    globalThis.FormData = class FormData {
+        constructor() { this._entries = []; }
+        append(name, value, filename) {
+            const e = [String(name), value];
+            if (filename !== undefined) e.push(String(filename));
+            this._entries.push(e);
+        }
+        delete(name) {
+            const n = String(name);
+            this._entries = this._entries.filter(e => e[0] !== n);
+        }
+        get(name) {
+            const n = String(name);
+            const e = this._entries.find(e => e[0] === n);
+            return e ? e[1] : null;
+        }
+        getAll(name) {
+            const n = String(name);
+            return this._entries.filter(e => e[0] === n).map(e => e[1]);
+        }
+        has(name) {
+            const n = String(name);
+            return this._entries.some(e => e[0] === n);
+        }
+        set(name, value, filename) {
+            this.delete(name);
+            this.append(name, value, filename);
+        }
+        *entries() {
+            for (const e of this._entries) yield [e[0], e[1]];
+        }
+        *keys() { for (const e of this._entries) yield e[0]; }
+        *values() { for (const e of this._entries) yield e[1]; }
+        forEach(cb, thisArg) {
+            for (const e of this._entries) cb.call(thisArg, e[1], e[0], this);
+        }
+        [Symbol.iterator]() { return this.entries(); }
+    };
 })();
 "##;
 

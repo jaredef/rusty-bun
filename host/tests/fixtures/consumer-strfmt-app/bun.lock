@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "fast-printf": "^1.6.10",
+      },
+    },
+  },
+  "packages": {
+    "fast-printf": ["fast-printf@1.6.10", "", {}, "sha512-GwTgG9O4FVIdShhbVF3JxOgSBY2+ePGsu2V/UONgoCPzF9VY6ZdBMKsHKCYQHZwNk3qNouUolRDsgVxcVA5G1w=="],
+  }
+}

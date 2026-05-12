@@ -726,8 +726,169 @@ impl Loader for FsLoader {
 
         let source = strip_reserved_class_field_decls(&source);
         let source = rewrite_destructure_exports(&source);
+        let source = rewrite_regex_u_class_escapes(&source);
         Module::declare(ctx.clone(), name, source)
     }
+}
+
+/// S6 closure: rewrite `\-` inside character classes within regex
+/// literals carrying /u flag. ECMAScript permits but QuickJS strict
+/// /u rejects. Replace with `-` (literal hyphen, /u-clean).
+fn rewrite_regex_u_class_escapes(source: &str) -> String {
+    // Fast-skip: if source has no `\-`, nothing to rewrite. Avoids both
+    // the cost of the byte walk and any chance of corrupting UTF-8.
+    if !source.contains("\\-") { return source.to_string(); }
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    // `emit_start` is the byte index of the next un-emitted source slice.
+    // We accumulate `source[emit_start..i]` verbatim (UTF-8-safe) until
+    // we either rewrite a regex literal or finish.
+    let mut emit_start: usize = 0;
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        // Non-ASCII: skip the whole UTF-8 sequence intact. The slice
+        // [emit_start..i] already includes everything up to here; bump i
+        // by the codepoint's byte width.
+        if c >= 0x80 {
+            let w = if c < 0xC0 { 1 } // stray continuation byte; advance 1
+                else if c < 0xE0 { 2 }
+                else if c < 0xF0 { 3 }
+                else { 4 };
+            i += w;
+            continue;
+        }
+        // String literal — find its end without inspecting its contents
+        // for regex syntax. Body may contain non-ASCII chars; we skip
+        // them by detecting a backslash-anything escape (advance 2 bytes
+        // if the byte after `\` is ASCII; otherwise advance 1 then the
+        // continuation will be handled by the non-ASCII branch).
+        if c == b'"' || c == b'\'' || c == b'`' {
+            let quote = c;
+            i += 1;
+            while i < bytes.len() {
+                let d = bytes[i];
+                if d >= 0x80 {
+                    let w = if d < 0xC0 { 1 } else if d < 0xE0 { 2 } else if d < 0xF0 { 3 } else { 4 };
+                    i += w;
+                    continue;
+                }
+                if d == b'\\' && i + 1 < bytes.len() {
+                    // Skip the escape and its following byte. If the
+                    // following byte is a UTF-8 continuation start, the
+                    // non-ASCII branch on the next iter will handle it.
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                if d == quote { break; }
+            }
+            continue;
+        }
+        // Line comment — skip to newline.
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            continue;
+        }
+        // Block comment — skip to */
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < bytes.len() { i += 2; }
+            continue;
+        }
+        // Possible regex literal: preceded by punctuation that allows it.
+        if c == b'/' {
+            // Walk back over whitespace in the source (not in `out`,
+            // since `out` only holds previously-rewritten chunks).
+            let mut j = i;
+            while j > emit_start && (bytes[j - 1] == b' ' || bytes[j - 1] == b'\t') {
+                j -= 1;
+            }
+            let prev = if j == 0 { b'\n' } else { bytes[j - 1] };
+            let regex_context = matches!(prev,
+                b'(' | b',' | b'=' | b':' | b'[' | b'!' | b'&' | b'|' | b'?' |
+                b'{' | b';' | b'+' | b'-' | b'*' | b'%' | b'^' | b'~' | b'<' |
+                b'>' | b'\n' | b'\r' | b'/' | b'\\'
+            );
+            if regex_context {
+                let body_start = i + 1;
+                let mut k = body_start;
+                let mut in_class = false;
+                let mut ok = false;
+                while k < bytes.len() {
+                    let b = bytes[k];
+                    if b == b'\\' && k + 1 < bytes.len() { k += 2; continue; }
+                    if b == b'\n' { break; }
+                    if b == b'[' { in_class = true; k += 1; continue; }
+                    if b == b']' { in_class = false; k += 1; continue; }
+                    if b == b'/' && !in_class { ok = true; break; }
+                    k += 1;
+                }
+                if ok {
+                    let body_end = k;
+                    let mut f = body_end + 1;
+                    while f < bytes.len()
+                        && (bytes[f] == b'g' || bytes[f] == b'i' || bytes[f] == b'm'
+                            || bytes[f] == b's' || bytes[f] == b'u' || bytes[f] == b'y'
+                            || bytes[f] == b'd' || bytes[f] == b'v')
+                    {
+                        f += 1;
+                    }
+                    let flags = &source[body_end + 1..f];
+                    if flags.contains('u') || flags.contains('v') {
+                        // Emit accumulated verbatim slice [emit_start..i].
+                        out.push_str(&source[emit_start..i]);
+                        // Rewrite \- inside char classes in the body.
+                        let body = &source[body_start..body_end];
+                        let body_bytes = body.as_bytes();
+                        let mut rewritten = String::with_capacity(body.len());
+                        // Rewrite by emitting slices, preserving UTF-8.
+                        let mut bi = 0;
+                        let mut slice_start = 0;
+                        let mut in_cls = false;
+                        while bi < body_bytes.len() {
+                            let bc = body_bytes[bi];
+                            if bc == b'\\' && bi + 1 < body_bytes.len() {
+                                let nx = body_bytes[bi + 1];
+                                if in_cls && nx == b'-' {
+                                    rewritten.push_str(&body[slice_start..bi]);
+                                    rewritten.push_str("\\u002D");
+                                    bi += 2;
+                                    slice_start = bi;
+                                    continue;
+                                }
+                                bi += 2;
+                                continue;
+                            }
+                            if bc == b'[' && !in_cls { in_cls = true; }
+                            else if bc == b']' && in_cls { in_cls = false; }
+                            bi += 1;
+                        }
+                        rewritten.push_str(&body[slice_start..]);
+                        out.push('/');
+                        out.push_str(&rewritten);
+                        out.push('/');
+                        out.push_str(flags);
+                        emit_start = f;
+                        i = f;
+                        continue;
+                    } else {
+                        // Regex literal without /u or /v — keep verbatim;
+                        // just advance past it so the outer walk doesn't
+                        // re-enter the body. O(n²) avoidance.
+                        i = f;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&source[emit_start..]);
+    out
 }
 
 fn install_error_polyfills<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
@@ -5890,8 +6051,53 @@ const COMMONJS_LOADER_JS: &str = r#"
         throw new Error("fs must be wired before commonjs-loader");
     }
 
+    // S6 closure: rewrite `\-` inside character classes within regex
+    // literals that carry the /u flag. QuickJS rejects \- under /u; the
+    // ECMAScript spec allows it (though discouraged). Replace `\-` with
+    // `-` which is unambiguously a literal hyphen under /u and
+    // semantically identical. fast-uri/lib/utils.js, ajv-formats, and
+    // similar libs use this pattern.
+    function fixRegexUEscapes(source) {
+        // Fast skip: if source contains no `\-`, nothing to rewrite.
+        // Avoids scanning ~30KB regex literals like emoji-regex's
+        // single-line emoji table with a backtracking-prone regex.
+        if (source.indexOf("\\-") < 0) return source;
+        // Match a regex literal followed by flags including 'u'. Body
+        // contains a char class with \-. Conservative pattern: require
+        // the regex to start after a non-identifier char and to be on
+        // one line.
+        // Pattern: /<body containing [...\-...]>/<flags-with-u>
+        return source.replace(
+            /\/((?:\\.|\[(?:\\.|[^\]\\])*\]|[^\/\\\n])+)\/([gimsuy]*u[gimsuy]*)/g,
+            function(match, body, flags) {
+                // Walk body, rewriting `\-` to `-` only inside char
+                // classes (between unescaped [ and ]).
+                let out = "";
+                let inClass = false;
+                for (let i = 0; i < body.length; i++) {
+                    const c = body[i];
+                    if (c === "\\" && i + 1 < body.length) {
+                        const next = body[i + 1];
+                        if (inClass && next === "-") {
+                            out += "\\u002D";
+                            i++;
+                            continue;
+                        }
+                        out += c + next;
+                        i++;
+                        continue;
+                    }
+                    if (c === "[" && !inClass) inClass = true;
+                    else if (c === "]" && inClass) inClass = false;
+                    out += c;
+                }
+                return "/" + out + "/" + flags;
+            }
+        );
+    }
+
     function readSourceUtf8(absPath) {
-        return fs.readFileSyncUtf8(absPath);
+        return fixRegexUEscapes(fs.readFileSyncUtf8(absPath));
     }
 
     function pathExists(absPath) {
@@ -6202,6 +6408,7 @@ const COMMONJS_LOADER_JS: &str = r#"
         } catch (e) {
             // Remove from cache so that a retry isn't poisoned.
             delete moduleCache[absPath];
+            if (globalThis.__cjsLoadTrace) globalThis.__cjsLoadTrace(absPath, e);
             throw e;
         }
         return moduleObj.exports;
@@ -9515,10 +9722,22 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
     let max_consecutive_idle: usize = 1000;
     let mut total: usize = 0;
     let mut consecutive_idle: usize = 0;
-    while total < max_total {
+    // Wall-clock cap on the whole eval. Recurring setInterval timers
+    // (fastify's plugin chain installs several) keep __nextTimerDelay
+    // permanently positive, so timer-pending alone cannot be a
+    // termination invariant. Cap total wall-clock to keep fixtures
+    // bounded; downstream tests are expected to call .close() to drain
+    // pending intervals when they need a clean exit.
+    let wallclock_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // After this many idle ticks where the ONLY work is recurring timers
+    // (no microtask, no keep-alive), give up — the test's productive
+    // work is done.
+    let max_timer_only_idle: usize = 200;
+    let mut timer_only_idle: usize = 0;
+    while total < max_total && std::time::Instant::now() < wallclock_deadline {
         total += 1;
         match runtime.execute_pending_job() {
-            Ok(true) => { consecutive_idle = 0; continue; }
+            Ok(true) => { consecutive_idle = 0; timer_only_idle = 0; continue; }
             Ok(false) => {}
             Err(_) => break,
         }
@@ -9558,6 +9777,15 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
         if !did_work && alive_count == 0 && sleep_ms < 0 { break; }
         if did_work {
             consecutive_idle = 0;
+            // Track ticks where the only work was timer ticks (no
+            // keep-alive ticks). If timers fire but produce no
+            // microtask work, count as idle for runaway-interval cap.
+            if timer_did_work && !ka_did_work {
+                timer_only_idle += 1;
+                if timer_only_idle > max_timer_only_idle { break; }
+            } else {
+                timer_only_idle = 0;
+            }
         } else {
             // Sleep until the next timer is due (capped so a long-delay
             // timer doesn't hold the loop unresponsive to other work).

@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "micromustache": "^8.0.3"
+  }
+}

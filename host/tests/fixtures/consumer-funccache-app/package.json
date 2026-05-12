@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "memoize-one": "^6.0.0"
+  }
+}

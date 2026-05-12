@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "camelcase-keys": "^10.0.2",
+      },
+    },
+  },
+  "packages": {
+    "camelcase": ["camelcase@9.0.0", "", {}, "sha512-TO9xmyXTZ9HUHI8M1OnvExxYB0eYVS/1e5s7IDMTAoIcwUd+aNcFODs6Xk83mobk0velyHFQgA1yIrvYc6wclw=="],
+
+    "camelcase-keys": ["camelcase-keys@10.0.2", "", { "dependencies": { "camelcase": "^9.0.0", "map-obj": "6.0.0", "quick-lru": "^7.3.0", "type-fest": "^5.4.1" } }, "sha512-PVHCLVbJ7nWGal0lPAmBN5eSLjIynlMUk2EPmL9aPl6QyJ6+FoszTKwldPzkuVqg5teZbPTbb8Oenzyw9GSJRw=="],
+
+    "map-obj": ["map-obj@6.0.0", "", {}, "sha512-PwDvwt/tK70+luLw5k9ySLtzLAzwf7tZTY9GBj63Y010nHRPjwHcQTpTd5JwQqITC2ty7prtxBo71iwyYY0TAg=="],
+
+    "quick-lru": ["quick-lru@7.3.0", "", {}, "sha512-k9lSsjl36EJdK7I06v7APZCbyGT2vMTsYSRX1Q2nbYmnkBqgUhRkAuzH08Ciotteu/PLJmIF2+tti7o3C/ts2g=="],
+
+    "tagged-tag": ["tagged-tag@1.0.0", "", {}, "sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng=="],
+
+    "type-fest": ["type-fest@5.6.0", "", { "dependencies": { "tagged-tag": "^1.0.0" } }, "sha512-8ZiHFm91orbSAe2PSAiSVBVko18pbhbiB3U9GglSzF/zCGkR+rxpHx6sEMCUm4kxY4LjDIUGgCfUMtwfZfjfUA=="],
+  }
+}

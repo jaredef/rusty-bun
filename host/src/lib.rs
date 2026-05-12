@@ -750,6 +750,35 @@ fn install_error_polyfills<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             if (Error.stackTraceLimit === undefined) {
                 Error.stackTraceLimit = 10;
             }
+
+            // E.29 closure: QuickJS rejects `\-` inside character classes
+            // when /u flag is set, but ECMAScript allows it. Libraries that
+            // build patterns by concatenating `.source` from a non-/u regex
+            // and re-compile with `new RegExp(..., 'gu')` hit this — camelcase
+            // ^9, camelcase-keys, dasherize, snake-case-derived ESM-only libs.
+            // Rewrite \\- inside [...] to a leading literal hyphen, which is
+            // unambiguously a literal under /u and semantically identical.
+            (function() {
+                const _RE = globalThis.RegExp;
+                function fixPattern(p) {
+                    if (typeof p !== "string") return p;
+                    return p.replace(/\[([^\]]*)\\-([^\]]*)\]/g, function(_, a, b) {
+                        return "[-" + a + b + "]";
+                    });
+                }
+                function Wrapped(pattern, flags) {
+                    if (typeof flags === "string" && flags.indexOf("u") !== -1) {
+                        pattern = fixPattern(pattern);
+                    }
+                    if (new.target) {
+                        return Reflect.construct(_RE, [pattern, flags], new.target);
+                    }
+                    return _RE(pattern, flags);
+                }
+                Wrapped.prototype = _RE.prototype;
+                Object.setPrototypeOf(Wrapped, _RE);
+                globalThis.RegExp = Wrapped;
+            })();
         })();
     "#)?;
     Ok(())

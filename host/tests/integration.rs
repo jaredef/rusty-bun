@@ -7546,3 +7546,40 @@ fn consumer_tinyglob_app_byte_identical_to_bun() {
     let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
+
+
+#[test]
+fn consumer_camelcase_app_byte_identical_to_bun() {
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-camelcase-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}
+
+#[test]
+fn consumer_camelize2_app_byte_identical_to_bun() {
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-camelize2-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    assert_eq!(rb.trim(), bun_out, "differential mismatch");
+}

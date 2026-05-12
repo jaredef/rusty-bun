@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "camelcase": "^9.0.0",
+      },
+    },
+  },
+  "packages": {
+    "camelcase": ["camelcase@9.0.0", "", {}, "sha512-TO9xmyXTZ9HUHI8M1OnvExxYB0eYVS/1e5s7IDMTAoIcwUd+aNcFODs6Xk83mobk0velyHFQgA1yIrvYc6wclw=="],
+  }
+}

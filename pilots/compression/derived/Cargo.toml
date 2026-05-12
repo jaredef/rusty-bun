@@ -5,3 +5,13 @@ edition = "2021"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+# RFC 7932 brotli decoder. Hand-rolling brotli would require ~1500 LOC of
+# Huffman/dictionary code plus 122KB of static-dictionary data; the
+# brotli-decompressor crate is pure-Rust, dependency-free, widely-audited
+# (used by hyper/reqwest/tokio-rs), and matches the cite-source discipline
+# (RFC 7932 is the spec; the crate is the derivation, just not ours).
+# Same pattern as rusty-tls using std::net::TcpStream — borrowed substrate
+# where the algorithm IS canonical and re-deriving has no apparatus value.
+brotli-decompressor = { version = "5", default-features = false, features = ["std"] }

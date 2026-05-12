@@ -2267,6 +2267,15 @@ fn wire_compression<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsRe
     ns.set("gzip_deflate_stored", Function::new(ctx.clone(), |bytes: Vec<u8>| -> Vec<u8> {
         rusty_compression::gzip_deflate_stored(&bytes)
     })?)?;
+    // Π1.3.c: brotli decode per RFC 7932 via borrowed substrate
+    // (brotli-decompressor crate; same policy as rusty-tls borrowing
+    // std::net::TcpStream — algorithm is canonical, re-derivation has
+    // no apparatus value, ~1500 LOC + 122KB dict avoided).
+    ns.set("brotli_decode", Function::new(ctx.clone(), |bytes: Vec<u8>| -> JsResult<Vec<u8>> {
+        rusty_compression::brotli_decode(&bytes)
+            .map_err(|e| rquickjs::Error::new_from_js_message(
+                "compression", "brotli_decode", e.to_string()))
+    })?)?;
     global.set("__compression", ns)?;
     Ok(())
 }
@@ -5875,7 +5884,7 @@ if (typeof globalThis.fetch === "undefined" ||
                     } else if (c === "deflate") {
                         respBody = new Uint8Array(globalThis.__compression.http_deflate_inflate(inArr));
                     } else if (c === "br") {
-                        throw new TypeError("rusty-bun-host: brotli decoding not yet supported (Tier-Π1.3.c pending). Content-Encoding=" + ceHeader);
+                        respBody = new Uint8Array(globalThis.__compression.brotli_decode(inArr));
                     } else {
                         throw new TypeError("rusty-bun-host: unsupported Content-Encoding '" + c + "'");
                     }

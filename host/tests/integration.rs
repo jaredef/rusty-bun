@@ -7907,6 +7907,26 @@ fn consumer_subtle_ec_keygen_app_byte_identical_to_bun() {
 
 
 #[test]
+fn consumer_brotli_app_decodes_known_streams() {
+    // Host-internal test (J.1.b host regression, not differential):
+    // Bun's standard surface doesn't expose brotli at the namespace
+    // level (only via fetch Content-Encoding), so a byte-identical
+    // differential against Bun isn't meaningful for this direct test.
+    // Π1.3.c integration validates that __compression.brotli_decode
+    // round-trips two known streams (RFC 7932 empty + a Python-
+    // brotli-compressed "Hello, World!" reference vector).
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-brotli-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(rb.trim()).expect("rb json");
+    assert_eq!(v["text1"], "Hello, World!", "brotli decode: {}", rb);
+    assert_eq!(v["emptyLen"], 0, "empty brotli decode: {}", rb);
+    assert_eq!(v["hasBrotli"], true);
+}
+
+
+#[test]
 fn consumer_subtle_keygen_app_byte_identical_to_bun() {
     use rusty_bun_host::eval_esm_module;
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

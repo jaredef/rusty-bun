@@ -34,6 +34,7 @@ pub enum DecodeError {
     GzipCrcMismatch,
     GzipSizeMismatch,
     OutputTooLarge,
+    Brotli(String),
 }
 
 impl std::fmt::Display for DecodeError {
@@ -52,6 +53,7 @@ impl std::fmt::Display for DecodeError {
             DecodeError::GzipCrcMismatch => write!(f, "gzip CRC32 mismatch"),
             DecodeError::GzipSizeMismatch => write!(f, "gzip ISIZE mismatch"),
             DecodeError::OutputTooLarge => write!(f, "decoded output exceeds maximum size"),
+            DecodeError::Brotli(s) => write!(f, "brotli: {}", s),
         }
     }
 }
@@ -569,4 +571,45 @@ pub fn gzip_deflate_stored(data: &[u8]) -> Vec<u8> {
     out.push((isize_le >> 16) as u8);
     out.push((isize_le >> 24) as u8);
     out
+}
+
+/// Brotli decode per RFC 7932. Borrowed substrate via brotli-decompressor
+/// crate; same policy as rusty-tls borrowing std::net::TcpStream. The
+/// algorithm IS canonical (RFC 7932); re-deriving it would add no
+/// apparatus value and would require ~1500 LOC + 122KB static dictionary.
+pub fn brotli_decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    use std::io::Read;
+    let mut decoder = brotli_decompressor::Decompressor::new(data, 4096);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out)
+        .map_err(|e| DecodeError::Brotli(format!("{}", e)))?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod brotli_tests {
+    use super::*;
+
+    #[test]
+    fn brotli_decode_empty() {
+        // RFC 7932 §10: shortest valid brotli stream — single empty
+        // ISLAST meta-block. WBITS=0(b1)=16, ISLAST=1, ISLASTEMPTY=1,
+        // padded with zero bits. Encoded: 0x06 0x00 (2 bytes).
+        let empty_stream = [0x06];
+        let r = brotli_decode(&empty_stream);
+        assert!(r.is_ok(), "brotli empty: {:?}", r);
+        assert_eq!(r.unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn brotli_decode_hello_roundtrip() {
+        // Encoded "Hello, World!" via Python brotli.compress (default level).
+        // Bytes hand-verified against `python3 -c "import brotli; print(brotli.compress(b'Hello, World!').hex())"`.
+        let encoded = [
+            0x0b, 0x06, 0x80, 0x48, 0x65, 0x6c, 0x6c, 0x6f,
+            0x2c, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21, 0x03,
+        ];
+        let r = brotli_decode(&encoded).expect("brotli decode");
+        assert_eq!(r, b"Hello, World!");
+    }
 }

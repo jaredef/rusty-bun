@@ -172,7 +172,14 @@ pub fn stream_connect(addr: &str) -> Result<u64, SocketError> {
 /// Connect with a timeout (milliseconds). Useful for client code that
 /// shouldn't block forever.
 pub fn stream_connect_timeout(addr: &str, timeout_ms: u64) -> Result<u64, SocketError> {
-    let sa: SocketAddr = addr.parse().map_err(|e: std::net::AddrParseError| SocketError::Connect(e.to_string()))?;
+    use std::net::ToSocketAddrs;
+    // Resolve via to_socket_addrs (handles "localhost:N", "127.0.0.1:N",
+    // and IPv6). std::net::SocketAddr::parse only accepts pre-resolved
+    // IP:port forms; HTTP clients commonly pass hostnames.
+    let sa: SocketAddr = addr.to_socket_addrs()
+        .map_err(|e| SocketError::Connect(e.to_string()))?
+        .next()
+        .ok_or_else(|| SocketError::Connect("no addresses resolved".into()))?;
     let stream = TcpStream::connect_timeout(&sa, Duration::from_millis(timeout_ms))
         .map_err(|e| SocketError::Connect(e.to_string()))?;
     Ok(put(Handle::Stream(stream)))

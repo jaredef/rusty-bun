@@ -1472,6 +1472,8 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/".to_string())
     })?)?;
+    process.set("pid", std::process::id() as i64)?;
+    process.set("ppid", 0_i64)?;
 
     // exit is a sentinel — we cannot actually exit the test process; the
     // function records the code on globalThis.__exitCode and throws to

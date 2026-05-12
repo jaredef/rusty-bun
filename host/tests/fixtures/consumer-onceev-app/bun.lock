@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "p-some": "^7.0.0",
+      },
+    },
+  },
+  "packages": {
+    "p-some": ["p-some@7.0.0", "", {}, "sha512-9ldWF6puBzuchsUq7M1THjwwmoiXesqRdpB4WH0D7urKXdGkIaDqVhQS2BSfRRYZ970j9gm3U4/h9hHQx2G1Ug=="],
+  }
+}

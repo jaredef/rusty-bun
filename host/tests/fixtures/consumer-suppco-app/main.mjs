@@ -1,0 +1,12 @@
+import sc, { createSupportsColor } from "supports-color";
+const lines = [];
+lines.push("1 type=" + typeof sc);
+lines.push("2 hasStdout=" + ("stdout" in sc));
+const r = createSupportsColor({ isTTY: false }, { sniffFlags: false });
+lines.push("3 nottyFalse=" + (r === false));
+const r2 = createSupportsColor({ isTTY: true }, { sniffFlags: false });
+lines.push("4 ttyHasLevel=" + (r2 && typeof r2.level === "number"));
+lines.push("5 isFn=" + (typeof createSupportsColor === "function"));
+const r3 = createSupportsColor({ isTTY: true }, { streamIsTTY: true, sniffFlags: false });
+lines.push("6 hasFlags=" + (r3 ? typeof r3.has16m : "noResult"));
+process.stdout.write(lines.join("\n") + "\n");

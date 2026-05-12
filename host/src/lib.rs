@@ -222,6 +222,71 @@ fn resolve_node_style(base: &str, specifier: &str) -> Option<std::path::PathBuf>
         return None;
     }
 
+    // Package-internal subpath imports (#-prefix per Node spec).
+    // Walk up from base_dir to find the closest package.json with an
+    // "imports" field matching the specifier; resolve via the same
+    // conditional-key walk as exports. Chalk ^5 uses this for its
+    // bundled ansi-styles vendor copy.
+    if specifier.starts_with('#') {
+        let mut dir = base_dir.as_path();
+        loop {
+            let pkg_json = dir.join("package.json");
+            if pkg_json.is_file() {
+                if let Ok(text) = std::fs::read_to_string(&pkg_json) {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(imports) = parsed.get("imports") {
+                            if let Some(value) = imports.get(specifier) {
+                                let conditions = ["bun", "import", "module", "default", "node"];
+                                if let Some(rel) = resolve_exports_value(value, &conditions) {
+                                    let target = dir.join(rel.trim_start_matches("./"));
+                                    if let Some(f) = try_extensions(&target) {
+                                        return Some(f);
+                                    }
+                                    if target.is_file() {
+                                        return Some(target);
+                                    }
+                                }
+                            }
+                            // Also allow pattern matching (#foo/*) — best-effort.
+                            if let Some(obj) = imports.as_object() {
+                                for (k, v) in obj {
+                                    if k.ends_with("/*") {
+                                        let prefix = &k[..k.len() - 2];
+                                        if specifier.starts_with(prefix) && specifier.len() > prefix.len() {
+                                            let suffix = &specifier[prefix.len() + 1..];
+                                            let conditions = ["bun", "import", "module", "default", "node"];
+                                            if let Some(rel) = resolve_exports_value(v, &conditions) {
+                                                let resolved = rel.replace("*", suffix);
+                                                let target = dir.join(resolved.trim_start_matches("./"));
+                                                if let Some(f) = try_extensions(&target) {
+                                                    return Some(f);
+                                                }
+                                                if target.is_file() {
+                                                    return Some(target);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Package found but specifier not in imports.
+                            // Don't keep walking up — exit per Node spec
+                            // (imports is scoped to the closest pkg.json).
+                            break;
+                        }
+                        // No imports field — keep walking up; the # may
+                        // belong to a parent package.
+                    }
+                }
+            }
+            match dir.parent() {
+                Some(p) if p != dir => dir = p,
+                _ => break,
+            }
+        }
+        return None;
+    }
+
     if specifier.starts_with('/') {
         let p = PathBuf::from(specifier);
         if let Some(f) = try_extensions(&p) {
@@ -6452,6 +6517,52 @@ const COMMONJS_LOADER_JS: &str = r#"
             const asDir = tryDirectoryWithIndex(specifier);
             if (asDir) return asDir;
             throw new Error("Cannot find module '" + specifier + "'");
+        }
+        // Package-internal subpath imports (charCode 35 prefix per Node
+        // spec). Chalk and similar libs use this for bundled vendor copies.
+        if (specifier.charCodeAt(0) === 35) {
+            let dir = fromDir;
+            while (true) {
+                const pkgJsonPath = dir + '/package.json';
+                if (pathExists(pkgJsonPath)) {
+                    try {
+                        const pkg = JSON.parse(readSourceUtf8(pkgJsonPath));
+                        if (pkg.imports) {
+                            const conditions = ['bun', 'require', 'node', 'module', 'default'];
+                            if (Object.prototype.hasOwnProperty.call(pkg.imports, specifier)) {
+                                const rel = resolveExportsValue(pkg.imports[specifier], conditions);
+                                if (rel) {
+                                    const target = normalizePath(joinPath(dir, rel.replace(/^\.\//, '')));
+                                    const asFile = tryExtensions(target);
+                                    if (asFile) return asFile;
+                                    if (pathExists(target)) return target;
+                                }
+                            }
+                            for (const k of Object.keys(pkg.imports)) {
+                                if (k.endsWith('/*')) {
+                                    const prefix = k.substring(0, k.length - 2);
+                                    if (specifier.startsWith(prefix) && specifier.length > prefix.length) {
+                                        const suffix = specifier.substring(prefix.length + 1);
+                                        const rel = resolveExportsValue(pkg.imports[k], conditions);
+                                        if (rel) {
+                                            const target = normalizePath(joinPath(dir, rel.replace('*', suffix).replace(/^\.\//, '')));
+                                            const asFile = tryExtensions(target);
+                                            if (asFile) return asFile;
+                                            if (pathExists(target)) return target;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    } catch (e) { /* fall through */ }
+                }
+                if (dir === '/' || dir === '' || dir === '.') break;
+                const parent = dirname(dir);
+                if (parent === dir) break;
+                dir = parent;
+            }
+            throw new Error("Cannot find module '" + specifier + "' from " + fromDir);
         }
         // Bare specifier — walk up node_modules.
         // Split into pkg + subpath: "pkg" or "pkg/sub" or "@scope/pkg/sub".

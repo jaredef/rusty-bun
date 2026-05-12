@@ -1,0 +1,10 @@
+import chalk from "chalk";
+const lines = [];
+chalk.level = 1;
+lines.push("1 " + chalk.red("hi"));
+lines.push("2 " + chalk.bold.green("ok"));
+lines.push("3 " + chalk.bgYellow.black(" warn "));
+lines.push("4 " + chalk.cyan.underline("link"));
+lines.push("5 " + chalk.dim("subtle"));
+lines.push("6 " + chalk.magenta("done"));
+process.stdout.write(lines.join("\n") + "\n");

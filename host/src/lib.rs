@@ -9015,6 +9015,11 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             Readable.prototype = Object.create(EE.prototype);
             Readable.prototype.constructor = Readable;
             Readable.prototype._read = function _read(_size) {};
+            Readable.prototype._emitEndOnce = function _emitEndOnce() {
+                if (this._endEmitted) return;
+                this._endEmitted = true;
+                try { this.emit("end"); } catch (_) {}
+            };
             Readable.prototype.push = function push(chunk) {
                 if (this._readableEnded) return false;
                 if (chunk === null) {
@@ -9024,7 +9029,7 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                     if (this._readableBuffer.length === 0) {
                         queueMicrotask(() => {
                             try { this.emit("readable"); } catch (_) {}
-                            try { this.emit("end"); } catch (_) {}
+                            this._emitEndOnce();
                         });
                     } else {
                         // Still buffered chunks; emit readable to drain,
@@ -9056,7 +9061,7 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                     this.emit("data", chunk);
                 }
                 if (this._readableFlowing === true && this._readableEnded) {
-                    this.emit("end");
+                    this._emitEndOnce();
                     return;
                 }
                 // Pull-driven: after the buffer drains, ask _read for more.

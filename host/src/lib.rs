@@ -8409,46 +8409,32 @@ fn install_commonjs_loader_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
 // ════════════════════════════════════════════════════════════════════════
 //
 // Real consumer code uses setTimeout/setImmediate/queueMicrotask
-// pervasively, often with ms=0 for "next tick" semantics or with large
-// ms for retry/timeout logic that doesn't fire during synchronous tests.
+// pervasively. E.54 (delay ^7) closure: timers honor wall-clock ms.
 //
-// Pilot scope: timers are scheduled as Promise.resolve().then() — i.e.,
-// they run on the microtask queue rather than after a real wall-clock
-// delay. This is sufficient for the dominant consumer pattern
-// (setTimeout(fn, 0) or setImmediate(fn) for deferred work) and enough
-// to validate that consumer code's "delay-then-do-X" paths execute
-// without throwing. Real wall-clock delays for ms>0 are deferred to a
-// follow-up round; they require the host pump to track timer expirations
-// (currently the pump is microtask-only).
+// Deadline-based scheduling: setTimeout stores { fn, args, deadline }.
+// __tickTimers (called from host eval loop) fires due timers in
+// deadline order. __nextTimerDelay reports how long until the earliest
+// pending timer, so the host can sleep instead of spinning.
 //
 // performance.now() / .timeOrigin: backed by std::time::Instant via a
 // Rust closure. timeOrigin is captured at runtime construction.
 
 const TIMERS_AND_PERF_JS: &str = r#"
 (function() {
-    const timers = new Map();  // id → { cleared, fn, args }
+    const timers = new Map();  // id → { cleared, fn, args, deadline, interval }
     let nextId = 1;
 
-    function setTimeoutImpl(fn, _ms, ...args) {
+    function setTimeoutImpl(fn, ms, ...args) {
         if (typeof fn !== "function") {
             // Per WHATWG: string fn is allowed but pilot rejects.
             throw new TypeError("setTimeout requires a function");
         }
         const id = nextId++;
-        const entry = { cleared: false, fn, args };
-        timers.set(id, entry);
-        // Pilot scope: schedule on microtask queue regardless of _ms.
-        Promise.resolve().then(() => {
-            if (entry.cleared) return;
-            timers.delete(id);
-            try { fn.apply(undefined, args); }
-            catch (e) {
-                // Per spec, exceptions in timer callbacks become
-                // unhandled errors. Pilot logs to console.error.
-                if (typeof console !== "undefined" && console.error) {
-                    console.error("uncaught in setTimeout:", e);
-                }
-            }
+        const delay = Math.max(0, Number(ms) || 0);
+        timers.set(id, {
+            cleared: false, fn, args,
+            deadline: Date.now() + delay,
+            interval: -1,
         });
         return id;
     }
@@ -8461,12 +8447,65 @@ const TIMERS_AND_PERF_JS: &str = r#"
         }
     }
 
-    function setIntervalImpl(_fn, _ms, ..._args) {
-        // setInterval requires real-time scheduling beyond the microtask
-        // pump. Deferred to a follow-up round; throwing is preferable
-        // to silently no-op'ing.
-        throw new Error("setInterval is not yet supported in rusty-bun-host");
+    function setIntervalImpl(fn, ms, ...args) {
+        if (typeof fn !== "function") {
+            throw new TypeError("setInterval requires a function");
+        }
+        const id = nextId++;
+        const period = Math.max(1, Number(ms) || 1);
+        timers.set(id, {
+            cleared: false, fn, args,
+            deadline: Date.now() + period,
+            interval: period,
+        });
+        return id;
     }
+
+    // Called from host eval loop after microtask drain. Fires all timers
+    // whose deadline has passed, in deadline order. Returns true if any
+    // fired (so caller can re-drain microtasks before sleeping).
+    globalThis.__tickTimers = function() {
+        const now = Date.now();
+        const due = [];
+        for (const [id, e] of timers) {
+            if (!e.cleared && e.deadline <= now) due.push([id, e]);
+        }
+        if (due.length === 0) return false;
+        due.sort((a, b) => a[1].deadline - b[1].deadline);
+        for (const [id, e] of due) {
+            if (e.cleared) continue;
+            if (e.interval > 0) {
+                // Reschedule before invoking so a throwing handler
+                // doesn't desynchronize the interval cadence.
+                e.deadline = now + e.interval;
+            } else {
+                timers.delete(id);
+            }
+            try { e.fn.apply(undefined, e.args); }
+            catch (err) {
+                if (typeof console !== "undefined" && console.error) {
+                    console.error("uncaught in timer:", err);
+                }
+            }
+        }
+        return true;
+    };
+
+    // Returns ms until the earliest pending timer, or -1 if none.
+    globalThis.__nextTimerDelay = function() {
+        let earliest = -1;
+        for (const [_, e] of timers) {
+            if (e.cleared) continue;
+            if (earliest === -1 || e.deadline < earliest) earliest = e.deadline;
+        }
+        if (earliest === -1) return -1;
+        return Math.max(0, earliest - Date.now());
+    };
+
+    globalThis.__hasPendingTimers = function() {
+        for (const [_, e] of timers) if (!e.cleared) return true;
+        return false;
+    };
 
     globalThis.setTimeout = setTimeoutImpl;
     globalThis.clearTimeout = clearTimeoutImpl;
@@ -8867,12 +8906,34 @@ pub fn eval_cjs_module_async(entry_path: &str) -> Result<String, String> {
         ctx.eval::<(), _>(bootstrap.as_str())
             .map_err(|e| format!("boot: {:?}", e))
     })?;
+    let mut consecutive_idle = 0;
     for _ in 0..1_000_000 {
         match runtime.execute_pending_job() {
-            Ok(true) => continue,
-            Ok(false) => break,
+            Ok(true) => { consecutive_idle = 0; continue; }
+            Ok(false) => {}
             Err(_) => break,
         }
+        let (timer_fired, sleep_ms) = context.with(|ctx| -> (bool, i64) {
+            let g = ctx.globals();
+            let fired = match g.get::<_, Option<rquickjs::Function>>("__tickTimers") {
+                Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
+                _ => false,
+            };
+            let sleep_ms = if !fired {
+                match g.get::<_, Option<rquickjs::Function>>("__nextTimerDelay") {
+                    Ok(Some(f)) => f.call::<_, i64>(()).unwrap_or(-1),
+                    _ => -1,
+                }
+            } else { -1 };
+            (fired, sleep_ms)
+        });
+        if timer_fired { consecutive_idle = 0; continue; }
+        if sleep_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms.min(50) as u64));
+            continue;
+        }
+        consecutive_idle += 1;
+        if consecutive_idle > 2 { break; }
     }
     context.with(|ctx| -> Result<String, String> {
         let g = ctx.globals();
@@ -8935,26 +8996,51 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
             Ok(false) => {}
             Err(_) => break,
         }
-        // Microtask queue empty. Probe keep-alive registry; if empty,
-        // exit immediately (fast path for non-autoServe fixtures).
-        let (alive_count, did_work) = context.with(|ctx| -> (i32, bool) {
+        // Microtask queue empty. Three sources of further work:
+        //   1. __keepAlive registry (Bun.serve autoServe) — Π2.6
+        //   2. Pending wall-clock timers — E.54 closure
+        //   3. Nothing → exit
+        let (alive_count, ka_did_work, timer_did_work, sleep_ms) = context.with(|ctx| -> (i32, bool, bool, i64) {
             let g = ctx.globals();
             let alive_count = g
                 .get::<_, Option<rquickjs::Object>>("__keepAlive")
                 .ok().flatten()
                 .and_then(|s| s.get::<_, i32>("size").ok())
                 .unwrap_or(0);
-            if alive_count == 0 { return (0, false); }
-            let did_work = match g.get::<_, Option<rquickjs::Function>>("__tickKeepAlive") {
+            let ka_did = if alive_count > 0 {
+                match g.get::<_, Option<rquickjs::Function>>("__tickKeepAlive") {
+                    Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
+                    _ => false,
+                }
+            } else { false };
+            let timer_did = match g.get::<_, Option<rquickjs::Function>>("__tickTimers") {
                 Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
                 _ => false,
             };
-            (alive_count, did_work)
+            // If neither fired and keep-alive is idle, see if any timer
+            // is pending and report how long until it fires.
+            let sleep_ms: i64 = if !timer_did && !ka_did {
+                match g.get::<_, Option<rquickjs::Function>>("__nextTimerDelay") {
+                    Ok(Some(f)) => f.call::<_, i64>(()).unwrap_or(-1),
+                    _ => -1,
+                }
+            } else { -1 };
+            (alive_count, ka_did, timer_did, sleep_ms)
         });
-        if alive_count == 0 { break; }
+        let did_work = ka_did_work || timer_did_work;
+        // Exit when nothing keeps us alive and no timer is pending.
+        if !did_work && alive_count == 0 && sleep_ms < 0 { break; }
         if did_work {
             consecutive_idle = 0;
         } else {
+            // Sleep until the next timer is due (capped so a long-delay
+            // timer doesn't hold the loop unresponsive to other work).
+            if sleep_ms > 0 {
+                let cap = sleep_ms.min(50) as u64;
+                std::thread::sleep(std::time::Duration::from_millis(cap));
+                consecutive_idle = 0;
+                continue;
+            }
             consecutive_idle += 1;
             if consecutive_idle > max_consecutive_idle { break; }
         }
@@ -9000,16 +9086,40 @@ pub fn eval_string_async(source: &str) -> Result<String, String> {
     context.with(|ctx| -> Result<(), String> {
         ctx.eval::<(), _>(wrapped.as_str()).map_err(|e| format!("eval: {:?}", e))
     })?;
-    // Pump microtasks.
+    // Pump microtasks + wall-clock timers (E.54 closure).
     let mut iters = 0;
     let mut executed = 0;
-    for _ in 0..100_000 {
+    let mut consecutive_idle = 0;
+    for _ in 0..1_000_000 {
         iters += 1;
         match runtime.execute_pending_job() {
-            Ok(true) => { executed += 1; continue; }
-            Ok(false) => break,
+            Ok(true) => { executed += 1; consecutive_idle = 0; continue; }
+            Ok(false) => {}
             Err(_) => break,
         }
+        // Microtask queue empty: tick wall-clock timers.
+        let (timer_fired, sleep_ms) = context.with(|ctx| -> (bool, i64) {
+            let g = ctx.globals();
+            let fired = match g.get::<_, Option<rquickjs::Function>>("__tickTimers") {
+                Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
+                _ => false,
+            };
+            let sleep_ms = if !fired {
+                match g.get::<_, Option<rquickjs::Function>>("__nextTimerDelay") {
+                    Ok(Some(f)) => f.call::<_, i64>(()).unwrap_or(-1),
+                    _ => -1,
+                }
+            } else { -1 };
+            (fired, sleep_ms)
+        });
+        if timer_fired { consecutive_idle = 0; continue; }
+        if sleep_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms.min(50) as u64));
+            continue;
+        }
+        // No microtask, no timer pending: settled (or stuck).
+        consecutive_idle += 1;
+        if consecutive_idle > 2 { break; }
     }
     if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
         eprintln!("[host] pump iters={} executed={}", iters, executed);

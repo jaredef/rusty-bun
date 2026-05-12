@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "base32.js": "^0.1.0",
+      },
+    },
+  },
+  "packages": {
+    "base32.js": ["base32.js@0.1.0", "", {}, "sha512-n3TkB02ixgBOhTvANakDb4xaMXnYUVkNoRFJjQflcqMQhyEKxEHdj3E6N8t8sUQ0mjH/3/JxzlXuz3ul/J90pQ=="],
+  }
+}

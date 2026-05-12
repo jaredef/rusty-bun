@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "base32.js": "^0.1.0"
+  }
+}

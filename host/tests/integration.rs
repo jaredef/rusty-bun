@@ -4752,3 +4752,4 @@ fn consumer_yaml_app_byte_identical_to_bun() {
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
 
+

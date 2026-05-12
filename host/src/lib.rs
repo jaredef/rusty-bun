@@ -329,7 +329,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "writeFileSync", "existsSync", "isFileSync", "isDirectorySync",
             "unlinkSync", "mkdirSyncRecursive", "rmdirSyncRecursive"]),
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
-            "normalize", "isAbsolute", "sep"]),
+            "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
+            "sep", "delimiter", "posix"]),
         "node:http" | "http" => ("nodeHttp", &["createServer", "request",
             "IncomingMessage", "ServerResponse", "ClientRequest", "Server"]),
         // webcrypto is the Web Crypto API namespace (nanoid + many libs
@@ -1169,6 +1170,58 @@ fn wire_path<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()
     p.set("sep", "/")?;
     p.set("delimiter", ":")?;
     global.set("path", p)?;
+    // path.resolve(...segments) — Node's variadic resolve(): each segment
+    // is joined left-to-right; absolute segments restart from there;
+    // result is normalized to an absolute path against cwd.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const cwd = () => (globalThis.process && globalThis.process.cwd && globalThis.process.cwd()) || "/";
+            globalThis.path.resolve = function resolve(...segments) {
+                let resolved = "";
+                let isAbs = false;
+                for (let i = segments.length - 1; i >= 0; i--) {
+                    const s = String(segments[i] || "");
+                    if (s.length === 0) continue;
+                    resolved = s + (resolved ? "/" + resolved : "");
+                    if (s[0] === "/") { isAbs = true; break; }
+                }
+                if (!isAbs) resolved = cwd() + (resolved ? "/" + resolved : "");
+                // Normalize: collapse // and resolve . / ..
+                const parts = resolved.split("/").filter(p => p !== "" && p !== ".");
+                const out = [];
+                for (const p of parts) {
+                    if (p === "..") { if (out.length) out.pop(); }
+                    else out.push(p);
+                }
+                return "/" + out.join("/");
+            };
+            // path.relative(from, to) — best-effort: strip common prefix.
+            globalThis.path.relative = function relative(from, to) {
+                const fa = globalThis.path.resolve(from).split("/").filter(Boolean);
+                const ta = globalThis.path.resolve(to).split("/").filter(Boolean);
+                let i = 0;
+                while (i < fa.length && i < ta.length && fa[i] === ta[i]) i++;
+                const up = fa.slice(i).map(() => "..");
+                const down = ta.slice(i);
+                return up.concat(down).join("/") || ".";
+            };
+            // path.parse(path) — return {root, dir, base, ext, name}.
+            globalThis.path.parse = function parse(p) {
+                const dir = globalThis.path.dirname(p);
+                const base = globalThis.path.basename(p);
+                const ext = globalThis.path.extname(p);
+                return { root: dir.startsWith("/") ? "/" : "", dir, base, ext,
+                         name: base.slice(0, base.length - ext.length) };
+            };
+            globalThis.path.format = function format(o) {
+                const dir = o.dir || o.root || "";
+                const base = o.base || ((o.name || "") + (o.ext || ""));
+                return dir ? dir + (dir.endsWith("/") ? "" : "/") + base : base;
+            };
+            // path.posix / path.win32 aliases — most consumers use path.posix.
+            globalThis.path.posix = globalThis.path;
+        })();
+    "#)?;
     Ok(())
 }
 

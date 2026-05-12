@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "is-plain-obj": "^4.1.0"
+  }
+}

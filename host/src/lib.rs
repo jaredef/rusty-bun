@@ -3605,6 +3605,19 @@ const BUFFER_CLASS_JS: &str = r#"
         static allocUnsafeSlow(size) { return new Buffer(size); }
         static byteLength(s) { return S.byteLength(s); }
         static isBuffer(v) { return v instanceof Buffer; }
+        // Buffer.compare(a, b) — lexicographic compare of two Buffer
+        // (or Uint8Array) values. Returns -1/0/1. csv-parse uses this
+        // to test escape === quote at parser init.
+        static compare(a, b) {
+            const len = Math.min(a.length, b.length);
+            for (let i = 0; i < len; i++) {
+                if (a[i] < b[i]) return -1;
+                if (a[i] > b[i]) return 1;
+            }
+            if (a.length < b.length) return -1;
+            if (a.length > b.length) return 1;
+            return 0;
+        }
         // Preserve the rusty-bun-only static-helper API alongside the
         // Bun-portable instance-method API. Both shapes work.
         static decodeUtf8(bytes) { return S.decodeUtf8(Array.from(bytes)); }
@@ -5630,6 +5643,73 @@ const STREAMS_JS: &str = r#"
                 },
                 [Symbol.asyncIterator]() { return this; },
             };
+        }
+        // pipeTo(destWritable) — read chunks and forward to the
+        // destination's writer; closes the writer when source ends.
+        // Returns a promise that resolves on completion.
+        async pipeTo(dest, opts) {
+            opts = opts || {};
+            const reader = this.getReader();
+            const writer = dest.getWriter();
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    await writer.write(value);
+                }
+                if (!opts.preventClose) await writer.close();
+            } catch (e) {
+                if (!opts.preventAbort) {
+                    try { await writer.abort(e); } catch (_) {}
+                }
+                throw e;
+            } finally {
+                try { reader.releaseLock(); } catch (_) {}
+                try { writer.releaseLock(); } catch (_) {}
+            }
+        }
+        // pipeThrough(transformer, opts) — pipe this → transformer.writable
+        // and return transformer.readable. Composable for chaining.
+        pipeThrough(transformer, opts) {
+            // Accept either a TransformStream (has .readable/.writable)
+            // or a { writable, readable } object.
+            const writable = transformer.writable;
+            const readable = transformer.readable;
+            // Fire-and-forget pipeTo; errors propagate via the readable.
+            this.pipeTo(writable, opts).catch((e) => {
+                try {
+                    // Best-effort error propagation into the readable.
+                    if (readable._controller && typeof readable._controller.error === "function") {
+                        readable._controller.error(e);
+                    }
+                } catch (_) {}
+            });
+            return readable;
+        }
+        // tee() returns two ReadableStreams that emit the same chunks.
+        tee() {
+            const queues = [[], []];
+            const readers = [null, null];
+            const reader = this.getReader();
+            let done = false;
+            const drainTo = async (which) => {
+                while (true) {
+                    if (queues[which].length > 0) return queues[which].shift();
+                    if (done) return null;
+                    const { value, done: d } = await reader.read();
+                    if (d) { done = true; return null; }
+                    queues[1 - which].push(value);
+                    return value;
+                }
+            };
+            const make = (which) => new ReadableStream({
+                async pull(c) {
+                    const v = await drainTo(which);
+                    if (v === null) c.close();
+                    else c.enqueue(v);
+                },
+            });
+            return [make(0), make(1)];
         }
     }
 
@@ -7674,16 +7754,34 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 if (this._readableEnded) return false;
                 if (chunk === null) {
                     this._readableEnded = true;
-                    // Schedule 'end' if no data buffered.
+                    // Emit a final 'readable' so pull-style consumers
+                    // see read() return null and can finalize, then 'end'.
                     if (this._readableBuffer.length === 0) {
-                        queueMicrotask(() => { try { this.emit("end"); } catch (_) {} });
+                        queueMicrotask(() => {
+                            try { this.emit("readable"); } catch (_) {}
+                            try { this.emit("end"); } catch (_) {}
+                        });
+                    } else {
+                        // Still buffered chunks; emit readable to drain,
+                        // then end fires after read() returns null.
+                        queueMicrotask(() => { try { this.emit("readable"); } catch (_) {} });
                     }
                     return false;
                 }
                 this._readableBuffer.push(chunk);
-                // If flowing, dispatch immediately.
                 if (this._readableFlowing === true) {
                     queueMicrotask(() => this._drainFlowing());
+                } else if (this._readableFlowing !== false) {
+                    // Pull-style: schedule 'readable' so on('readable')
+                    // listeners fire and can call read(). csv-parse, ndjson
+                    // and similar consumers depend on this.
+                    if (!this._readableScheduled) {
+                        this._readableScheduled = true;
+                        queueMicrotask(() => {
+                            this._readableScheduled = false;
+                            try { this.emit("readable"); } catch (_) {}
+                        });
+                    }
                 }
                 return true;
             };
@@ -7720,6 +7818,19 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                         try { this._read(this._readableHighWaterMark); } catch (e) { this.emit("error", e); }
                         this._drainFlowing();
                     });
+                } else if (event === "readable" && this._readableFlowing === null) {
+                    // Pull-style: registration forces flowing=false so
+                    // push() emits 'readable' instead of dispatching 'data'.
+                    this._readableFlowing = false;
+                    // If chunks were already buffered before listener attach,
+                    // schedule one 'readable' so the consumer can drain.
+                    if (this._readableBuffer.length > 0 && !this._readableScheduled) {
+                        this._readableScheduled = true;
+                        queueMicrotask(() => {
+                            this._readableScheduled = false;
+                            try { this.emit("readable"); } catch (_) {}
+                        });
+                    }
                 }
                 return this;
             };

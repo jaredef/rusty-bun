@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "ndjson-parser": "^1.0.1",
+      },
+    },
+  },
+  "packages": {
+    "ndjson-parser": ["ndjson-parser@1.0.1", "", {}, "sha512-AlBSwpD6hbN//f4l+PBfXwccixtcaG7bOvue2h5c+Bar9ztAkk20bK/hjAcr1pOID8KorPVLImSyQM8KX0746g=="],
+  }
+}

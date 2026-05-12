@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "deep-equal": "^2.2.3"
+  }
+}

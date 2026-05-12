@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "ejs": "^5.0.2",
+      },
+    },
+  },
+  "packages": {
+    "ejs": ["ejs@5.0.2", "", { "bin": { "ejs": "bin/cli.js" } }, "sha512-IpbUaI/CAW86l3f+T8zN0iggSc0LmMZLcIW5eRVStLVNCoTXkE0YlncbbH50fp8Cl6zHIky0sW2uUbhBqGw0Jw=="],
+  }
+}

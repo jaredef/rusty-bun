@@ -315,7 +315,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:assert/strict" | "assert/strict" |
         "node:child_process" | "child_process" |
         "node:net" | "net" |
-        "node:tty" | "tty"
+        "node:tty" | "tty" |
+        "node:zlib" | "zlib"
     )
 }
 
@@ -376,6 +377,11 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["Socket", "connect", "createConnection", "createServer"]),
         "node:tty" | "tty" => ("nodeTty",
             &["isatty", "ReadStream", "WriteStream"]),
+        "node:zlib" | "zlib" => ("nodeZlib",
+            &["gzipSync", "gunzipSync", "deflateSync", "inflateSync",
+              "deflateRawSync", "inflateRawSync",
+              "createGzip", "createGunzip", "createDeflate", "createInflate",
+              "constants"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -659,8 +665,72 @@ impl Loader for FsLoader {
     }
 }
 
+fn install_error_polyfills<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    // Error.captureStackTrace(obj, ctorOpt) — V8/Node-specific API used
+    // pervasively in npm (depd, http-errors, every error-throwing util).
+    // QuickJS doesn't have it natively. Polyfill: write the current
+    // stack to obj.stack. Constructor arg ignored (would slice the
+    // stack to start above ctor; we don't have that resolution).
+    //
+    // Error.stackTraceLimit — V8-specific. Default to 10 to match Node.
+    //
+    // Error.prepareStackTrace — V8-specific stack-frame array transform.
+    // Many libs read/write it. Stub passthrough — accept the assignment
+    // but don't transform.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            if (typeof Error.captureStackTrace !== "function") {
+                // V8 semantics: if Error.prepareStackTrace is set, V8 calls
+                // it with (err, structuredCallSiteArray) and uses its return
+                // value as obj.stack. depd + many other libs depend on this
+                // path. Provide a minimal structured array of CallSite-shape
+                // objects with the standard query methods returning empty
+                // strings / zero (good enough for depd to walk the stack
+                // and not throw on getFunctionName() etc.).
+                const fakeFrame = {
+                    getFunctionName: () => "",
+                    getFileName: () => "",
+                    getLineNumber: () => 0,
+                    getColumnNumber: () => 0,
+                    getMethodName: () => "",
+                    getTypeName: () => "",
+                    getThis: () => undefined,
+                    getEvalOrigin: () => undefined,
+                    isNative: () => false,
+                    isEval: () => false,
+                    isConstructor: () => false,
+                    isToplevel: () => true,
+                    toString: () => "",
+                };
+                Error.captureStackTrace = function captureStackTrace(obj, _ctor) {
+                    try {
+                        const structured = [fakeFrame, fakeFrame, fakeFrame, fakeFrame, fakeFrame];
+                        let value;
+                        if (typeof Error.prepareStackTrace === "function") {
+                            try { value = Error.prepareStackTrace(obj, structured); }
+                            catch (_) { value = ""; }
+                        } else {
+                            value = "";
+                        }
+                        Object.defineProperty(obj, "stack", {
+                            value, writable: true, configurable: true,
+                        });
+                    } catch (_) {
+                        obj.stack = "";
+                    }
+                };
+            }
+            if (Error.stackTraceLimit === undefined) {
+                Error.stackTraceLimit = 10;
+            }
+        })();
+    "#)?;
+    Ok(())
+}
+
 fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     let global = ctx.globals();
+    install_error_polyfills(&ctx)?;
     wire_console(&ctx, &global)?;
     wire_atob_btoa(&ctx, &global)?;
     wire_path(&ctx, &global)?;
@@ -709,6 +779,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_child_process_js(&ctx)?;
     install_node_net_js(&ctx)?;
     install_node_tty_js(&ctx)?;
+    install_node_zlib_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -5740,6 +5811,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "net": () => globalThis.nodeNet,
         "node:tty": () => globalThis.nodeTty,
         "tty": () => globalThis.nodeTty,
+        "node:zlib": () => globalThis.nodeZlib,
+        "zlib": () => globalThis.nodeZlib,
     };
 
     function loadModule(absPath) {
@@ -7237,6 +7310,73 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
                 pathToFileURL,
                 domainToASCII,
                 domainToUnicode,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_zlib_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // node:zlib — sync wrappers compose on __compression (Π1.3 decode +
+    // Π1.3.b stored-block encode). createGzip/createDeflate stream APIs
+    // are stub Transform-shape classes; many libs require zlib only for
+    // optional features (destroy + body-parser top-level-require it) and
+    // tolerate non-functional stream constructors.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            const gzipSync = (input) => {
+                const bytes = (typeof input === "string")
+                    ? new TextEncoder().encode(input)
+                    : (input instanceof Uint8Array ? input : new Uint8Array(input));
+                const out = globalThis.__compression.gzip_deflate_stored(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const gunzipSync = (input) => {
+                const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+                const out = globalThis.__compression.gunzip(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const deflateSync = (input) => {
+                const bytes = (typeof input === "string")
+                    ? new TextEncoder().encode(input)
+                    : (input instanceof Uint8Array ? input : new Uint8Array(input));
+                const out = globalThis.__compression.zlib_deflate_stored(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const inflateSync = (input) => {
+                const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+                const out = globalThis.__compression.http_deflate_inflate(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const deflateRawSync = (input) => {
+                const bytes = (typeof input === "string")
+                    ? new TextEncoder().encode(input)
+                    : (input instanceof Uint8Array ? input : new Uint8Array(input));
+                const out = globalThis.__compression.deflate_stored(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const inflateRawSync = (input) => {
+                const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+                const out = globalThis.__compression.inflate(Array.from(bytes));
+                return typeof Buffer !== "undefined" ? Buffer.from(out) : new Uint8Array(out);
+            };
+            const stub = (name) => () => {
+                throw new Error("rusty-bun-host: zlib." + name +
+                    " (stream variant) not implemented — use *Sync");
+            };
+            globalThis.nodeZlib = {
+                gzipSync, gunzipSync, deflateSync, inflateSync,
+                deflateRawSync, inflateRawSync,
+                createGzip: stub("createGzip"),
+                createGunzip: stub("createGunzip"),
+                createDeflate: stub("createDeflate"),
+                createInflate: stub("createInflate"),
+                constants: {
+                    Z_NO_FLUSH: 0, Z_PARTIAL_FLUSH: 1, Z_SYNC_FLUSH: 2,
+                    Z_FULL_FLUSH: 3, Z_FINISH: 4, Z_BLOCK: 5, Z_TREES: 6,
+                    Z_OK: 0, Z_STREAM_END: 1, Z_NEED_DICT: 2,
+                    Z_DEFAULT_COMPRESSION: -1, Z_BEST_SPEED: 1, Z_BEST_COMPRESSION: 9,
+                },
             };
         })();
     "#)?;

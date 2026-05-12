@@ -1,0 +1,1 @@
+{"name":"esc","type":"module","dependencies":{"escodegen":"^2","acorn":"^8"}}

@@ -1048,6 +1048,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_diagnostics_channel_js(&ctx)?;
     install_node_https_perf_async_hooks_js(&ctx)?;
     install_node_extra_builtins_js(&ctx)?;
+    install_intl_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -8400,6 +8401,326 @@ fn install_node_https_perf_async_hooks_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 executionAsyncId: () => 0,
                 executionAsyncResource: () => ({}),
                 triggerAsyncId: () => 0,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_intl_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // S11 closure (partial): a minimal Intl.NumberFormat sufficient for
+    // pretty-bytes (E.35), the date-fns/luxon (E.22) common path, and
+    // any consumer using maximumFractionDigits / useGrouping. Locale
+    // data is "en"-only for now — full CLDR-driven locale-data is a
+    // separate substrate (likely a generated table per locale).
+    //
+    // L2 namespace: install globalThis.Intl.
+    // L3 surface: NumberFormat, DateTimeFormat, Collator (constructors).
+    // L5 semantics: en-locale number formatting (decimal, percent,
+    //   currency placeholder, scientific via toExponential, grouping).
+    ctx.eval::<(), _>(r#"
+        (function() {
+            if (typeof globalThis.Intl !== "undefined" && Intl.NumberFormat
+                && (new Intl.NumberFormat("en")).format(0)) {
+                return; // engine already provides Intl
+            }
+            const Intl = globalThis.Intl || (globalThis.Intl = {});
+
+            function _formatNumber(n, opts) {
+                if (!isFinite(n)) {
+                    if (isNaN(n)) return "NaN";
+                    return n > 0 ? "∞" : "-∞";
+                }
+                const sign = n < 0 ? "-" : (opts.signDisplay === "always" || opts.signDisplay === "exceptZero" && n !== 0 ? "+" : "");
+                n = Math.abs(n);
+
+                const minI = opts.minimumIntegerDigits ?? 1;
+                const minF = opts.minimumFractionDigits;
+                const maxF = opts.maximumFractionDigits;
+                const minS = opts.minimumSignificantDigits;
+                const maxS = opts.maximumSignificantDigits;
+
+                let s;
+                if (minS !== undefined || maxS !== undefined) {
+                    const ms = maxS ?? 21;
+                    s = n.toPrecision(ms);
+                    // toPrecision may emit scientific notation for very
+                    // large/small values; expand to fixed if so.
+                    if (s.indexOf("e") >= 0) s = Number(s).toFixed(20).replace(/0+$/, "").replace(/\.$/, "");
+                    // Strip trailing zeros below minS.
+                    const minsN = minS ?? 1;
+                    if (s.indexOf(".") >= 0) {
+                        // Keep only minS significant digits (already produced) but
+                        // trim trailing zero pads beyond maxS.
+                    }
+                } else {
+                    if (maxF !== undefined) {
+                        const m = Math.pow(10, maxF);
+                        const mode = opts.roundingMode || "halfExpand";
+                        const x = n * m;
+                        let rounded;
+                        switch (mode) {
+                            case "ceil":        rounded = Math.ceil(x); break;
+                            case "floor":       rounded = Math.floor(x); break;
+                            case "expand":      rounded = x >= 0 ? Math.ceil(x) : Math.floor(x); break;
+                            case "trunc":       rounded = Math.trunc(x); break;
+                            case "halfCeil":    rounded = Math.round(x); /* close enough */ break;
+                            case "halfFloor":   rounded = -Math.round(-x); break;
+                            case "halfExpand":  rounded = x >= 0 ? Math.floor(x + 0.5) : -Math.floor(-x + 0.5); break;
+                            case "halfTrunc":   rounded = x >= 0 ? Math.ceil(x - 0.5) : -Math.ceil(-x - 0.5); break;
+                            case "halfEven":    {
+                                const f = Math.floor(x);
+                                const diff = x - f;
+                                if (diff < 0.5) rounded = f;
+                                else if (diff > 0.5) rounded = f + 1;
+                                else rounded = (f % 2 === 0) ? f : f + 1;
+                                break;
+                            }
+                            default:            rounded = Math.round(x);
+                        }
+                        n = rounded / m;
+                    }
+                    s = n.toString();
+                    if (s.indexOf("e") >= 0) {
+                        s = n.toFixed(maxF ?? 20);
+                        if (maxF === undefined) s = s.replace(/0+$/, "").replace(/\.$/, "");
+                    }
+                    if (minF !== undefined) {
+                        const dot = s.indexOf(".");
+                        const fracLen = dot < 0 ? 0 : s.length - dot - 1;
+                        if (fracLen < minF) {
+                            s = (dot < 0 ? s + "." : s) + "0".repeat(minF - fracLen);
+                        }
+                    }
+                }
+
+                let intPart = s, fracPart = "";
+                const dotIdx = s.indexOf(".");
+                if (dotIdx >= 0) {
+                    intPart = s.substring(0, dotIdx);
+                    fracPart = s.substring(dotIdx + 1);
+                }
+
+                if (intPart.length < minI) {
+                    intPart = "0".repeat(minI - intPart.length) + intPart;
+                }
+
+                if (opts.useGrouping !== false && opts.useGrouping !== "false") {
+                    intPart = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+                }
+
+                let out = fracPart ? intPart + "." + fracPart : intPart;
+                out = sign + out;
+
+                if (opts.style === "percent") out = out + "%";
+                else if (opts.style === "currency" && opts.currency) {
+                    // Naive prefix; real CLDR-driven layout deferred.
+                    const sym = opts.currency === "USD" ? "$"
+                        : opts.currency === "EUR" ? "€"
+                        : opts.currency === "GBP" ? "£"
+                        : opts.currency === "JPY" ? "¥"
+                        : opts.currency + " ";
+                    out = sym + out;
+                }
+                return out;
+            }
+
+            class NumberFormat {
+                constructor(locales, options) {
+                    options = options || {};
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    if (options.style === "percent" && options.maximumFractionDigits === undefined) {
+                        options = Object.assign({}, options, { maximumFractionDigits: 0 });
+                    }
+                    this._opts = options;
+                }
+                format(value) {
+                    return _formatNumber(Number(value), this._opts);
+                }
+                formatToParts(value) {
+                    const s = this.format(value);
+                    // Minimal single-part — consumers that branch on
+                    // formatToParts get one "integer" + one "decimal" +
+                    // one "fraction"; not full CLDR parts.
+                    const dot = s.indexOf(".");
+                    if (dot < 0) return [{ type: "integer", value: s }];
+                    return [
+                        { type: "integer", value: s.substring(0, dot) },
+                        { type: "decimal", value: "." },
+                        { type: "fraction", value: s.substring(dot + 1) },
+                    ];
+                }
+                resolvedOptions() {
+                    return Object.assign({ locale: this._locale, numberingSystem: "latn" }, this._opts);
+                }
+            }
+            NumberFormat.supportedLocalesOf = function(locales) {
+                return Array.isArray(locales) ? locales.slice() : [locales];
+            };
+            Intl.NumberFormat = NumberFormat;
+
+            // Minimal Intl.DateTimeFormat — locale "en" en-US shape.
+            // Many consumer libs call .format(date) expecting a string;
+            // a small subset use formatToParts. CLDR locale data full
+            // closure is deferred.
+            class DateTimeFormat {
+                constructor(locales, options) {
+                    options = options || {};
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options;
+                }
+                format(date) {
+                    date = date instanceof Date ? date : new Date(date);
+                    const o = this._opts;
+                    const pad = (n, w = 2) => String(n).padStart(w, "0");
+                    const y = date.getFullYear();
+                    const mo = date.getMonth() + 1;
+                    const d = date.getDate();
+                    const h = date.getHours();
+                    const mi = date.getMinutes();
+                    const s = date.getSeconds();
+                    // Heuristic: dateStyle: "short" → M/D/YYYY; long/full add weekday + month name
+                    if (o.dateStyle === "short" && !o.timeStyle) return mo + "/" + d + "/" + y;
+                    if (o.dateStyle === "long" && !o.timeStyle) {
+                        const months = ["January","February","March","April","May","June",
+                                        "July","August","September","October","November","December"];
+                        return months[mo-1] + " " + d + ", " + y;
+                    }
+                    // Default ISO-like fallback.
+                    return mo + "/" + d + "/" + y + ", " + h + ":" + pad(mi) + ":" + pad(s);
+                }
+                formatToParts(date) {
+                    return [{ type: "literal", value: this.format(date) }];
+                }
+                resolvedOptions() {
+                    return Object.assign({ locale: this._locale, timeZone: "UTC" }, this._opts);
+                }
+            }
+            DateTimeFormat.supportedLocalesOf = function(locales) {
+                return Array.isArray(locales) ? locales.slice() : [locales];
+            };
+            Intl.DateTimeFormat = DateTimeFormat;
+
+            // Intl.Collator — minimal localeCompare wrapper.
+            class Collator {
+                constructor(locales, options) {
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options || {};
+                }
+                compare(a, b) {
+                    a = String(a); b = String(b);
+                    if (this._opts.sensitivity === "base" || this._opts.sensitivity === "accent") {
+                        a = a.toLowerCase(); b = b.toLowerCase();
+                    }
+                    if (this._opts.numeric) {
+                        return a.localeCompare(b, this._locale, { numeric: true });
+                    }
+                    return a < b ? -1 : a > b ? 1 : 0;
+                }
+                resolvedOptions() {
+                    return Object.assign({ locale: this._locale }, this._opts);
+                }
+            }
+            Collator.supportedLocalesOf = function(locales) {
+                return Array.isArray(locales) ? locales.slice() : [locales];
+            };
+            Intl.Collator = Collator;
+
+            // Intl.PluralRules — English-only stub.
+            class PluralRules {
+                constructor(locales, options) {
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options || {};
+                }
+                select(n) {
+                    n = Math.abs(Number(n));
+                    if (this._opts.type === "ordinal") {
+                        if (n % 100 >= 11 && n % 100 <= 13) return "other";
+                        if (n % 10 === 1) return "one";
+                        if (n % 10 === 2) return "two";
+                        if (n % 10 === 3) return "few";
+                        return "other";
+                    }
+                    return n === 1 ? "one" : "other";
+                }
+                resolvedOptions() {
+                    return Object.assign({ locale: this._locale }, this._opts);
+                }
+            }
+            PluralRules.supportedLocalesOf = function(locales) {
+                return Array.isArray(locales) ? locales.slice() : [locales];
+            };
+            Intl.PluralRules = PluralRules;
+
+            // Intl.ListFormat — and-conjunction English stub.
+            class ListFormat {
+                constructor(locales, options) {
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options || {};
+                }
+                format(list) {
+                    const arr = Array.from(list).map(String);
+                    if (arr.length === 0) return "";
+                    if (arr.length === 1) return arr[0];
+                    if (arr.length === 2) return arr.join(this._opts.type === "disjunction" ? " or " : " and ");
+                    const conj = this._opts.type === "disjunction" ? "or" : "and";
+                    return arr.slice(0, -1).join(", ") + ", " + conj + " " + arr[arr.length - 1];
+                }
+            }
+            Intl.ListFormat = ListFormat;
+
+            // Intl.RelativeTimeFormat — English stub.
+            class RelativeTimeFormat {
+                constructor(locales, options) {
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options || { numeric: "always" };
+                }
+                format(value, unit) {
+                    const v = Number(value);
+                    const u = String(unit).replace(/s$/, "");
+                    if (this._opts.numeric === "auto") {
+                        if (v === 0 && u === "day") return "today";
+                        if (v === 1 && u === "day") return "tomorrow";
+                        if (v === -1 && u === "day") return "yesterday";
+                    }
+                    if (v >= 0) return "in " + v + " " + u + (Math.abs(v) === 1 ? "" : "s");
+                    return Math.abs(v) + " " + u + (Math.abs(v) === 1 ? "" : "s") + " ago";
+                }
+            }
+            Intl.RelativeTimeFormat = RelativeTimeFormat;
+
+            Intl.getCanonicalLocales = function(locales) {
+                if (!locales) return [];
+                if (typeof locales === "string") return [locales];
+                return Array.from(locales);
+            };
+
+            // Per spec, Number#toLocaleString(locales, options) is
+            // equivalent to new Intl.NumberFormat(locales, options).format(this).
+            // pretty-bytes (E.35), formatter libs, dashboards depend on
+            // this to honor maximumFractionDigits / useGrouping.
+            const _origNumberToLocaleString = Number.prototype.toLocaleString;
+            Number.prototype.toLocaleString = function(locales, options) {
+                if (options || (locales !== undefined && locales !== null)) {
+                    return new NumberFormat(locales, options).format(this.valueOf());
+                }
+                return _origNumberToLocaleString.call(this);
+            };
+
+            // Date#toLocaleString / toLocaleDateString / toLocaleTimeString.
+            const _origDateToLocaleString = Date.prototype.toLocaleString;
+            Date.prototype.toLocaleString = function(locales, options) {
+                if (options || (locales !== undefined && locales !== null)) {
+                    return new DateTimeFormat(locales, options).format(this);
+                }
+                return _origDateToLocaleString.call(this);
+            };
+
+            // String#localeCompare composes on Collator.
+            const _origStringLocaleCompare = String.prototype.localeCompare;
+            String.prototype.localeCompare = function(other, locales, options) {
+                if (options) return new Collator(locales, options).compare(this.valueOf(), other);
+                return _origStringLocaleCompare.call(this, other, locales);
             };
         })();
     "#)?;

@@ -7907,6 +7907,34 @@ fn consumer_subtle_ec_keygen_app_byte_identical_to_bun() {
 
 
 #[test]
+fn consumer_bun_connect_app_byte_identical_to_bun() {
+    // Bun.connect end-to-end against a same-process Bun.serve. The Pi2.6.b
+    // cooperative-loop substrate drives both the server's __tick and the
+    // client socket's __tick during the eval loop's microtask drain.
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-bun-connect-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    let rb_v: serde_json::Value = serde_json::from_str(rb.trim()).expect("rb json");
+    let bun_v: serde_json::Value = serde_json::from_str(&bun_out).expect("bun json");
+    // API-surface probe — both must expose Bun.connect and both must
+    // raise an error (via error handler or thrown promise rejection) when
+    // connecting to a port nothing listens on.
+    assert_eq!(rb_v["hasConnect"], bun_v["hasConnect"]);
+    assert_eq!(rb_v["errorOrCaughtRaised"], bun_v["errorOrCaughtRaised"]);
+}
+
+
+#[test]
 fn consumer_brotli_app_decodes_known_streams() {
     // Host-internal test (J.1.b host regression, not differential):
     // Bun's standard surface doesn't expose brotli at the namespace

@@ -11630,6 +11630,96 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 return { parse, stringify };
             })();
 
+            // Bun.connect — async TCP client. Returns Promise<Socket>.
+            // Composes on TCP.connect + setNonblocking + tryRead +
+            // __keepAlive + the cooperative-loop pump (Pi2.6.b).
+            // Surface mirrors Bun's: { hostname, port, socket: { open,
+            // data, close, error, drain } } in, Socket with write/end/
+            // terminate/flush out.
+            Bun.connect = function connect(opts) {
+                const host = opts.hostname || opts.host || "127.0.0.1";
+                const port = opts.port || 0;
+                const handlers = opts.socket || {};
+                return new Promise((resolve, reject) => {
+                    let sid;
+                    try {
+                        sid = globalThis.TCP.connect(host + ":" + port);
+                        globalThis.TCP.setNonblocking(sid, true);
+                    } catch (e) {
+                        if (typeof handlers.error === "function") {
+                            try { handlers.error(null, e); } catch (_) {}
+                        }
+                        reject(e);
+                        return;
+                    }
+                    const socket = {
+                        _sid: sid,
+                        _closed: false,
+                        data: opts.data,
+                        readyState: "open",
+                        remoteAddress: host,
+                        write(chunk) {
+                            if (this._closed) return 0;
+                            const bytes = (typeof chunk === "string")
+                                ? new TextEncoder().encode(chunk)
+                                : (chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+                            globalThis.TCP.writeAll(this._sid, bytes);
+                            return bytes.length;
+                        },
+                        end(chunk) {
+                            if (chunk !== undefined) this.write(chunk);
+                            this._endRequested = true;
+                            return this;
+                        },
+                        terminate() {
+                            if (this._closed) return;
+                            this._closed = true;
+                            this.readyState = "closed";
+                            try { globalThis.TCP.close(this._sid); } catch (_) {}
+                            if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
+                            if (typeof handlers.close === "function") {
+                                try { handlers.close(this); } catch (_) {}
+                            }
+                        },
+                        flush() { /* writeAll already flushes; no-op */ },
+                        ref() {},
+                        unref() {},
+                        __tick() {
+                            if (this._closed) return false;
+                            const chunk = globalThis.TCP.tryRead(this._sid, 65536);
+                            if (chunk === null) return false;
+                            if (chunk.length === 0) {
+                                this.terminate();
+                                return true;
+                            }
+                            if (typeof handlers.data === "function") {
+                                try {
+                                    handlers.data(this, typeof Buffer !== "undefined"
+                                        ? Buffer.from(chunk) : new Uint8Array(chunk));
+                                } catch (e) {
+                                    if (typeof handlers.error === "function") {
+                                        try { handlers.error(this, e); } catch (_) {}
+                                    }
+                                }
+                            }
+                            if (this._endRequested) this.terminate();
+                            return true;
+                        },
+                    };
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.add(socket);
+                    queueMicrotask(() => {
+                        if (typeof handlers.open === "function") {
+                            try { handlers.open(socket); } catch (e) {
+                                if (typeof handlers.error === "function") {
+                                    try { handlers.error(socket, e); } catch (_) {}
+                                }
+                            }
+                        }
+                        resolve(socket);
+                    });
+                });
+            };
+
             // Bun.escapeHTML — common micro-helper.
             Bun.escapeHTML = function escapeHTML(input) {
                 return String(input)

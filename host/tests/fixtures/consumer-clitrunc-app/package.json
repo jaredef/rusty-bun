@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "cli-truncate": "^6.0.0"
+  }
+}

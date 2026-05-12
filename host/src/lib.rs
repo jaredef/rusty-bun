@@ -9147,42 +9147,61 @@ fn install_intl_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 segment(str) {
                     str = String(str);
                     const gran = this._gran;
+                    // Precompute segment boundaries so the Segments object
+                    // can support both [Symbol.iterator] and .containing(i).
+                    const segs = [];
+                    if (gran === "grapheme") {
+                        let i = 0;
+                        while (i < str.length) {
+                            const code = str.codePointAt(i);
+                            const w = code > 0xFFFF ? 2 : 1;
+                            segs.push({ segment: str.substring(i, i + w), index: i, input: str });
+                            i += w;
+                        }
+                    } else if (gran === "word") {
+                        let i = 0;
+                        while (i < str.length) {
+                            const start = i;
+                            if (/\s/.test(str[i])) {
+                                while (i < str.length && /\s/.test(str[i])) i++;
+                            } else {
+                                while (i < str.length && !/\s/.test(str[i])) i++;
+                            }
+                            const segment = str.substring(start, i);
+                            segs.push({ segment, index: start, input: str, isWordLike: /\w/.test(segment) });
+                        }
+                    } else {
+                        // sentence
+                        let i = 0;
+                        while (i < str.length) {
+                            const start = i;
+                            while (i < str.length && !/[.!?]/.test(str[i])) i++;
+                            if (i < str.length) i++;
+                            while (i < str.length && /\s/.test(str[i])) i++;
+                            segs.push({ segment: str.substring(start, i), index: start, input: str });
+                        }
+                    }
                     return {
                         [Symbol.iterator]() {
-                            let idx = 0;
+                            let k = 0;
                             return {
                                 next() {
-                                    if (idx >= str.length) return { done: true };
-                                    if (gran === "grapheme") {
-                                        // Step by code point (handle surrogate pairs).
-                                        const code = str.codePointAt(idx);
-                                        const w = code > 0xFFFF ? 2 : 1;
-                                        const segment = str.substring(idx, idx + w);
-                                        const value = { segment, index: idx, input: str };
-                                        idx += w;
-                                        return { value, done: false };
-                                    }
-                                    if (gran === "word") {
-                                        // Greedy non-whitespace then a whitespace run.
-                                        const start = idx;
-                                        if (/\s/.test(str[idx])) {
-                                            while (idx < str.length && /\s/.test(str[idx])) idx++;
-                                        } else {
-                                            while (idx < str.length && !/\s/.test(str[idx])) idx++;
-                                        }
-                                        const segment = str.substring(start, idx);
-                                        const isWordLike = /\w/.test(segment);
-                                        return { value: { segment, index: start, input: str, isWordLike }, done: false };
-                                    }
-                                    // sentence
-                                    const start = idx;
-                                    while (idx < str.length && !/[.!?]/.test(str[idx])) idx++;
-                                    if (idx < str.length) idx++;
-                                    while (idx < str.length && /\s/.test(str[idx])) idx++;
-                                    const segment = str.substring(start, idx);
-                                    return { value: { segment, index: start, input: str }, done: false };
+                                    if (k >= segs.length) return { done: true };
+                                    return { value: segs[k++], done: false };
                                 },
                             };
+                        },
+                        // Intl.Segments.containing(codeUnitIndex) — returns
+                        // the segment containing the code unit, or undefined.
+                        // slice-ansi (and others) use this for cluster-aware
+                        // truncation.
+                        containing(index) {
+                            index = Number(index) || 0;
+                            if (index < 0 || index >= str.length) return undefined;
+                            for (const s of segs) {
+                                if (s.index <= index && index < s.index + s.segment.length) return s;
+                            }
+                            return undefined;
                         },
                     };
                 }

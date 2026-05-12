@@ -670,8 +670,10 @@ fn rewrite_destructure_exports(source: &str) -> String {
                 if c > o {
                     let after = &line[c + 1..];
                     if let Some(rest) = after.trim_start().strip_prefix('=') {
-                        if let Some(name_part) = rest.trim().strip_suffix(';') {
-                            let name = name_part.trim();
+                        // Semicolon is optional (ASI).
+                        let name_part = rest.trim().trim_end_matches(';').trim();
+                        {
+                            let name = name_part;
                             let valid_name = !name.is_empty()
                                 && name.chars().enumerate().all(|(k, ch)| {
                                     if k == 0 { ch.is_alphabetic() || ch == '_' || ch == '$' }
@@ -4123,10 +4125,28 @@ const BUFFER_CLASS_JS: &str = r#"
     // copy-with-for-in patterns (safer-buffer iterates `for (key in Buffer)`
     // to clone the static surface) pick them up. ES class statics are
     // non-enumerable by default.
+    //
+    // ALSO: replace static-method bindings with regular functions, because
+    // some libraries do `new Buffer.allocUnsafeSlow(size)` (cbor-x) — a
+    // class static method is not constructable, but a plain function is.
+    // Plain functions retain the same call semantics.
     for (const name of Object.getOwnPropertyNames(Buffer)) {
         if (name === "length" || name === "name" || name === "prototype") continue;
         const desc = Object.getOwnPropertyDescriptor(Buffer, name);
-        if (desc) Object.defineProperty(Buffer, name, { ...desc, enumerable: true });
+        if (!desc) continue;
+        if (typeof desc.value === "function") {
+            const fn = desc.value;
+            // Rebind as a plain function. ES classes mark static methods as
+            // non-constructable; copying the body into a regular function
+            // restores the legacy Buffer-as-function call semantics.
+            const wrap = function (...args) { return fn.apply(Buffer, args); };
+            Object.defineProperty(wrap, "name", { value: name });
+            Object.defineProperty(Buffer, name, {
+                value: wrap, writable: true, enumerable: true, configurable: true,
+            });
+        } else {
+            Object.defineProperty(Buffer, name, { ...desc, enumerable: true });
+        }
     }
 
     // Buffer can be called without `new` in legacy Node code

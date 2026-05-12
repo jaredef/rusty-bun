@@ -1,0 +1,34 @@
+import { encode, decode, Encoder, Decoder } from "cbor-x";
+
+const cases = [
+  null,
+  true,
+  false,
+  0,
+  -1,
+  255,
+  65535,
+  -2147483648,
+  3.14159,
+  "hello",
+  "café",
+  [1, 2, 3],
+  { a: 1, b: "two", c: [true, false] },
+  { nested: { deep: { value: 42 } } },
+];
+
+const results = cases.map((c) => {
+  const buf = encode(c);
+  const round = decode(buf);
+  return {
+    bytes: Array.from(buf),
+    round,
+    match: JSON.stringify(round) === JSON.stringify(c),
+  };
+});
+
+const enc = new Encoder();
+const dec = new Decoder();
+const cls = dec.decode(enc.encode({ x: 1, y: [1, 2] }));
+
+process.stdout.write(JSON.stringify({ results, cls }) + "\n");

@@ -394,7 +394,10 @@ fn is_node_builtin(name: &str) -> bool {
         "node:test" | "test" |
         "node:worker_threads" | "worker_threads" |
         "node:http2" | "http2" |
-        "node:vm" | "vm"
+        "node:vm" | "vm" |
+        "node:string_decoder" | "string_decoder" |
+        "node:readline" | "readline" |
+        "node:readline/promises" | "readline/promises"
     )
 }
 
@@ -405,10 +408,15 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
     let (global_var, named_exports): (&str, &[&str]) = match name {
         "node:fs" | "fs" => ("fs", &["readFileSync", "readFileSyncUtf8", "readFileSyncBytes",
             "writeFileSync", "existsSync", "isFileSync", "isDirectorySync",
-            "unlinkSync", "mkdirSyncRecursive", "rmdirSyncRecursive"]),
+            "unlinkSync", "mkdirSyncRecursive", "rmdirSyncRecursive",
+            "statSync", "lstatSync", "readdirSync", "realpathSync",
+            "readlinkSync", "promises",
+            "stat", "lstat", "readdir", "readlink", "realpath", "mkdir",
+            "rm", "unlink", "access", "readFile", "writeFile",
+            "Dirent", "Stats"]),
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
             "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
-            "sep", "delimiter", "posix"]),
+            "sep", "delimiter", "posix", "win32"]),
         "node:http" | "http" => ("nodeHttp", &["createServer", "request",
             "IncomingMessage", "ServerResponse", "ClientRequest", "Server"]),
         // webcrypto is the Web Crypto API namespace (nanoid + many libs
@@ -483,7 +491,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["Console", "log", "warn", "error", "info", "debug"]),
         "node:fs/promises" | "fs/promises" => ("nodeFsPromises",
             &["readFile", "writeFile", "mkdir", "rm", "stat", "lstat",
-              "access", "readdir", "unlink"]),
+              "access", "readdir", "unlink", "readlink", "realpath",
+              "rename", "rmdir", "chmod", "chown", "utimes", "appendFile",
+              "copyFile", "open"]),
         "node:stream/web" | "stream/web" => ("nodeStreamWeb",
             &["ReadableStream", "WritableStream", "TransformStream",
               "ByteLengthQueuingStrategy", "CountQueuingStrategy",
@@ -500,6 +510,14 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:vm" | "vm" => ("nodeVm",
             &["Script", "createContext", "runInNewContext",
               "runInThisContext", "compileFunction", "isContext"]),
+        "node:string_decoder" | "string_decoder" =>
+            ("nodeStringDecoder", &["StringDecoder"]),
+        "node:readline" | "readline" => ("nodeReadline",
+            &["createInterface", "Interface", "emitKeypressEvents",
+              "clearLine", "clearScreenDown", "cursorTo", "moveCursor"]),
+        "node:readline/promises" | "readline/promises" =>
+            ("nodeReadlinePromises",
+             &["createInterface", "Interface", "Readline"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -661,9 +679,39 @@ fn rewrite_destructure_exports(source: &str) -> String {
 }
 
 fn strip_reserved_class_field_decls(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    for line in source.split_inclusive('\n') {
-        // Strip the trailing newline for the match, keep it for emit.
+    // Handle both single-line-class-body form (`    set;`) and inline
+    // minified form. Rename `get`/`set`/`delete` field declarations to
+    // `_get`/`_set`/`_delete` so QuickJS doesn't reject them as
+    // reserved-name fields.
+    //
+    // CRITICAL: only match patterns that can ONLY be class-field
+    // declarations — `{set;` `;set;` followed immediately by another
+    // identifier-or-`;`-or-`}`. Bare-statement matches like ` set;`
+    // would corrupt identifier references (e.g. `let f = set;`).
+    //
+    // The class-body context is identified by the `;` or `{` directly
+    // preceding the keyword AND the `;` directly following the
+    // keyword. We further require the FOLLOWING character to be an
+    // identifier-start, `}`, or another field's identifier — which is
+    // either `;`-then-identifier or end of class body.
+    //
+    // For the line-based form (`\nset;` after indentation), the
+    // following byte must also be a class-context byte.
+    let mut s = source.to_string();
+    // Inline minified form: keyword surrounded by `;`/`{` (left) and
+    // identifier-start/`}`/`;` (right). Use a single linear scan.
+    let kws: &[&str] = &["set", "get", "delete"];
+    for kw in kws {
+        let needle = format!(";{};", kw);
+        let replacement = format!(";_{};", kw);
+        s = s.replace(&needle, &replacement);
+        let needle = format!("{{{};", kw);
+        let replacement = format!("{{_{};", kw);
+        s = s.replace(&needle, &replacement);
+    }
+    // Line-form: only when the entire trimmed line is `set;` etc.
+    let mut out = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
         let (body, nl) = match line.strip_suffix('\n') {
             Some(b) => (b, "\n"),
             None => (line, ""),
@@ -676,15 +724,9 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
         if (rest == "get;" || rest == "set;" || rest == "delete;")
             && !indent_end.is_empty()
         {
-            let renamed = match rest {
-                "get;" => "_get;",
-                "set;" => "_set;",
-                "delete;" => "_delete;",
-                _ => unreachable!(),
-            };
             out.push_str(indent_end);
-            out.push_str(renamed);
-            // Preserve original trailing whitespace + newline.
+            out.push('_');
+            out.push_str(rest);
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
         } else {
@@ -1610,6 +1652,13 @@ fn wire_path<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()
             };
             // path.posix / path.win32 aliases — most consumers use path.posix.
             globalThis.path.posix = globalThis.path;
+            // path.win32 — provide a separate object with backslash sep
+            // for libs that branch on platform. Reuse posix functions
+            // for the simple methods; sep + delimiter differ.
+            globalThis.path.win32 = Object.assign({}, globalThis.path, {
+                sep: "\\",
+                delimiter: ";",
+            });
         })();
     "#)?;
     Ok(())
@@ -4216,6 +4265,26 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             std::path::Path::new(&path).is_dir()
         })?,
     )?;
+    // listDirectorySync — return entry names in a directory. Surface
+    // glob/path-scurry's readdirSync depends on. Errors map to JS.
+    fs.set(
+        "listDirectorySync",
+        Function::new(ctx.clone(), |path: String| -> JsResult<Vec<String>> {
+            std::fs::read_dir(&path)
+                .map_err(|e| rquickjs::Error::new_from_js_message(
+                    "listDirectorySync", "()", format!("{}", e)))
+                .map(|iter| iter.filter_map(|e| e.ok().and_then(|d|
+                    d.file_name().into_string().ok()
+                )).collect())
+        })?,
+    )?;
+    // fileSizeSync — for stat shape.
+    fs.set(
+        "fileSizeSync",
+        Function::new(ctx.clone(), |path: String| -> i64 {
+            std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0)
+        })?,
+    )?;
     fs.set(
         "unlinkSync",
         Function::new(ctx.clone(), |path: String| -> JsResult<()> {
@@ -4262,6 +4331,146 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
                 }
                 throw new Error("readFileSync: unsupported encoding " + encoding);
             };
+
+            // S9 surface widening (E.20 glob): stat / lstat / readdir
+            // sync variants. These compose on the existing
+            // isFileSync / isDirectorySync / existsSync surface, with
+            // best-effort stat shape mimicking Node's Stats object.
+            function makeStats(path) {
+                const isFile = orig.isFileSync && orig.isFileSync(path);
+                const isDir = orig.isDirectorySync && orig.isDirectorySync(path);
+                return {
+                    isFile: () => isFile,
+                    isDirectory: () => isDir,
+                    isSymbolicLink: () => false,
+                    isBlockDevice: () => false,
+                    isCharacterDevice: () => false,
+                    isFIFO: () => false,
+                    isSocket: () => false,
+                    size: isFile && orig.fileSizeSync ? orig.fileSizeSync(path) : 0,
+                    mode: 0o644,
+                    mtime: new Date(0),
+                    ctime: new Date(0),
+                    atime: new Date(0),
+                    birthtime: new Date(0),
+                    mtimeMs: 0, ctimeMs: 0, atimeMs: 0, birthtimeMs: 0,
+                    dev: 0, ino: 0, nlink: 1, uid: 0, gid: 0, rdev: 0, blksize: 4096, blocks: 0,
+                };
+            }
+            orig.statSync = function (path, _opts) {
+                if (!orig.existsSync(path)) {
+                    const e = new Error("ENOENT: no such file or directory, stat '" + path + "'");
+                    e.code = "ENOENT";
+                    throw e;
+                }
+                return makeStats(path);
+            };
+            orig.lstatSync = orig.statSync;
+            // readdirSync: depend on listDirectorySync if exposed by the
+            // Rust binding; otherwise throw with a clear message.
+            orig.readdirSync = function (path, opts) {
+                if (orig.listDirectorySync) {
+                    const names = orig.listDirectorySync(path);
+                    if (opts && opts.withFileTypes) {
+                        return names.map(name => ({
+                            name,
+                            isFile: () => orig.isFileSync(path + "/" + name),
+                            isDirectory: () => orig.isDirectorySync(path + "/" + name),
+                            isSymbolicLink: () => false,
+                        }));
+                    }
+                    return names;
+                }
+                throw new Error("fs.readdirSync: not yet implemented (no Rust binding)");
+            };
+            orig.realpathSync = function (path) { return path; };
+            orig.realpathSync.native = orig.realpathSync;
+            orig.readlinkSync = function (path) {
+                throw new Error("fs.readlinkSync: not supported");
+            };
+            // fs.promises namespace — proxy through to Promise-wrapped sync.
+            orig.promises = orig.promises || {
+                readFile: async (p, opts) => orig.readFileSync(p, opts),
+                writeFile: async (p, data, opts) => orig.writeFileSync(p, data, opts),
+                stat: async p => orig.statSync(p),
+                lstat: async p => orig.lstatSync(p),
+                readdir: async (p, opts) => orig.readdirSync(p, opts),
+                mkdir: async (p, opts) => orig.mkdirSyncRecursive ? orig.mkdirSyncRecursive(p) : null,
+                rm: async (p, opts) => orig.unlinkSync ? orig.unlinkSync(p) : null,
+                unlink: async p => orig.unlinkSync(p),
+                access: async p => { if (!orig.existsSync(p)) throw new Error("ENOENT: " + p); },
+                realpath: async p => p,
+                readlink: async () => { throw new Error("readlink not supported"); },
+            };
+
+            // Async callback variants. Node's fs.X(path, cb) shape.
+            // Promise-style wrappers compose via util.promisify.
+            const cbify = (syncFn) => function (...args) {
+                const cb = args.pop();
+                try {
+                    const r = syncFn.apply(orig, args);
+                    queueMicrotask(() => cb(null, r));
+                } catch (e) {
+                    queueMicrotask(() => cb(e));
+                }
+            };
+            orig.stat = cbify(orig.statSync);
+            orig.lstat = cbify(orig.lstatSync);
+            orig.readdir = cbify(orig.readdirSync);
+            orig.readlink = function (p, cb) {
+                queueMicrotask(() => cb(new Error("readlink not supported")));
+            };
+            orig.realpath = cbify(orig.realpathSync);
+            orig.mkdir = function (p, opts, cb) {
+                if (typeof opts === "function") { cb = opts; opts = undefined; }
+                try {
+                    if (orig.mkdirSyncRecursive) orig.mkdirSyncRecursive(p);
+                    queueMicrotask(() => cb && cb(null));
+                } catch (e) { queueMicrotask(() => cb && cb(e)); }
+            };
+            orig.rm = function (p, opts, cb) {
+                if (typeof opts === "function") { cb = opts; opts = undefined; }
+                try {
+                    if (orig.unlinkSync) orig.unlinkSync(p);
+                    queueMicrotask(() => cb && cb(null));
+                } catch (e) { queueMicrotask(() => cb && cb(e)); }
+            };
+            orig.unlink = cbify(orig.unlinkSync || (() => null));
+            orig.access = function (p, modeOrCb, maybeCb) {
+                const cb = typeof modeOrCb === "function" ? modeOrCb : maybeCb;
+                queueMicrotask(() => {
+                    if (orig.existsSync(p)) cb(null);
+                    else cb(Object.assign(new Error("ENOENT: " + p), { code: "ENOENT" }));
+                });
+            };
+            orig.readFile = function (p, optsOrCb, maybeCb) {
+                const cb = typeof optsOrCb === "function" ? optsOrCb : maybeCb;
+                const opts = typeof optsOrCb === "function" ? undefined : optsOrCb;
+                try { const r = orig.readFileSync(p, opts); queueMicrotask(() => cb(null, r)); }
+                catch (e) { queueMicrotask(() => cb(e)); }
+            };
+            orig.writeFile = function (p, data, optsOrCb, maybeCb) {
+                const cb = typeof optsOrCb === "function" ? optsOrCb : maybeCb;
+                const opts = typeof optsOrCb === "function" ? undefined : optsOrCb;
+                try { orig.writeFileSync(p, data, opts); queueMicrotask(() => cb(null)); }
+                catch (e) { queueMicrotask(() => cb(e)); }
+            };
+
+            // Dirent and Stats classes for libs that use `instanceof`.
+            orig.Dirent = class Dirent {
+                constructor(name, type) {
+                    this.name = name;
+                    this._type = type;
+                }
+                isFile() { return this._type === "file"; }
+                isDirectory() { return this._type === "dir"; }
+                isSymbolicLink() { return this._type === "symlink"; }
+                isBlockDevice() { return false; }
+                isCharacterDevice() { return false; }
+                isFIFO() { return false; }
+                isSocket() { return false; }
+            };
+            orig.Stats = class Stats {};
         })();
     "#)?;
     Ok(())
@@ -7014,6 +7223,12 @@ const COMMONJS_LOADER_JS: &str = r#"
         "http2": () => globalThis.nodeHttp2,
         "node:vm": () => globalThis.nodeVm,
         "vm": () => globalThis.nodeVm,
+        "node:string_decoder": () => globalThis.nodeStringDecoder,
+        "string_decoder": () => globalThis.nodeStringDecoder,
+        "node:readline": () => globalThis.nodeReadline,
+        "readline": () => globalThis.nodeReadline,
+        "node:readline/promises": () => globalThis.nodeReadlinePromises,
+        "readline/promises": () => globalThis.nodeReadlinePromises,
     };
 
     function loadModule(absPath) {
@@ -9393,12 +9608,33 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 access: async (p) => {
                     if (!fs.existsSync(p)) throw new Error("ENOENT: " + p);
                 },
-                readdir: async (p) => {
+                readdir: async (p, opts) => {
+                    if (fs.readdirSync) return fs.readdirSync(p, opts);
                     throw new Error("fs.readdir not yet implemented");
                 },
                 unlink: async (p) => {
                     if (fs.unlinkSync) return fs.unlinkSync(p);
                     throw new Error("fs.unlink not supported");
+                },
+                readlink: async (_p) => {
+                    throw new Error("fs.readlink not supported");
+                },
+                realpath: async (p) => p,
+                rename: async (_a, _b) => { throw new Error("fs.rename not supported"); },
+                rmdir: async (p) => { if (fs.rmdirSyncRecursive) return fs.rmdirSyncRecursive(p); },
+                chmod: async () => undefined,
+                chown: async () => undefined,
+                utimes: async () => undefined,
+                appendFile: async (p, data, opts) => {
+                    const prior = fs.existsSync(p) ? fs.readFileSync(p, opts) : "";
+                    return fs.writeFileSync(p, prior + data, opts);
+                },
+                copyFile: async (a, b) => {
+                    const bytes = fs.readFileSync(a);
+                    return fs.writeFileSync(b, bytes);
+                },
+                open: async (_p, _flags) => {
+                    throw new Error("fs.open not supported (no FileHandle yet)");
                 },
             };
 
@@ -9529,6 +9765,55 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     return new Function(...(params || []), code);
                 },
                 isContext(_v) { return true; },
+            };
+
+            // node:string_decoder — Bun's runtime composes streams that
+            // use StringDecoder for chunk-boundary-aware utf8 decoding.
+            // glob's minified bundle pulls it through node:stream's
+            // Readable. Our impl uses TextDecoder with stream: true,
+            // which honors multi-byte UTF-8 boundaries the same way.
+            class StringDecoder {
+                constructor(encoding) {
+                    this._enc = (encoding || "utf8").toLowerCase().replace("-", "");
+                    if (this._enc === "utf8" || this._enc === "utf-8") this._enc = "utf8";
+                    this._dec = new TextDecoder(this._enc === "latin1" || this._enc === "binary"
+                        ? "latin1" : "utf-8", { fatal: false });
+                }
+                write(buf) {
+                    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+                    return this._dec.decode(u8, { stream: true });
+                }
+                end(buf) {
+                    if (buf !== undefined) {
+                        const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+                        return this._dec.decode(u8);
+                    }
+                    return this._dec.decode();
+                }
+            }
+            globalThis.nodeStringDecoder = { StringDecoder };
+
+            // node:readline — REPL-style line reader. Most consumers
+            // import this only for completeness (some node tooling
+            // libraries import it for terminal detection); we stub a
+            // throwing createInterface and accept the divergence per
+            // the L5 cut.
+            const rlThrows = (n) => () => {
+                throw new Error("rusty-bun-host: node:readline." + n + " not supported");
+            };
+            globalThis.nodeReadline = {
+                createInterface: rlThrows("createInterface"),
+                Interface: class {},
+                emitKeypressEvents() {},
+                clearLine() { return true; },
+                clearScreenDown() { return true; },
+                cursorTo() { return true; },
+                moveCursor() { return true; },
+            };
+            globalThis.nodeReadlinePromises = {
+                createInterface: rlThrows("createInterface"),
+                Interface: class {},
+                Readline: class {},
             };
         })();
     "#)?;

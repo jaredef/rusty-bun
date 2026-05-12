@@ -1,0 +1,11 @@
+import { globSync, glob } from "glob";
+const lines = [];
+const cwd = "/home/jaredef/rusty-bun/host/tests/fixtures/consumer-glob-app";
+lines.push("1 " + JSON.stringify(globSync("*.json", { cwd }).sort()));
+lines.push("2 " + JSON.stringify(globSync("**/index.js", { cwd }).slice(0,2).sort()));
+const r3 = await glob("*.json", { cwd });
+lines.push("3 " + JSON.stringify(r3.sort()));
+lines.push("4 " + JSON.stringify(globSync("nomatch_*", { cwd })));
+lines.push("5 hasGlob=" + (typeof glob === "function"));
+lines.push("6 hasGlobSync=" + (typeof globSync === "function"));
+process.stdout.write(lines.join("\n") + "\n");

@@ -1306,6 +1306,30 @@ pub fn ec_scalar_mul(c: &Curve, k: &BigUInt, pt: &P256Point) -> P256Point {
     result
 }
 
+/// Generate an EC keypair on the given curve. Returns (d, x, y) where
+/// d is the private scalar (1 ≤ d ≤ n-1) and (x, y) = d·G is the public
+/// point. Uses /dev/urandom for the random scalar.
+pub fn ec_generate_keypair(c: &Curve) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let mut d_bytes = vec![0u8; c.coord_bytes];
+    loop {
+        let mut f = std::fs::File::open("/dev/urandom").expect("/dev/urandom");
+        use std::io::Read;
+        f.read_exact(&mut d_bytes).expect("read /dev/urandom");
+        let d = BigUInt::from_be_bytes(&d_bytes);
+        use std::cmp::Ordering;
+        if d.cmp(&BigUInt::from_be_bytes(&[0])) == Ordering::Greater
+            && d.cmp(&c.n) == Ordering::Less {
+            let q = ec_scalar_mul(c, &d, &c.g);
+            if let P256Point::Affine { x, y } = q {
+                let x_bytes = x.to_be_bytes(c.coord_bytes);
+                let y_bytes = y.to_be_bytes(c.coord_bytes);
+                return (d_bytes, x_bytes, y_bytes);
+            }
+            // Identity is astronomically improbable; loop.
+        }
+    }
+}
+
 fn on_curve(c: &Curve, x: &BigUInt, y: &BigUInt) -> bool {
     use std::cmp::Ordering;
     let three = BigUInt::from_be_bytes(&[3]);

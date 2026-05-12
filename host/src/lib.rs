@@ -2905,6 +2905,15 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 .map_err(|e| rquickjs::Error::new_from_js_message("ECDH", "derive", e))
         })?,
     )?;
+    subtle.set(
+        "ecGenerateKeypairBytes",
+        Function::new(ctx.clone(), |curve_name: String| -> JsResult<Vec<Vec<u8>>> {
+            let c = curve_by_name(&curve_name)
+                .map_err(|e| rquickjs::Error::new_from_js_message("EC", "generateKey", e))?;
+            let (d, x, y) = rusty_web_crypto::ec_generate_keypair(&c);
+            Ok(vec![d, x, y])
+        })?,
+    )?;
     // ECDH over P-256 (SEC 1 §3.3.1). x-coordinate of d·Q.
     subtle.set(
         "ecdhP256Bytes",
@@ -3865,17 +3874,25 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                         throw new Error(alg.name + ": curve pilot does not expose ecGenerateKeypairBytes");
                     }
                     const pair = subtle.ecGenerateKeypairBytes(curve);
-                    // pair: [d, x, y] arrays.
-                    const priv = await subtle.importKey("pkcs8-raw",
-                        { d: pair[0], x: pair[1], y: pair[2] },
-                        { name: alg.name, namedCurve: curve },
-                        !!extractable,
-                        keyUsages.filter(u => u === "sign" || u === "deriveKey" || u === "deriveBits"));
-                    const pub = await subtle.importKey("raw",
-                        { x: pair[1], y: pair[2] },
-                        { name: alg.name, namedCurve: curve },
-                        true,
-                        keyUsages.filter(u => u === "verify"));
+                    // pair: [d, x, y] byte arrays. Build CryptoKey objects
+                    // directly without round-tripping through jwk (faster + skips
+                    // base64url enc/dec).
+                    const specName = alg.name;
+                    const usages = Array.isArray(keyUsages) ? keyUsages.slice() : [];
+                    const priv = {
+                        type: "private", extractable: !!extractable,
+                        algorithm: { name: specName, namedCurve: curve },
+                        usages: usages.filter(u => u === "sign" || u === "deriveKey" || u === "deriveBits"),
+                        _x: pair[1], _y: pair[2], _d: pair[0],
+                        _algName: specName, _curve: curve,
+                    };
+                    const pub = {
+                        type: "public", extractable: true,
+                        algorithm: { name: specName, namedCurve: curve },
+                        usages: usages.filter(u => u === "verify"),
+                        _x: pair[1], _y: pair[2],
+                        _algName: specName, _curve: curve,
+                    };
                     return { privateKey: priv, publicKey: pub };
                 }
                 throw new Error("generateKey: unsupported algorithm " + alg.name);

@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "p-all": "^5.0.1",
+      },
+    },
+  },
+  "packages": {
+    "p-all": ["p-all@5.0.1", "", { "dependencies": { "p-map": "^6.0.0" } }, "sha512-LMT7WX9ZSaq3J1zjloApkIVmtz0ZdMFSIqbuiEa3txGYPLjUPOvgOPOx3nFjo+f37ZYL+1aY666I2SG7GVwLOA=="],
+
+    "p-map": ["p-map@6.0.0", "", {}, "sha512-T8BatKGY+k5rU+Q/GTYgrEf2r4xRMevAN5mtXc2aPc4rS1j3s+vWTaO2Wag94neXuCAUAs8cxBL9EeB5EA6diw=="],
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "mixme": "^2.0.2",
+      },
+    },
+  },
+  "packages": {
+    "mixme": ["mixme@2.0.2", "", {}, "sha512-3PG0g30EOLfdzmJ7vxanq48bFnWg/1raOpel0lCz7S+nEBNTd+znyIw/nSszsmC2Dr/07bBt1kBXj58oOtHDjw=="],
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "normal-distribution": "^1.1.1",
+      },
+    },
+  },
+  "packages": {
+    "normal-distribution": ["normal-distribution@1.1.1", "", {}, "sha512-lyz7LXBhjiEdAw234zTz05EohshNCORpC0duBQeaKzZIeTE6oDfpcBocEXbZTFv3GkoiMPz9mhgUuv5mMc64uA=="],
+  }
+}

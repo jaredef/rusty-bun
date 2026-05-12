@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "string-natural-compare": "^3.0.1"
+  }
+}

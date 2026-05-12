@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "md5-hex": "^5.0.0",
+      },
+    },
+  },
+  "packages": {
+    "blueimp-md5": ["blueimp-md5@2.19.0", "", {}, "sha512-DRQrD6gJyy8FbiE4s+bDoXS9hiW3Vbx5uCdwvcCf3zLHL+Iv7LtGHLpr+GZV8rHG8tK766FGYBwRbu8pELTt+w=="],
+
+    "md5-hex": ["md5-hex@5.0.0", "", { "dependencies": { "blueimp-md5": "^2.19.0" } }, "sha512-18TKd0nxBzMLflLBSCM/I9n50izl7NQGuujgbKjVUs/9acY+a5uzpDUVd4wV130vaK67TzDnPin2gze88u+e4Q=="],
+  }
+}

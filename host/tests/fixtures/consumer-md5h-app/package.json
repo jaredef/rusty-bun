@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "md5-hex": "^5.0.0"
+  }
+}

@@ -103,7 +103,7 @@ fn try_directory_with_index(abs_dir: &std::path::Path) -> Option<std::path::Path
                 if let Some(exports) = parsed.get("exports") {
                     // exports may itself be a string (single export) or
                     // an object whose "." key is the root export.
-                    let conditions = ["bun", "import", "module", "default", "node"];
+                    let conditions = ["bun", "import", "module", "node", "default"];
                     let root = match exports {
                         serde_json::Value::String(_) => Some(exports.clone()),
                         serde_json::Value::Object(map) => map.get(".").cloned()
@@ -236,7 +236,7 @@ fn resolve_node_style(base: &str, specifier: &str) -> Option<std::path::PathBuf>
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                         if let Some(imports) = parsed.get("imports") {
                             if let Some(value) = imports.get(specifier) {
-                                let conditions = ["bun", "import", "module", "default", "node"];
+                                let conditions = ["bun", "import", "module", "node", "default"];
                                 if let Some(rel) = resolve_exports_value(value, &conditions) {
                                     let target = dir.join(rel.trim_start_matches("./"));
                                     if let Some(f) = try_extensions(&target) {
@@ -254,7 +254,7 @@ fn resolve_node_style(base: &str, specifier: &str) -> Option<std::path::PathBuf>
                                         let prefix = &k[..k.len() - 2];
                                         if specifier.starts_with(prefix) && specifier.len() > prefix.len() {
                                             let suffix = &specifier[prefix.len() + 1..];
-                                            let conditions = ["bun", "import", "module", "default", "node"];
+                                            let conditions = ["bun", "import", "module", "node", "default"];
                                             if let Some(rel) = resolve_exports_value(v, &conditions) {
                                                 let resolved = rel.replace("*", suffix);
                                                 let target = dir.join(resolved.trim_start_matches("./"));
@@ -9352,24 +9352,36 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     return (0, eval)(this.code);
                 }
                 runInNewContext(context, _opts) {
-                    if (context && typeof context === "object") {
-                        const keys = Object.keys(context);
-                        const vals = keys.map(k => context[k]);
-                        const fn = new Function(...keys, "return (" + this.code + ");");
-                        try {
-                            const r = fn(...vals);
-                            // Some scripts mutate context vars; reflect back.
-                            return r;
-                        } catch (e) {
-                            // Fall back to eval if Function() rewrite fails
-                            // (e.g., statements not expressions).
-                            try {
-                                const wrapped = new Function(...keys, this.code);
-                                return wrapped(...vals);
-                            } catch (e2) { throw e2; }
-                        }
+                    if (!context || typeof context !== "object") {
+                        return (0, eval)(this.code);
                     }
-                    return (0, eval)(this.code);
+                    // Wrap context in a Proxy whose `has` returns true
+                    // unconditionally — inside `with (proxy) { code }`,
+                    // every bare-name read AND write goes through the
+                    // proxy, including assignments to names not yet
+                    // present on the context (which would otherwise
+                    // create globals). This is the variable-binding
+                    // semantics of node:vm.Script.runInNewContext.
+                    // Real isolation + timeout watchdog are deferred
+                    // (the cut floor for S-vm is at L4 idiom semantics;
+                    // below-floor is the isolation boundary, an
+                    // accepted divergence).
+                    const proxy = new Proxy(context, {
+                        has() { return true; },
+                        get(target, key) {
+                            if (key in target) return target[key];
+                            return globalThis[key];
+                        },
+                        set(target, key, value) {
+                            target[key] = value;
+                            return true;
+                        },
+                    });
+                    const wrapped = new Function(
+                        "__ctx__",
+                        "with (__ctx__) { " + this.code + "\n}"
+                    );
+                    return wrapped(proxy);
                 }
                 runInContext(context, opts) { return this.runInNewContext(context, opts); }
             }

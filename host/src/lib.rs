@@ -818,6 +818,18 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
             out.push_str(rest);
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
+        } else if !indent_end.is_empty() && (
+            rest.starts_with("set =") || rest.starts_with("set=")
+            || rest.starts_with("get =") || rest.starts_with("get=")
+            || rest.starts_with("delete =") || rest.starts_with("delete=")
+        ) {
+            // Arrow-function or value-init class field: `  set = (k, v) => {...}`.
+            // hono context.js uses this for set/get/delete handlers.
+            out.push_str(indent_end);
+            out.push('_');
+            out.push_str(rest);
+            out.push_str(&body[indent_end.len() + rest.len()..]);
+            out.push_str(nl);
         } else {
             out.push_str(line);
         }

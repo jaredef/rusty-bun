@@ -1198,6 +1198,26 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
 
     global.set("process", process)?;
 
+    // process.nextTick — Node semantic: schedule fn as microtask.
+    // Equivalent to queueMicrotask(() => fn(...args)). Light-my-request,
+    // many CJS libs depend on this.
+    ctx.eval::<(), _>(r#"
+        globalThis.process.nextTick = function nextTick(fn) {
+            if (typeof fn !== "function") {
+                throw new TypeError("process.nextTick: fn must be a function");
+            }
+            const args = Array.prototype.slice.call(arguments, 1);
+            Promise.resolve().then(function() {
+                try { fn.apply(undefined, args); }
+                catch (e) {
+                    if (typeof console !== "undefined" && console.error) {
+                        console.error("uncaught in process.nextTick:", e);
+                    }
+                }
+            });
+        };
+    "#)?;
+
     // stdout / stderr with .write accumulating into JS-side buffers.
     // JS-side wiring keeps the implementation small and avoids holding
     // Rust state on JS objects (which would re-trigger E.4's GC issue).
@@ -6059,41 +6079,122 @@ const COMMONJS_LOADER_JS: &str = r#"
     // similar libs use this pattern.
     function fixRegexUEscapes(source) {
         // Fast skip: if source contains no `\-`, nothing to rewrite.
-        // Avoids scanning ~30KB regex literals like emoji-regex's
-        // single-line emoji table with a backtracking-prone regex.
         if (source.indexOf("\\-") < 0) return source;
-        // Match a regex literal followed by flags including 'u'. Body
-        // contains a char class with \-. Conservative pattern: require
-        // the regex to start after a non-identifier char and to be on
-        // one line.
-        // Pattern: /<body containing [...\-...]>/<flags-with-u>
-        return source.replace(
-            /\/((?:\\.|\[(?:\\.|[^\]\\])*\]|[^\/\\\n])+)\/([gimsuy]*u[gimsuy]*)/g,
-            function(match, body, flags) {
-                // Walk body, rewriting `\-` to `-` only inside char
-                // classes (between unescaped [ and ]).
-                let out = "";
-                let inClass = false;
-                for (let i = 0; i < body.length; i++) {
-                    const c = body[i];
-                    if (c === "\\" && i + 1 < body.length) {
-                        const next = body[i + 1];
-                        if (inClass && next === "-") {
-                            out += "\\u002D";
-                            i++;
+        // State-machine walk over source. A backtracking regex on the
+        // same task catastrophically blows up on 10KB+ inputs with many
+        // backslash sequences; the linear walk is bounded O(n).
+        // Tokens we skip safely as a single unit:
+        //   - // line comments
+        //   - /* block comments */
+        //   - "..." '...' `...` string templates (no template-expression
+        //     awareness — close on matching quote; sufficient for our
+        //     ASCII-only regex-literal rewriting goal).
+        // For each `/` in regex-start context, scan body until unescaped
+        // closing `/` outside char class, read flags, rewrite if /u/v.
+        let out = "";
+        let emit = 0;
+        let i = 0;
+        const n = source.length;
+        while (i < n) {
+            const c = source.charCodeAt(i);
+            // String literal
+            if (c === 0x22 /* " */ || c === 0x27 /* ' */ || c === 0x60 /* ` */) {
+                const q = c;
+                i++;
+                while (i < n) {
+                    const d = source.charCodeAt(i);
+                    if (d === 0x5C /* \ */ && i + 1 < n) { i += 2; continue; }
+                    i++;
+                    if (d === q) break;
+                }
+                continue;
+            }
+            // Line comment
+            if (c === 0x2F /* / */ && i + 1 < n && source.charCodeAt(i + 1) === 0x2F) {
+                while (i < n && source.charCodeAt(i) !== 0x0A) i++;
+                continue;
+            }
+            // Block comment
+            if (c === 0x2F && i + 1 < n && source.charCodeAt(i + 1) === 0x2A) {
+                i += 2;
+                while (i + 1 < n && !(source.charCodeAt(i) === 0x2A && source.charCodeAt(i + 1) === 0x2F)) i++;
+                if (i + 1 < n) i += 2;
+                continue;
+            }
+            // Possible regex literal
+            if (c === 0x2F) {
+                let j = i;
+                while (j > emit && (source.charCodeAt(j - 1) === 0x20 || source.charCodeAt(j - 1) === 0x09)) j--;
+                const prev = j === 0 ? 0x0A : source.charCodeAt(j - 1);
+                // regex-context preceding chars
+                const ok_prev =
+                    prev === 0x28 || prev === 0x2C || prev === 0x3D || prev === 0x3A ||
+                    prev === 0x5B || prev === 0x21 || prev === 0x26 || prev === 0x7C ||
+                    prev === 0x3F || prev === 0x7B || prev === 0x3B || prev === 0x2B ||
+                    prev === 0x2D || prev === 0x2A || prev === 0x25 || prev === 0x5E ||
+                    prev === 0x7E || prev === 0x3C || prev === 0x3E ||
+                    prev === 0x0A || prev === 0x0D || prev === 0x2F || prev === 0x5C;
+                if (ok_prev) {
+                    const bodyStart = i + 1;
+                    let k = bodyStart;
+                    let inCls = false;
+                    let okScan = false;
+                    while (k < n) {
+                        const b = source.charCodeAt(k);
+                        if (b === 0x5C && k + 1 < n) { k += 2; continue; }
+                        if (b === 0x0A) break;
+                        if (b === 0x5B) { inCls = true; k++; continue; }
+                        if (b === 0x5D) { inCls = false; k++; continue; }
+                        if (b === 0x2F && !inCls) { okScan = true; break; }
+                        k++;
+                    }
+                    if (okScan) {
+                        const bodyEnd = k;
+                        let f = bodyEnd + 1;
+                        const FLAGS = "gimsuyvd";
+                        while (f < n && FLAGS.indexOf(source[f]) >= 0) f++;
+                        const flags = source.substring(bodyEnd + 1, f);
+                        if (flags.indexOf("u") >= 0 || flags.indexOf("v") >= 0) {
+                            // Rewrite body.
+                            const body = source.substring(bodyStart, bodyEnd);
+                            let rew = "";
+                            let sl = 0;
+                            let inCls2 = false;
+                            let bi = 0;
+                            while (bi < body.length) {
+                                const bc = body.charCodeAt(bi);
+                                if (bc === 0x5C && bi + 1 < body.length) {
+                                    const nx = body.charCodeAt(bi + 1);
+                                    if (inCls2 && nx === 0x2D) {
+                                        rew += body.substring(sl, bi);
+                                        rew += "\\u002D";
+                                        bi += 2;
+                                        sl = bi;
+                                        continue;
+                                    }
+                                    bi += 2;
+                                    continue;
+                                }
+                                if (bc === 0x5B && !inCls2) inCls2 = true;
+                                else if (bc === 0x5D && inCls2) inCls2 = false;
+                                bi++;
+                            }
+                            rew += body.substring(sl);
+                            out += source.substring(emit, i) + "/" + rew + "/" + flags;
+                            emit = f;
+                            i = f;
                             continue;
                         }
-                        out += c + next;
-                        i++;
+                        // No /u/v — keep verbatim, advance past it.
+                        i = f;
                         continue;
                     }
-                    if (c === "[" && !inClass) inClass = true;
-                    else if (c === "]" && inClass) inClass = false;
-                    out += c;
                 }
-                return "/" + out + "/" + flags;
             }
-        );
+            i++;
+        }
+        out += source.substring(emit);
+        return out;
     }
 
     function readSourceUtf8(absPath) {
@@ -7877,8 +7978,14 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
             function domainToUnicode(d) { return String(d); }
 
             globalThis.nodeUrl = {
-                URL: globalThis.URL,
-                URLSearchParams: globalThis.URLSearchParams,
+                // URL / URLSearchParams via getters: globalThis.URL may
+                // not be installed yet at the time this initialization
+                // runs (rquickjs sets globals like URL after the
+                // host's eval-time install order). Lazy-bind so that
+                // `require('node:url').URL` resolves correctly at
+                // call time rather than at module-init time.
+                get URL() { return globalThis.URL; },
+                get URLSearchParams() { return globalThis.URLSearchParams; },
                 parse: urlParse,
                 format: urlFormat,
                 resolve: urlResolve,

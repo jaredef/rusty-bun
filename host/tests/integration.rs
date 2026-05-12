@@ -7611,7 +7611,8 @@ fn consumer_pwait_app_byte_identical_to_bun() {
 #[test]
 fn probe_asciitable() {
     use rusty_bun_host::eval_esm_module;
-    let p = std::path::Path::new("/home/jaredef/rusty-bun/host/tests/fixtures/consumer-asciitable-app/probe.mjs");
+    let p = std::path::Path::new("/home/jaredef/rusty-bun/host/tests/fixtures/consumer-asciitable-app/main.mjs");
     eprintln!("RESULT: {:?}", eval_esm_module(p.to_str().unwrap()));
 }
+
 

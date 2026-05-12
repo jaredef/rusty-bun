@@ -316,7 +316,19 @@ fn is_node_builtin(name: &str) -> bool {
         "node:child_process" | "child_process" |
         "node:net" | "net" |
         "node:tty" | "tty" |
-        "node:zlib" | "zlib"
+        "node:zlib" | "zlib" |
+        "node:diagnostics_channel" | "diagnostics_channel" |
+        "node:https" | "https" |
+        "node:perf_hooks" | "perf_hooks" |
+        "node:async_hooks" | "async_hooks" |
+        "node:timers" | "timers" |
+        "node:timers/promises" | "timers/promises" |
+        "node:console" | "console" |
+        "node:fs/promises" | "fs/promises" |
+        "node:stream/web" | "stream/web" |
+        "node:test" | "test" |
+        "node:worker_threads" | "worker_threads" |
+        "node:http2" | "http2"
     )
 }
 
@@ -383,6 +395,42 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
               "deflateRawSync", "inflateRawSync",
               "createGzip", "createGunzip", "createDeflate", "createInflate",
               "constants"]),
+        "node:diagnostics_channel" | "diagnostics_channel" =>
+            ("nodeDiagnosticsChannel",
+             &["channel", "hasSubscribers", "subscribe", "unsubscribe",
+               "tracingChannel", "Channel", "TracingChannel"]),
+        "node:https" | "https" => ("nodeHttps",
+            &["createServer", "request", "get", "Agent", "globalAgent",
+              "Server"]),
+        "node:perf_hooks" | "perf_hooks" => ("nodePerfHooks",
+            &["performance", "PerformanceObserver", "monitorEventLoopDelay",
+              "constants"]),
+        "node:async_hooks" | "async_hooks" => ("nodeAsyncHooks",
+            &["AsyncLocalStorage", "AsyncResource", "createHook",
+              "executionAsyncId", "executionAsyncResource", "triggerAsyncId"]),
+        "node:timers" | "timers" => ("nodeTimers",
+            &["setTimeout", "setInterval", "setImmediate",
+              "clearTimeout", "clearInterval", "clearImmediate"]),
+        "node:timers/promises" | "timers/promises" => ("nodeTimersPromises",
+            &["setTimeout", "setInterval", "setImmediate", "scheduler"]),
+        "node:console" | "console" => ("nodeConsoleModule",
+            &["Console", "log", "warn", "error", "info", "debug"]),
+        "node:fs/promises" | "fs/promises" => ("nodeFsPromises",
+            &["readFile", "writeFile", "mkdir", "rm", "stat", "lstat",
+              "access", "readdir", "unlink"]),
+        "node:stream/web" | "stream/web" => ("nodeStreamWeb",
+            &["ReadableStream", "WritableStream", "TransformStream",
+              "ByteLengthQueuingStrategy", "CountQueuingStrategy",
+              "TextEncoderStream", "TextDecoderStream"]),
+        "node:test" | "test" => ("nodeTest",
+            &["test", "describe", "it", "before", "after",
+              "beforeEach", "afterEach", "mock"]),
+        "node:worker_threads" | "worker_threads" => ("nodeWorkerThreads",
+            &["Worker", "isMainThread", "parentPort", "workerData",
+              "threadId", "MessageChannel", "MessagePort"]),
+        "node:http2" | "http2" => ("nodeHttp2",
+            &["constants", "createServer", "createSecureServer",
+              "connect", "Http2ServerRequest", "Http2ServerResponse"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -836,6 +884,9 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_net_js(&ctx)?;
     install_node_tty_js(&ctx)?;
     install_node_zlib_js(&ctx)?;
+    install_node_diagnostics_channel_js(&ctx)?;
+    install_node_https_perf_async_hooks_js(&ctx)?;
+    install_node_extra_builtins_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -6023,6 +6074,30 @@ const COMMONJS_LOADER_JS: &str = r#"
         "tty": () => globalThis.nodeTty,
         "node:zlib": () => globalThis.nodeZlib,
         "zlib": () => globalThis.nodeZlib,
+        "node:diagnostics_channel": () => globalThis.nodeDiagnosticsChannel,
+        "diagnostics_channel": () => globalThis.nodeDiagnosticsChannel,
+        "node:https": () => globalThis.nodeHttps,
+        "https": () => globalThis.nodeHttps,
+        "node:perf_hooks": () => globalThis.nodePerfHooks,
+        "perf_hooks": () => globalThis.nodePerfHooks,
+        "node:async_hooks": () => globalThis.nodeAsyncHooks,
+        "async_hooks": () => globalThis.nodeAsyncHooks,
+        "node:timers": () => globalThis.nodeTimers,
+        "timers": () => globalThis.nodeTimers,
+        "node:timers/promises": () => globalThis.nodeTimersPromises,
+        "timers/promises": () => globalThis.nodeTimersPromises,
+        "node:console": () => globalThis.nodeConsoleModule,
+        "console": () => globalThis.nodeConsoleModule,
+        "node:fs/promises": () => globalThis.nodeFsPromises,
+        "fs/promises": () => globalThis.nodeFsPromises,
+        "node:stream/web": () => globalThis.nodeStreamWeb,
+        "stream/web": () => globalThis.nodeStreamWeb,
+        "node:test": () => globalThis.nodeTest,
+        "test": () => globalThis.nodeTest,
+        "node:worker_threads": () => globalThis.nodeWorkerThreads,
+        "worker_threads": () => globalThis.nodeWorkerThreads,
+        "node:http2": () => globalThis.nodeHttp2,
+        "http2": () => globalThis.nodeHttp2,
     };
 
     function loadModule(absPath) {
@@ -7634,6 +7709,401 @@ fn install_node_tty_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 isatty: (_fd) => false,
                 ReadStream,
                 WriteStream,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_diagnostics_channel_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // node:diagnostics_channel — observability hooks (Node 15+, fastify
+    // top-level-imports it). Real implementation publishes events to
+    // subscribers; no instrumentation lives in rusty-bun-host yet, so this
+    // is a faithful no-op surface: Channel objects with subscribe/publish
+    // exist, hasSubscribers always false, publish drops messages on the
+    // floor. Allows libraries that gate optional tracing on the API's
+    // presence to load and proceed.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            class Channel {
+                constructor(name) {
+                    this.name = name;
+                    this._subs = new Set();
+                }
+                get hasSubscribers() { return this._subs.size > 0; }
+                subscribe(fn) { this._subs.add(fn); }
+                unsubscribe(fn) {
+                    const had = this._subs.has(fn);
+                    this._subs.delete(fn);
+                    return had;
+                }
+                publish(message) {
+                    for (const fn of this._subs) {
+                        try { fn(message, this.name); }
+                        catch (e) {
+                            if (typeof console !== "undefined" && console.error) {
+                                console.error("diagnostics_channel publish:", e);
+                            }
+                        }
+                    }
+                }
+                bindStore(_store, _transform) { /* no-op */ }
+                unbindStore(_store) { return false; }
+                runStores(_data, fn, _thisArg, ...args) {
+                    return fn(...args);
+                }
+            }
+            class TracingChannel {
+                constructor(nameOrChannels) {
+                    if (typeof nameOrChannels === "string") {
+                        const n = nameOrChannels;
+                        this.start = new Channel("tracing:" + n + ":start");
+                        this.end = new Channel("tracing:" + n + ":end");
+                        this.asyncStart = new Channel("tracing:" + n + ":asyncStart");
+                        this.asyncEnd = new Channel("tracing:" + n + ":asyncEnd");
+                        this.error = new Channel("tracing:" + n + ":error");
+                    } else {
+                        Object.assign(this, nameOrChannels || {});
+                    }
+                }
+                get hasSubscribers() {
+                    return [this.start, this.end, this.asyncStart, this.asyncEnd, this.error]
+                        .some(c => c && c.hasSubscribers);
+                }
+                subscribe(handlers) {
+                    for (const k of Object.keys(handlers)) {
+                        if (this[k] && typeof this[k].subscribe === "function") {
+                            this[k].subscribe(handlers[k]);
+                        }
+                    }
+                }
+                unsubscribe(handlers) {
+                    for (const k of Object.keys(handlers)) {
+                        if (this[k] && typeof this[k].unsubscribe === "function") {
+                            this[k].unsubscribe(handlers[k]);
+                        }
+                    }
+                }
+                traceSync(fn, _ctx, _thisArg, ...args) {
+                    try { return fn(...args); } catch (e) { throw e; }
+                }
+                async tracePromise(fn, _ctx, _thisArg, ...args) {
+                    return await fn(...args);
+                }
+                traceCallback(fn, _pos, _ctx, _thisArg, ...args) {
+                    return fn(...args);
+                }
+            }
+            const channels = new Map();
+            function channel(name) {
+                let c = channels.get(name);
+                if (!c) { c = new Channel(name); channels.set(name, c); }
+                return c;
+            }
+            function hasSubscribers(name) {
+                const c = channels.get(name);
+                return !!(c && c.hasSubscribers);
+            }
+            function subscribe(name, fn) { channel(name).subscribe(fn); }
+            function unsubscribe(name, fn) { return channel(name).unsubscribe(fn); }
+            function tracingChannel(nameOrChannels) {
+                return new TracingChannel(nameOrChannels);
+            }
+            globalThis.nodeDiagnosticsChannel = {
+                channel, hasSubscribers, subscribe, unsubscribe,
+                tracingChannel,
+                Channel, TracingChannel,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_https_perf_async_hooks_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // E.17 chain: fastify and friends top-level-require these Node core
+    // modules even when their consumer never exercises the HTTPS/perf
+    // path. Stubs:
+    //   - node:https → re-export node:http (no TLS handling yet; plain
+    //     http server is what the consumer gets if they call .createServer
+    //     with cert options. Acceptable for read-only/observability paths.)
+    //   - node:perf_hooks → globalThis.performance + minimal observer stub.
+    //   - node:async_hooks → AsyncLocalStorage with same-stack run/getStore
+    //     semantics (no real async-id propagation, but the API shape sticks
+    //     for the synchronous-callback usage that 90% of libs hit).
+    ctx.eval::<(), _>(r#"
+        (function() {
+            // node:https → identical surface to node:http for the
+            // create/request/get triad. TLS opts are accepted and ignored.
+            globalThis.nodeHttps = {
+                createServer: function(...args) {
+                    // (opts, handler) or (handler) — drop opts if present.
+                    const handler = typeof args[0] === "function"
+                        ? args[0]
+                        : (typeof args[1] === "function" ? args[1] : undefined);
+                    return globalThis.nodeHttp.createServer(handler);
+                },
+                request: globalThis.nodeHttp.request,
+                get: globalThis.nodeHttp.request,
+                Server: globalThis.nodeHttp.Server,
+                Agent: function Agent() {},
+                globalAgent: {},
+            };
+
+            // node:perf_hooks → wrap globalThis.performance.
+            class PerformanceObserver {
+                constructor(_callback) {}
+                observe(_opts) {}
+                disconnect() {}
+                takeRecords() { return []; }
+                static get supportedEntryTypes() { return ["mark", "measure"]; }
+            }
+            globalThis.nodePerfHooks = {
+                performance: globalThis.performance,
+                PerformanceObserver,
+                monitorEventLoopDelay: () => ({
+                    enable() {}, disable() {}, reset() {},
+                    min: 0, max: 0, mean: 0, stddev: 0, percentile() { return 0; },
+                    percentiles: new Map(), exceeds: 0,
+                }),
+                constants: {
+                    NODE_PERFORMANCE_GC_MAJOR: 2,
+                    NODE_PERFORMANCE_GC_MINOR: 1,
+                    NODE_PERFORMANCE_GC_INCREMENTAL: 4,
+                    NODE_PERFORMANCE_GC_WEAKCB: 8,
+                },
+            };
+
+            // node:async_hooks — AsyncLocalStorage with same-stack semantics.
+            // run(store, fn, ...args) sets current store, calls fn, restores.
+            // getStore() returns the active store. Real async-id linking is
+            // omitted; works for the dominant pattern (sync handler chains +
+            // direct awaits where the JS engine preserves variable scope).
+            const _alsStack = [];
+            class AsyncLocalStorage {
+                constructor() { this._stack = []; }
+                run(store, fn, ...args) {
+                    this._stack.push(store);
+                    try { return fn(...args); }
+                    finally { this._stack.pop(); }
+                }
+                getStore() {
+                    return this._stack.length > 0
+                        ? this._stack[this._stack.length - 1]
+                        : undefined;
+                }
+                enterWith(store) { this._stack.push(store); }
+                disable() { this._stack.length = 0; }
+                exit(fn, ...args) {
+                    const saved = this._stack.slice();
+                    this._stack.length = 0;
+                    try { return fn(...args); }
+                    finally { this._stack.push(...saved); }
+                }
+            }
+            class AsyncResource {
+                constructor(_type, _opts) {}
+                runInAsyncScope(fn, thisArg, ...args) {
+                    return fn.apply(thisArg, args);
+                }
+                bind(fn, thisArg) {
+                    return fn.bind(thisArg);
+                }
+                emitDestroy() { return this; }
+                static bind(fn, _type, thisArg) {
+                    return fn.bind(thisArg);
+                }
+            }
+            globalThis.nodeAsyncHooks = {
+                AsyncLocalStorage,
+                AsyncResource,
+                createHook: () => ({
+                    enable() { return this; },
+                    disable() { return this; },
+                }),
+                executionAsyncId: () => 0,
+                executionAsyncResource: () => ({}),
+                triggerAsyncId: () => 0,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // E.17 chain continued: node:timers, node:timers/promises, node:console,
+    // node:fs/promises, node:stream/web, node:test, node:worker_threads.
+    // All compose on existing surfaces (globalThis setTimeout, console,
+    // ReadableStream, fs); test + worker_threads are throwing stubs since
+    // fastify and friends top-level-import them but only use them under
+    // opt-in flags.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            globalThis.nodeTimers = {
+                setTimeout: globalThis.setTimeout,
+                setInterval: globalThis.setInterval,
+                setImmediate: globalThis.setImmediate,
+                clearTimeout: globalThis.clearTimeout,
+                clearInterval: globalThis.clearInterval,
+                clearImmediate: globalThis.clearImmediate,
+            };
+
+            // node:timers/promises — Promise-based timer wrappers.
+            globalThis.nodeTimersPromises = {
+                setTimeout: function(ms, value, opts) {
+                    return new Promise((resolve, reject) => {
+                        const id = globalThis.setTimeout(() => resolve(value), ms);
+                        if (opts && opts.signal) {
+                            const sig = opts.signal;
+                            if (sig.aborted) {
+                                globalThis.clearTimeout(id);
+                                const e = new Error("The operation was aborted");
+                                e.name = "AbortError";
+                                reject(e);
+                                return;
+                            }
+                            sig.addEventListener("abort", () => {
+                                globalThis.clearTimeout(id);
+                                const e = new Error("The operation was aborted");
+                                e.name = "AbortError";
+                                reject(e);
+                            });
+                        }
+                    });
+                },
+                setImmediate: function(value) {
+                    return new Promise(resolve => globalThis.setImmediate(() => resolve(value)));
+                },
+                setInterval: async function*(ms, value) {
+                    while (true) {
+                        await new Promise(r => globalThis.setTimeout(r, ms));
+                        yield value;
+                    }
+                },
+                scheduler: { wait: (ms) => new Promise(r => globalThis.setTimeout(r, ms)) },
+            };
+
+            // node:console — Console class + bound methods.
+            globalThis.nodeConsoleModule = {
+                Console: function Console(stdout, stderr) {
+                    return globalThis.console;
+                },
+                log: globalThis.console.log.bind(globalThis.console),
+                warn: globalThis.console.warn.bind(globalThis.console),
+                error: globalThis.console.error.bind(globalThis.console),
+                info: globalThis.console.info
+                    ? globalThis.console.info.bind(globalThis.console)
+                    : globalThis.console.log.bind(globalThis.console),
+                debug: globalThis.console.debug
+                    ? globalThis.console.debug.bind(globalThis.console)
+                    : globalThis.console.log.bind(globalThis.console),
+            };
+
+            // node:fs/promises — re-export of nodeFs as Promise-returning fns
+            // where a sync counterpart exists. Real async I/O isn't pumped
+            // through the event loop; we resolve synchronously.
+            const fs = globalThis.fs || {};
+            globalThis.nodeFsPromises = {
+                readFile: async (p, opts) => {
+                    if (opts && (opts.encoding || typeof opts === "string")) {
+                        return fs.readFileSyncUtf8 ? fs.readFileSyncUtf8(p) : fs.readFileSync(p, "utf8");
+                    }
+                    return fs.readFileSyncBytes ? fs.readFileSyncBytes(p) : fs.readFileSync(p);
+                },
+                writeFile: async (p, data, opts) => {
+                    if (fs.writeFileSync) return fs.writeFileSync(p, data, opts);
+                    throw new Error("fs.writeFile not supported");
+                },
+                mkdir: async (p, opts) => {
+                    if (fs.mkdirSyncRecursive) return fs.mkdirSyncRecursive(p);
+                    throw new Error("fs.mkdir not supported");
+                },
+                rm: async (p, opts) => {
+                    if (fs.unlinkSync) return fs.unlinkSync(p);
+                    throw new Error("fs.rm not supported");
+                },
+                stat: async (p) => {
+                    if (fs.isFileSync && fs.isDirectorySync) {
+                        const isFile = fs.isFileSync(p);
+                        const isDir = fs.isDirectorySync(p);
+                        return { isFile: () => isFile, isDirectory: () => isDir };
+                    }
+                    throw new Error("fs.stat not supported");
+                },
+                lstat: async function(p) { return this.stat(p); },
+                access: async (p) => {
+                    if (!fs.existsSync(p)) throw new Error("ENOENT: " + p);
+                },
+                readdir: async (p) => {
+                    throw new Error("fs.readdir not yet implemented");
+                },
+                unlink: async (p) => {
+                    if (fs.unlinkSync) return fs.unlinkSync(p);
+                    throw new Error("fs.unlink not supported");
+                },
+            };
+
+            // node:stream/web → WHATWG streams (already on globalThis).
+            globalThis.nodeStreamWeb = {
+                ReadableStream: globalThis.ReadableStream,
+                WritableStream: globalThis.WritableStream,
+                TransformStream: globalThis.TransformStream,
+                ByteLengthQueuingStrategy: globalThis.ByteLengthQueuingStrategy,
+                CountQueuingStrategy: globalThis.CountQueuingStrategy,
+                TextEncoderStream: globalThis.TextEncoderStream,
+                TextDecoderStream: globalThis.TextDecoderStream,
+            };
+
+            // node:test → no-op stubs; the rusty-bun-host doesn't run Node's
+            // built-in test runner. Libraries import this only when their
+            // own test mode is active (a self-test guarded by a flag).
+            const noop = () => {};
+            const noopTest = (name, opts, fn) => { /* skip */ };
+            noopTest.skip = noop;
+            noopTest.todo = noop;
+            noopTest.only = noop;
+            globalThis.nodeTest = {
+                test: noopTest,
+                describe: noopTest,
+                it: noopTest,
+                before: noop, after: noop,
+                beforeEach: noop, afterEach: noop,
+                mock: { fn: () => () => {}, method: noop, getter: noop },
+            };
+
+            // node:worker_threads → minimal stub. We're always the "main
+            // thread"; calling Worker throws.
+            class Worker {
+                constructor() {
+                    throw new Error("rusty-bun-host: node:worker_threads.Worker not supported");
+                }
+            }
+            globalThis.nodeWorkerThreads = {
+                Worker,
+                isMainThread: true,
+                parentPort: null,
+                workerData: undefined,
+                threadId: 0,
+                MessageChannel: class { constructor() { this.port1 = {}; this.port2 = {}; } },
+                MessagePort: class {},
+            };
+
+            // node:http2 → throwing stub. Fastify top-level-imports this
+            // but only exercises it under explicit allowHTTP2 opts (off by
+            // default). Plain http path remains intact.
+            const http2Throws = (name) => () => {
+                throw new Error("rusty-bun-host: node:http2." + name + " not supported");
+            };
+            globalThis.nodeHttp2 = {
+                constants: {
+                    HTTP2_HEADER_PATH: ":path",
+                    HTTP2_HEADER_METHOD: ":method",
+                    HTTP2_HEADER_STATUS: ":status",
+                },
+                createServer: http2Throws("createServer"),
+                createSecureServer: http2Throws("createSecureServer"),
+                connect: http2Throws("connect"),
+                Http2ServerRequest: class {},
+                Http2ServerResponse: class {},
             };
         })();
     "#)?;

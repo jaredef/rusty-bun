@@ -439,7 +439,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:string_decoder" | "string_decoder" |
         "node:readline" | "readline" |
         "node:readline/promises" | "readline/promises" |
-        "node:module" | "module"
+        "node:module" | "module" |
+        "node:cluster" | "cluster"
     )
 }
 
@@ -563,6 +564,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:module" | "module" => ("nodeModule",
             &["createRequire", "builtinModules", "isBuiltin",
               "Module", "syncBuiltinESMExports"]),
+        "node:cluster" | "cluster" => ("nodeCluster",
+            &["isMaster", "isPrimary", "isWorker", "worker", "workers",
+              "schedulingPolicy", "SCHED_NONE", "SCHED_RR",
+              "fork", "disconnect", "setupMaster", "setupPrimary"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -7350,6 +7355,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "readline/promises": () => globalThis.nodeReadlinePromises,
         "node:module": () => globalThis.nodeModule,
         "module": () => globalThis.nodeModule,
+        "node:cluster": () => globalThis.nodeCluster,
+        "cluster": () => globalThis.nodeCluster,
     };
 
     function loadModule(absPath) {
@@ -9963,6 +9970,30 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 },
                 Module: class {},
                 syncBuiltinESMExports() {},
+            };
+            // node:cluster stub — rusty-bun is single-process. Master flag
+            // is true, worker is undefined. Surface matches the read-mostly
+            // pattern (libs check isMaster / worker.id to derive a unique
+            // ID and otherwise no-op).
+            globalThis.nodeCluster = {
+                isMaster: true,
+                isPrimary: true,
+                isWorker: false,
+                worker: undefined,
+                workers: {},
+                schedulingPolicy: 2,
+                SCHED_NONE: 1,
+                SCHED_RR: 2,
+                fork() { return null; },
+                disconnect(cb) { if (typeof cb === "function") cb(); },
+                setupMaster() {},
+                setupPrimary() {},
+                on() {},
+                off() {},
+                once() {},
+                emit() { return false; },
+                removeListener() {},
+                removeAllListeners() {},
             };
         })();
     "#)?;

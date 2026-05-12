@@ -7868,6 +7868,29 @@ fn consumer_ohash2_app_byte_identical_to_bun() {
 
 
 #[test]
+fn consumer_shortid_app_shape_matches_bun() {
+    use rusty_bun_host::eval_esm_module;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/consumer-shortid-app/main.mjs");
+    let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+    let bun = match std::process::Command::new("bun")
+        .arg(fixture.to_str().unwrap())
+        .output() {
+        Ok(o) => o,
+        Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+    };
+    assert!(bun.status.success(), "bun exited: {}",
+        String::from_utf8_lossy(&bun.stderr));
+    let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+    // shortid is non-deterministic; assert shape parity (the JSON
+    // booleans are stable across runs even though IDs differ).
+    let rb_v: serde_json::Value = serde_json::from_str(rb.trim()).expect("rb json");
+    let bun_v: serde_json::Value = serde_json::from_str(&bun_out).expect("bun json");
+    assert_eq!(rb_v, bun_v, "shape mismatch: rb={} bun={}", rb, bun_out);
+}
+
+
+#[test]
 fn consumer_pthrottle_app_byte_identical_to_bun() {
     use rusty_bun_host::eval_esm_module;
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

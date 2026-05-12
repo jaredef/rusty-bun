@@ -3753,7 +3753,9 @@ fn wire_text_encoding<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> Js
                 // → plain JS array (rquickjs Vec<u8> binding doesn't accept typed
                 // arrays directly). ArrayBuffer is non-iterable so Array.from
                 // returns empty; wrap in Uint8Array first.
-                if (bytes instanceof ArrayBuffer) {
+                if (bytes === undefined || bytes === null) {
+                    bytes = [];
+                } else if (bytes instanceof ArrayBuffer) {
                     bytes = Array.from(new Uint8Array(bytes));
                 } else if (bytes && typeof bytes === "object" && !Array.isArray(bytes)) {
                     bytes = Array.from(bytes);
@@ -3870,6 +3872,15 @@ const BUFFER_CLASS_JS: &str = r#"
                 if (enc === "base64url") {
                     return Buffer.from(input, "base64");
                 }
+                if (enc === "utf16le" || enc === "ucs2" || enc === "ucs-2") {
+                    const buf = new Buffer(input.length * 2);
+                    for (let i = 0; i < input.length; i++) {
+                        const c = input.charCodeAt(i);
+                        buf[i * 2] = c & 0xff;
+                        buf[i * 2 + 1] = (c >> 8) & 0xff;
+                    }
+                    return buf;
+                }
                 // Unknown encoding — treat as utf8.
                 return new Buffer(S.from(input));
             }
@@ -3943,6 +3954,13 @@ const BUFFER_CLASS_JS: &str = r#"
             }
             if (enc === "base64url") {
                 return S.encodeBase64(arr).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            }
+            if (enc === "utf16le" || enc === "ucs2" || enc === "ucs-2") {
+                let s = "";
+                for (let i = 0; i + 1 < arr.length; i += 2) {
+                    s += String.fromCharCode(arr[i] | (arr[i + 1] << 8));
+                }
+                return s;
             }
             throw new Error("Unsupported encoding: " + encoding);
         }
@@ -4061,7 +4079,35 @@ const BUFFER_CLASS_JS: &str = r#"
             return true;
         }
     }
-    globalThis.Buffer = Buffer;
+    // Make all static methods own enumerable properties so legacy
+    // copy-with-for-in patterns (safer-buffer iterates `for (key in Buffer)`
+    // to clone the static surface) pick them up. ES class statics are
+    // non-enumerable by default.
+    for (const name of Object.getOwnPropertyNames(Buffer)) {
+        if (name === "length" || name === "name" || name === "prototype") continue;
+        const desc = Object.getOwnPropertyDescriptor(Buffer, name);
+        if (desc) Object.defineProperty(Buffer, name, { ...desc, enumerable: true });
+    }
+
+    // Buffer can be called without `new` in legacy Node code
+    // (safer-buffer's Safer.from fallback does `return Buffer(value, enc)`).
+    // Wrap as a Proxy so both new Buffer(...) and Buffer(...) work; the
+    // apply trap routes to the same dispatch logic the legacy Buffer(arg,
+    // enc, len) signature used (Buffer.from for non-number, Buffer.alloc
+    // for number).
+    const BufferCallable = new Proxy(Buffer, {
+        apply(_target, _thisArg, args) {
+            const [value, encodingOrOffset, length] = args;
+            if (typeof value === "number") {
+                return Buffer.alloc(value);
+            }
+            return Buffer.from(value, encodingOrOffset, length);
+        },
+        construct(target, args, newTarget) {
+            return Reflect.construct(target, args, newTarget);
+        },
+    });
+    globalThis.Buffer = BufferCallable;
 })();
 "#;
 
@@ -9902,17 +9948,51 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
             // which honors multi-byte UTF-8 boundaries the same way.
             class StringDecoder {
                 constructor(encoding) {
-                    this._enc = (encoding || "utf8").toLowerCase().replace("-", "");
-                    if (this._enc === "utf8" || this._enc === "utf-8") this._enc = "utf8";
-                    this._dec = new TextDecoder(this._enc === "latin1" || this._enc === "binary"
-                        ? "latin1" : "utf-8", { fatal: false });
+                    this._enc = (encoding || "utf8").toLowerCase().replace(/-/g, "");
+                    if (this._enc === "utf8") {
+                        this._dec = new TextDecoder("utf-8", { fatal: false });
+                    } else if (this._enc === "latin1" || this._enc === "binary") {
+                        this._dec = new TextDecoder("latin1", { fatal: false });
+                    } else if (this._enc === "ucs2" || this._enc === "utf16le") {
+                        // No TextDecoder for utf-16le in our polyfill; emulate.
+                        this._dec = null;
+                        this._utf16le = true;
+                        this._pending = null;
+                    } else {
+                        this._dec = new TextDecoder("utf-8", { fatal: false });
+                    }
+                }
+                _decodeUtf16le(buf, final) {
+                    let bytes = buf;
+                    if (this._pending) {
+                        const merged = new Uint8Array(this._pending.length + bytes.length);
+                        merged.set(this._pending); merged.set(bytes, this._pending.length);
+                        bytes = merged;
+                        this._pending = null;
+                    }
+                    const evenLen = bytes.length & ~1;
+                    let s = "";
+                    for (let i = 0; i + 1 < evenLen; i += 2) {
+                        s += String.fromCharCode(bytes[i] | (bytes[i + 1] << 8));
+                    }
+                    if (!final && evenLen < bytes.length) {
+                        this._pending = bytes.slice(evenLen);
+                    }
+                    return s;
                 }
                 write(buf) {
-                    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+                    const u8 = buf === undefined || buf === null ? new Uint8Array(0)
+                        : (buf instanceof Uint8Array ? buf : new Uint8Array(buf));
+                    if (this._utf16le) return this._decodeUtf16le(u8, false);
                     return this._dec.decode(u8, { stream: true });
                 }
                 end(buf) {
-                    if (buf !== undefined) {
+                    if (this._utf16le) {
+                        const u8 = buf === undefined || buf === null ? new Uint8Array(0)
+                            : (buf instanceof Uint8Array ? buf : new Uint8Array(buf));
+                        return this._decodeUtf16le(u8, true);
+                    }
+                    if (buf !== undefined && buf !== null) {
                         const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
                         return this._dec.decode(u8);
                     }

@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "p-event": "^7.1.0"
+  }
+}

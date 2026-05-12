@@ -2474,6 +2474,107 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 return typedArray;
             };
 
+            // Node-API crypto.createHash(algorithm) — classic streaming hash
+            // API. Many libs (etag, express's internals, body-parser, ulid
+            // historically, mongoose, every fingerprinter) call this. The
+            // returned hasher accumulates via .update() then emits via
+            // .digest([encoding]).
+            globalThis.crypto.createHash = function createHash(algorithm) {
+                const algo = String(algorithm).toLowerCase().replace(/-/g, "");
+                const supported = ["sha1", "sha256", "sha384", "sha512", "md5"];
+                if (!supported.includes(algo)) {
+                    throw new Error("crypto.createHash: unsupported algorithm '" + algorithm + "'");
+                }
+                const chunks = [];
+                return {
+                    update(data, encoding) {
+                        const bytes = typeof data === "string"
+                            ? new TextEncoder().encode(data)
+                            : (data instanceof Uint8Array ? data : new Uint8Array(data));
+                        chunks.push(bytes);
+                        return this;
+                    },
+                    digest(encoding) {
+                        let total = 0;
+                        for (const c of chunks) total += c.length;
+                        const combined = new Uint8Array(total);
+                        let off = 0;
+                        for (const c of chunks) { combined.set(c, off); off += c.length; }
+                        const inArr = Array.from(combined);
+                        let out;
+                        if (algo === "sha1") out = globalThis.crypto.subtle.digestSha1Bytes(inArr);
+                        else if (algo === "sha256") out = globalThis.crypto.subtle.digestSha256Bytes(inArr);
+                        else if (algo === "sha384") out = globalThis.crypto.subtle.digestSha384Bytes(inArr);
+                        else if (algo === "sha512") out = globalThis.crypto.subtle.digestSha512Bytes(inArr);
+                        else throw new Error("md5 not implemented");  // md5 stub
+                        const u8 = new Uint8Array(out);
+                        if (!encoding || encoding === "buffer") {
+                            return typeof Buffer !== "undefined" ? Buffer.from(u8) : u8;
+                        }
+                        if (encoding === "hex") {
+                            return Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join("");
+                        }
+                        if (encoding === "base64") {
+                            let s = "";
+                            for (const b of u8) s += String.fromCharCode(b);
+                            return btoa(s);
+                        }
+                        if (encoding === "base64url") {
+                            let s = "";
+                            for (const b of u8) s += String.fromCharCode(b);
+                            return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+                        }
+                        throw new Error("crypto.createHash.digest: unsupported encoding '" + encoding + "'");
+                    },
+                };
+            };
+
+            globalThis.crypto.createHmac = function createHmac(algorithm, key) {
+                const algo = String(algorithm).toLowerCase().replace(/-/g, "");
+                const keyBytes = typeof key === "string"
+                    ? new TextEncoder().encode(key)
+                    : (key instanceof Uint8Array ? key : new Uint8Array(key));
+                const chunks = [];
+                return {
+                    update(data) {
+                        const bytes = typeof data === "string"
+                            ? new TextEncoder().encode(data)
+                            : (data instanceof Uint8Array ? data : new Uint8Array(data));
+                        chunks.push(bytes);
+                        return this;
+                    },
+                    digest(encoding) {
+                        let total = 0;
+                        for (const c of chunks) total += c.length;
+                        const combined = new Uint8Array(total);
+                        let off = 0;
+                        for (const c of chunks) { combined.set(c, off); off += c.length; }
+                        const inArr = Array.from(combined);
+                        const keyArr = Array.from(keyBytes);
+                        let out;
+                        if (algo === "sha1") out = globalThis.crypto.subtle.hmacSha1Bytes(keyArr, inArr);
+                        else if (algo === "sha256") out = globalThis.crypto.subtle.hmacSha256Bytes(keyArr, inArr);
+                        else if (algo === "sha384") out = globalThis.crypto.subtle.hmacSha384Bytes(keyArr, inArr);
+                        else if (algo === "sha512") out = globalThis.crypto.subtle.hmacSha512Bytes(keyArr, inArr);
+                        else throw new Error("hmac: unsupported algo " + algorithm);
+                        const u8 = new Uint8Array(out);
+                        if (!encoding || encoding === "buffer") {
+                            return typeof Buffer !== "undefined" ? Buffer.from(u8) : u8;
+                        }
+                        if (encoding === "hex") return Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join("");
+                        if (encoding === "base64") {
+                            let s = ""; for (const b of u8) s += String.fromCharCode(b);
+                            return btoa(s);
+                        }
+                        if (encoding === "base64url") {
+                            let s = ""; for (const b of u8) s += String.fromCharCode(b);
+                            return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+                        }
+                        throw new Error("createHmac.digest: unsupported encoding '" + encoding + "'");
+                    },
+                };
+            };
+
             // Node-API crypto.randomBytes(n) -> Buffer. Many libraries
             // (ulid, several JWT impls, mongoose ObjectId) get crypto via
             // `require("crypto")` then call randomBytes — distinct from
@@ -3166,6 +3267,7 @@ const BUFFER_CLASS_JS: &str = r#"
         static allocUnsafe(size) { return new Buffer(size); }
         static allocUnsafeSlow(size) { return new Buffer(size); }
         static byteLength(s) { return S.byteLength(s); }
+        static isBuffer(v) { return v instanceof Buffer; }
         // Preserve the rusty-bun-only static-helper API alongside the
         // Bun-portable instance-method API. Both shapes work.
         static decodeUtf8(bytes) { return S.decodeUtf8(Array.from(bytes)); }

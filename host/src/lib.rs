@@ -4658,6 +4658,66 @@ const FINALIZATION_REGISTRY_STUB_JS: &str = r#"
     }
     globalThis.WeakRef = WeakRef;
 })();
+(function () {
+    // MessagePort + MessageChannel + BroadcastChannel stubs. Worker-thread
+    // and worker-API related; rusty-bun is single-thread so the messaging
+    // is no-op but the classes need to exist for transitive deps that
+    // top-level-check `typeof MessagePort` or call new MessageChannel().
+    if (typeof globalThis.MessagePort !== "function") {
+        class MessagePort {
+            constructor() { this._listeners = new Map(); this._other = null; }
+            postMessage(data) {
+                if (!this._other) return;
+                const arr = this._other._listeners.get("message");
+                if (arr) {
+                    for (const cb of arr) {
+                        try { queueMicrotask(() => cb({ data })); } catch (_) {}
+                    }
+                }
+            }
+            addEventListener(type, cb) {
+                if (!this._listeners.has(type)) this._listeners.set(type, []);
+                this._listeners.get(type).push(cb);
+            }
+            removeEventListener(type, cb) {
+                const arr = this._listeners.get(type);
+                if (arr) this._listeners.set(type, arr.filter(l => l !== cb));
+            }
+            start() {}
+            close() {}
+            get onmessage() { return this._om; }
+            set onmessage(fn) { this._om = fn; if (fn) this.addEventListener("message", fn); }
+        }
+        globalThis.MessagePort = MessagePort;
+    }
+    if (typeof globalThis.MessageChannel !== "function") {
+        class MessageChannel {
+            constructor() {
+                this.port1 = new globalThis.MessagePort();
+                this.port2 = new globalThis.MessagePort();
+                this.port1._other = this.port2;
+                this.port2._other = this.port1;
+            }
+        }
+        globalThis.MessageChannel = MessageChannel;
+    }
+    if (typeof globalThis.BroadcastChannel !== "function") {
+        class BroadcastChannel {
+            constructor(name) { this.name = name; this._listeners = new Map(); }
+            postMessage(_data) {}
+            addEventListener(type, cb) {
+                if (!this._listeners.has(type)) this._listeners.set(type, []);
+                this._listeners.get(type).push(cb);
+            }
+            removeEventListener(type, cb) {
+                const arr = this._listeners.get(type);
+                if (arr) this._listeners.set(type, arr.filter(l => l !== cb));
+            }
+            close() {}
+        }
+        globalThis.BroadcastChannel = BroadcastChannel;
+    }
+})();
 "#;
 
 fn install_finalization_registry_stub<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {

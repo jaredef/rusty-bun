@@ -314,7 +314,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:assert" | "assert" |
         "node:assert/strict" | "assert/strict" |
         "node:child_process" | "child_process" |
-        "node:net" | "net"
+        "node:net" | "net" |
+        "node:tty" | "tty"
     )
 }
 
@@ -373,6 +374,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
               "execFileSync", "fork"]),
         "node:net" | "net" => ("nodeNet",
             &["Socket", "connect", "createConnection", "createServer"]),
+        "node:tty" | "tty" => ("nodeTty",
+            &["isatty", "ReadStream", "WriteStream"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -705,6 +708,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     install_node_assert_js(&ctx)?;
     install_node_child_process_js(&ctx)?;
     install_node_net_js(&ctx)?;
+    install_node_tty_js(&ctx)?;
     install_commonjs_loader_js(&ctx)?;
     install_timers_js(&ctx)?;
     wire_performance(&ctx, &global)?;
@@ -5661,6 +5665,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "child_process": () => globalThis.nodeChildProcess,
         "node:net": () => globalThis.nodeNet,
         "net": () => globalThis.nodeNet,
+        "node:tty": () => globalThis.nodeTty,
+        "tty": () => globalThis.nodeTty,
     };
 
     function loadModule(absPath) {
@@ -7158,6 +7164,25 @@ fn install_node_querystring_and_url_full_js<'js>(ctx: &Ctx<'js>) -> JsResult<()>
                 pathToFileURL,
                 domainToASCII,
                 domainToUnicode,
+            };
+        })();
+    "#)?;
+    Ok(())
+}
+
+fn install_node_tty_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // node:tty — minimal stub. debug + many libs top-level-require this.
+    // isatty(fd) returns false in non-TTY contexts (which we always are
+    // in the rusty-bun-host eval-loop runtime since stdout is piped to
+    // tests). ReadStream/WriteStream are placeholder classes for shape.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            class WriteStream { constructor() { this.isTTY = false; } }
+            class ReadStream { constructor() { this.isTTY = false; } }
+            globalThis.nodeTty = {
+                isatty: (_fd) => false,
+                ReadStream,
+                WriteStream,
             };
         })();
     "#)?;

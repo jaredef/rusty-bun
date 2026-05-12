@@ -1242,6 +1242,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_buffer(&ctx, &global)?;
     install_buffer_class_js(&ctx)?;
     install_set_methods_polyfill(&ctx)?;
+    install_finalization_registry_stub(&ctx)?;
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
@@ -4159,6 +4160,44 @@ const SET_METHODS_POLYFILL_JS: &str = r#"
 
 fn install_set_methods_polyfill<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(SET_METHODS_POLYFILL_JS)?;
+    Ok(())
+}
+
+// FinalizationRegistry + WeakRef stubs. QuickJS lacks GC-finalization
+// hooks, so we provide structural shims: register/unregister are no-ops,
+// the cleanup callback is never invoked (acceptable for libs that use
+// these for opportunistic cleanup — p-throttle, undici, etc.). WeakRef
+// stores a strong reference; deref always returns the held target. This
+// trades the GC-aware behavior for API surface compat.
+const FINALIZATION_REGISTRY_STUB_JS: &str = r#"
+(function () {
+    if (typeof globalThis.FinalizationRegistry === "function") return;
+    class FinalizationRegistry {
+        constructor(cleanupCallback) {
+            this._cb = cleanupCallback;
+        }
+        register(_target, _heldValue, _unregisterToken) {}
+        unregister(_unregisterToken) {}
+    }
+    globalThis.FinalizationRegistry = FinalizationRegistry;
+})();
+(function () {
+    if (typeof globalThis.WeakRef === "function") return;
+    class WeakRef {
+        constructor(target) {
+            if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+                throw new TypeError("WeakRef target must be an object");
+            }
+            this._t = target;
+        }
+        deref() { return this._t; }
+    }
+    globalThis.WeakRef = WeakRef;
+})();
+"#;
+
+fn install_finalization_registry_stub<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
+    ctx.eval::<(), _>(FINALIZATION_REGISTRY_STUB_JS)?;
     Ok(())
 }
 

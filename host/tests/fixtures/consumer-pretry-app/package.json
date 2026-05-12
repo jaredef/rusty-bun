@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "p-retry": "^8.0.0"
+  }
+}

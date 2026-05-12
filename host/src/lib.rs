@@ -888,8 +888,54 @@ fn looks_like_cjs(source: &str) -> bool {
 #[derive(Default, Clone, Copy)]
 struct FsLoader;
 
+/// Inert-stub module source for libs whose load chain is too heavy to
+/// support today (undici, etc.). All named exports are accessors that
+/// throw when accessed, except the named ones in `passthrough` which
+/// return a noop. The default export is an empty object. Consumers that
+/// import the lib but only use a subset of features (e.g., cheerio
+/// imports * as undici but only touches undici.Client for fromURL —
+/// the dominant cheerio.load() API doesn't need undici at all) load
+/// cleanly and only fail if they actually invoke the dynamic surface.
+fn inert_stub_esm(known_names: &[&str]) -> String {
+    let mut src = String::new();
+    src.push_str("const __throw = (n) => { throw new Error('rusty-bun-host: inert stub for ' + n); };\n");
+    for n in known_names {
+        src.push_str(&format!(
+            "export const {0} = new Proxy(function() {{ __throw('{0}'); }}, {{\n\
+               get(_t, k) {{ __throw('{0}.' + String(k)); }},\n\
+               apply() {{ __throw('{0}'); }},\n\
+               construct() {{ __throw('{0}'); }},\n\
+             }});\n",
+            n
+        ));
+    }
+    src.push_str("export default {};\n");
+    src
+}
+
 impl Loader for FsLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> JsResult<Module<'js, Declared>> {
+        // Inert-stub interception. undici's CJS load chain pulls in ~30
+        // transitive modules including worker_threads internals + TLS
+        // sniffing + http/2 framing; stubbing it lets consumers that
+        // import undici but only touch a subset (cheerio for fromURL,
+        // most use cheerio.load instead) load cleanly. The stub throws
+        // on any actual property access, so latent uses fail loudly.
+        if name.ends_with("/node_modules/undici/index.js")
+            || name.ends_with("/node_modules/undici/index.mjs")
+        {
+            let src = inert_stub_esm(&[
+                "fetch", "Agent", "Client", "Pool", "BalancedPool", "ProxyAgent",
+                "MockAgent", "MockPool", "Dispatcher", "Headers", "Request", "Response",
+                "FormData", "errors", "interceptors", "buildConnector",
+                "getGlobalDispatcher", "setGlobalDispatcher",
+                "Connector", "RedirectHandler", "RetryHandler", "MockClient",
+                "MockCallHistory", "RoundRobinPool", "EnvHttpProxyAgent",
+                "SnapshotAgent", "RetryAgent", "Socks5ProxyAgent", "H2CClient",
+                "DecoratorHandler",
+            ]);
+            return Module::declare(ctx.clone(), name, src);
+        }
         if let Some(src) = node_builtin_esm_source(name) {
             return Module::declare(ctx.clone(), name, src);
         }

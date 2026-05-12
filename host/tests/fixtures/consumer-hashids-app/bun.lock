@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "hi",
+      "dependencies": {
+        "hashids": "^2",
+      },
+    },
+  },
+  "packages": {
+    "hashids": ["hashids@2.3.0", "", {}, "sha512-ljM73TE/avEhNnazxaj0Dw3BbEUuLC5yYCQ9RSkSUcT4ZSU6ZebdKCIBJ+xT/DnSYW36E9k82GH1Q6MydSIosQ=="],
+  }
+}

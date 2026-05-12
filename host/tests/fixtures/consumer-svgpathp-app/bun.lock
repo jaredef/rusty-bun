@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "svg-path-parser": "^1.1.0",
+      },
+    },
+  },
+  "packages": {
+    "svg-path-parser": ["svg-path-parser@1.1.0", "", {}, "sha512-jGCUqcQyXpfe38R7RFfhrMyfXcBmpMNJI/B+4CE9/Unkh98UporAc461GTthv+TVDuZXsBx7/WiwJb1Oh4tt4A=="],
+  }
+}

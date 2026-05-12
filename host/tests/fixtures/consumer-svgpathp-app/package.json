@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "svg-path-parser": "^1.1.0"
+  }
+}

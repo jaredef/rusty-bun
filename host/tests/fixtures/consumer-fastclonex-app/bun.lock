@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "fast-clone": "^1.5.13",
+      },
+    },
+  },
+  "packages": {
+    "fast-clone": ["fast-clone@1.5.13", "", {}, "sha512-0ez7coyFBQFjZtId+RJqJ+EQs61w9xARfqjqK0AD9vIUkSxWD4HvPt80+5evebZ1tTnv1GYKrPTipx7kOW5ipA=="],
+  }
+}

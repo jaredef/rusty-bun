@@ -822,7 +822,15 @@ impl Loader for FsLoader {
 fn rewrite_regex_u_class_escapes(source: &str) -> String {
     // Fast-skip: if source has no `\-`, nothing to rewrite. Avoids both
     // the cost of the byte walk and any chance of corrupting UTF-8.
-    if !source.contains("\\-") { return source.to_string(); }
+    // Fast-skip: nothing to rewrite if source has neither `\-` (the
+    // \- in /u/v char class escape we map to literal hyphen) nor
+    // `/v` (the ES2024 Unicode-sets flag we downgrade to /u). The
+    // `/v` check is a substring approximation — false positives just
+    // pay the linear walk cost; false negatives are impossible since
+    // a /v regex literal must contain the bytes `/v`.
+    if !source.contains("\\-") && !source.contains("/v") {
+        return source.to_string();
+    }
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
     // `emit_start` is the byte index of the next un-emitted source slice.
@@ -953,10 +961,35 @@ fn rewrite_regex_u_class_escapes(source: &str) -> String {
                             bi += 1;
                         }
                         rewritten.push_str(&body[slice_start..]);
+                        // When downgrading /v → /u, rewrite /v-only
+                        // property names that aren't valid under /u.
+                        // RGI_Emoji is the common case (string-width,
+                        // emoji-regex-xs); falls back to Emoji which
+                        // matches single-code-point emoji and is the
+                        // closest /u-compatible approximation. The
+                        // sequence-match precision is sacrificed —
+                        // accepted divergence below the L5 cut for
+                        // S-regex stratum.
+                        let downgrade_v_to_u = flags.contains('v')
+                            && !body.contains("--")
+                            && !body.contains("&&");
+                        if downgrade_v_to_u && rewritten.contains("RGI_Emoji") {
+                            rewritten = rewritten.replace("RGI_Emoji", "Emoji");
+                        }
+                        if downgrade_v_to_u && rewritten.contains("Basic_Emoji") {
+                            rewritten = rewritten.replace("Basic_Emoji", "Emoji");
+                        }
                         out.push('/');
                         out.push_str(&rewritten);
                         out.push('/');
-                        out.push_str(flags);
+                        if downgrade_v_to_u {
+                            for c in flags.chars() {
+                                if c == 'v' { out.push('u'); }
+                                else { out.push(c); }
+                            }
+                        } else {
+                            out.push_str(flags);
+                        }
                         emit_start = f;
                         i = f;
                         continue;
@@ -6542,7 +6575,7 @@ const COMMONJS_LOADER_JS: &str = r#"
     // similar libs use this pattern.
     function fixRegexUEscapes(source) {
         // Fast skip: if source contains no `\-`, nothing to rewrite.
-        if (source.indexOf("\\-") < 0) return source;
+        if (source.indexOf("\\-") < 0 && source.indexOf("/v") < 0) return source;
         // State-machine walk over source. A backtracking regex on the
         // same task catastrophically blows up on 10KB+ inputs with many
         // backslash sequences; the linear walk is bounded O(n).
@@ -6643,7 +6676,16 @@ const COMMONJS_LOADER_JS: &str = r#"
                                 bi++;
                             }
                             rew += body.substring(sl);
-                            out += source.substring(emit, i) + "/" + rew + "/" + flags;
+                            // /v → /u when body has no set notation (-- or &&).
+                            // QuickJS doesn't support /v but the in-basin
+                            // regex patterns rarely use set operators.
+                            let outFlags = flags;
+                            if (flags.indexOf("v") >= 0
+                                && body.indexOf("--") < 0
+                                && body.indexOf("&&") < 0) {
+                                outFlags = flags.replace("v", "u");
+                            }
+                            out += source.substring(emit, i) + "/" + rew + "/" + outFlags;
                             emit = f;
                             i = f;
                             continue;
@@ -9086,6 +9128,73 @@ fn install_intl_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
             };
             Intl.PluralRules = PluralRules;
 
+            // Intl.Segmenter — string-width, slice-words, and any
+            // grapheme/word/sentence iteration use this. Real impl uses
+            // CLDR's break tables; we approximate with simple iteration:
+            //   granularity 'grapheme': iterate code points (UTF-16
+            //     surrogate-pair aware) treating each code point as a
+            //     segment. Misses combining-mark/joiner clustering but
+            //     covers the dominant cases.
+            //   granularity 'word': split on whitespace/word boundaries
+            //     via a regex.
+            //   granularity 'sentence': split on sentence-ending punct.
+            class Segmenter {
+                constructor(locales, options) {
+                    this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
+                    this._opts = options || { granularity: "grapheme" };
+                    this._gran = this._opts.granularity || "grapheme";
+                }
+                segment(str) {
+                    str = String(str);
+                    const gran = this._gran;
+                    return {
+                        [Symbol.iterator]() {
+                            let idx = 0;
+                            return {
+                                next() {
+                                    if (idx >= str.length) return { done: true };
+                                    if (gran === "grapheme") {
+                                        // Step by code point (handle surrogate pairs).
+                                        const code = str.codePointAt(idx);
+                                        const w = code > 0xFFFF ? 2 : 1;
+                                        const segment = str.substring(idx, idx + w);
+                                        const value = { segment, index: idx, input: str };
+                                        idx += w;
+                                        return { value, done: false };
+                                    }
+                                    if (gran === "word") {
+                                        // Greedy non-whitespace then a whitespace run.
+                                        const start = idx;
+                                        if (/\s/.test(str[idx])) {
+                                            while (idx < str.length && /\s/.test(str[idx])) idx++;
+                                        } else {
+                                            while (idx < str.length && !/\s/.test(str[idx])) idx++;
+                                        }
+                                        const segment = str.substring(start, idx);
+                                        const isWordLike = /\w/.test(segment);
+                                        return { value: { segment, index: start, input: str, isWordLike }, done: false };
+                                    }
+                                    // sentence
+                                    const start = idx;
+                                    while (idx < str.length && !/[.!?]/.test(str[idx])) idx++;
+                                    if (idx < str.length) idx++;
+                                    while (idx < str.length && /\s/.test(str[idx])) idx++;
+                                    const segment = str.substring(start, idx);
+                                    return { value: { segment, index: start, input: str }, done: false };
+                                },
+                            };
+                        },
+                    };
+                }
+                resolvedOptions() {
+                    return Object.assign({ locale: this._locale, granularity: this._gran }, this._opts);
+                }
+            }
+            Segmenter.supportedLocalesOf = function(locales) {
+                return Array.isArray(locales) ? locales.slice() : [locales];
+            };
+            Intl.Segmenter = Segmenter;
+
             // Intl.ListFormat — and-conjunction English stub.
             class ListFormat {
                 constructor(locales, options) {
@@ -10726,6 +10835,13 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
     let (runtime, context) = new_runtime().map_err(|e| format!("init: {:?}", e))?;
     let source = std::fs::read_to_string(entry_path)
         .map_err(|e| format!("read entry: {}", e))?;
+    // Apply the same preprocessors as the FsLoader's load path. The
+    // entry source bypasses FsLoader, but if it contains a `/v` regex
+    // literal or `\-` inside a /u class, QuickJS will reject it at
+    // parse time exactly as it would for an imported file.
+    let source = strip_reserved_class_field_decls(&source);
+    let source = rewrite_destructure_exports(&source);
+    let source = rewrite_regex_u_class_escapes(&source);
     let entry_name = entry_path.to_string();
     context.with(|ctx| -> Result<(), String> {
         ctx.globals().set("__esmResult", rquickjs::Value::new_undefined(ctx.clone()))

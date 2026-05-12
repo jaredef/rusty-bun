@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "strip-indent": "^4.1.1"
+  }
+}

@@ -4751,3 +4751,4 @@ fn consumer_yaml_app_byte_identical_to_bun() {
     let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
+

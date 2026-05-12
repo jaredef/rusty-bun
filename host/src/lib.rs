@@ -353,7 +353,7 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "setMaxListeners", "getEventListeners"]),
         "node:util" | "util" => ("nodeUtil", &["promisify", "callbackify",
             "format", "formatWithOptions", "inspect", "isDeepStrictEqual",
-            "deprecate", "debuglog", "types", "TextEncoder", "TextDecoder"]),
+            "deprecate", "debuglog", "inherits", "types", "TextEncoder", "TextDecoder"]),
         "node:util/types" | "util/types" => ("nodeUtilTypes", &[
             "isPromise", "isDate", "isRegExp", "isMap", "isSet",
             "isArrayBuffer", "isTypedArray", "isUint8Array", "isInt8Array",
@@ -644,10 +644,26 @@ impl Loader for FsLoader {
                 "const __m = globalThis.__cjsBridge[{}];\nexport default __m;\n",
                 json_str(name)
             );
+            // ESM bodies are strict-mode; reserved words can't be used as
+            // binding names in `export const NAME = ...`. ECMAScript 2024
+            // reserved set: https://tc39.es/ecma262/#sec-keywords-and-reserved-words
+            const RESERVED: &[&str] = &[
+                "default", "break", "case", "catch", "class", "const", "continue",
+                "debugger", "delete", "do", "else", "enum", "export", "extends",
+                "false", "finally", "for", "function", "if", "import", "in",
+                "instanceof", "new", "null", "return", "super", "switch", "this",
+                "throw", "true", "try", "typeof", "var", "void", "while", "with",
+                "yield",
+                // Strict-mode-only reserved (ESM is always strict):
+                "implements", "interface", "let", "package", "private", "protected",
+                "public", "static", "await",
+                // Future reserved:
+                "abstract", "boolean", "byte", "char", "double", "final", "float",
+                "goto", "int", "long", "native", "short", "synchronized", "throws",
+                "transient", "volatile",
+            ];
             for k in keys {
-                // Skip keys that aren't valid JS identifiers OR collide
-                // with reserved-in-export position (`default`).
-                if k == "default" { continue; }
+                if RESERVED.contains(&k.as_str()) { continue; }
                 let valid = !k.is_empty()
                     && k.chars().enumerate().all(|(i, c)| {
                         if i == 0 { c.is_alphabetic() || c == '_' || c == '$' }
@@ -6730,6 +6746,24 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 isGeneratorFunction: (v) => typeof v === "function" && v.constructor && v.constructor.name === "GeneratorFunction",
             };
 
+            // util.inherits — Node legacy ES5-style prototypal inheritance.
+            // ctor.prototype = Object.create(superCtor.prototype, {
+            //   constructor: { value: ctor, enumerable: false, writable: true, configurable: true }
+            // }); + ctor.super_ = superCtor.
+            // Used pervasively in older npm: send, http-errors, every Stream subclass.
+            const inherits = function inherits(ctor, superCtor) {
+                if (typeof ctor !== "function" || ctor === null) {
+                    throw new TypeError("util.inherits: constructor must be a function");
+                }
+                if (typeof superCtor !== "function" || superCtor === null) {
+                    throw new TypeError("util.inherits: superConstructor must be a function");
+                }
+                Object.defineProperty(ctor, "super_", {
+                    value: superCtor, writable: true, configurable: true,
+                });
+                Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
+            };
+
             globalThis.nodeUtil = {
                 promisify,
                 callbackify,
@@ -6739,6 +6773,7 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 isDeepStrictEqual,
                 deprecate,
                 debuglog,
+                inherits,
                 types,
                 TextEncoder: globalThis.TextEncoder,
                 TextDecoder: globalThis.TextDecoder,
@@ -7116,15 +7151,24 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 });
             }
 
-            // Stream is the legacy ancestor; node aliases stream = Stream
-            // for backward-compat. We expose all classes under one namespace.
-            const nodeStream = {
-                Readable, Writable, Duplex, Transform, PassThrough,
-                pipeline, finished,
-                Stream: Readable,  // legacy alias; npm packages rarely use it.
-            };
-            // Self-reference for default-import = module-object pattern.
-            globalThis.nodeStream = nodeStream;
+            // node:stream module shape: require('stream') in Node returns
+            // the Stream class itself (legacy ancestor), with Readable/
+            // Writable/Duplex/Transform/PassThrough as static properties.
+            // npm packages do `var Stream = require('stream'); Stream.call(this)`
+            // and `util.inherits(MyClass, Stream)`. Need a class, not an object.
+            //
+            // Readable plays the legacy Stream role here — it's the most-derived
+            // base that already exists, and Stream.call(this) just needs a
+            // callable constructor.
+            Readable.Readable = Readable;
+            Readable.Writable = Writable;
+            Readable.Duplex = Duplex;
+            Readable.Transform = Transform;
+            Readable.PassThrough = PassThrough;
+            Readable.pipeline = pipeline;
+            Readable.finished = finished;
+            Readable.Stream = Readable;
+            globalThis.nodeStream = Readable;
             globalThis.nodeStreamPromises = {
                 pipeline: pipelinePromise,
                 finished: finishedPromise,

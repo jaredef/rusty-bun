@@ -5768,84 +5768,191 @@ const NODE_HTTP_JS: &str = r#"
         delete headers[normalizeName(name)];
     }
 
-    class IncomingMessage {
-        constructor(init = {}) {
-            this.method = init.method || "GET";
-            this.url = init.url || "/";
-            this.httpVersion = init.httpVersion || "1.1";
-            this.headers = makeHeaders();
-            if (init.headers) {
-                for (const k of Object.keys(init.headers)) {
-                    setHeader(this.headers, k, init.headers[k]);
-                }
+    // IncomingMessage + ServerResponse as function-style constructors
+    // (NOT ES6 classes) so consumer code that does the Node-inheritance
+    // pattern — `IncomingMessage.call(this, init)` from a child function
+    // — works without "class constructors must be invoked with 'new'".
+    // light-my-request, follow-redirects, fastify's plugin chain all
+    // use this idiom.
+    function IncomingMessage(init) {
+        init = init || {};
+        this.method = init.method || "GET";
+        this.url = init.url || "/";
+        this.httpVersion = init.httpVersion || "1.1";
+        this.headers = makeHeaders();
+        if (init.headers) {
+            for (const k of Object.keys(init.headers)) {
+                setHeader(this.headers, k, init.headers[k]);
             }
-            this.statusCode = init.statusCode || 0;
-            this.statusMessage = init.statusMessage || "";
-            this._body = init.body || "";
-            this.complete = init.complete !== undefined ? init.complete : true;
         }
+        this.statusCode = init.statusCode || 0;
+        this.statusMessage = init.statusMessage || "";
+        this._body = init.body || "";
+        this.complete = init.complete !== undefined ? init.complete : true;
     }
 
-    class ServerResponse {
-        constructor() {
-            this.statusCode = 200;
-            this.statusMessage = "OK";
-            this._headers = makeHeaders();
-            this._body = [];
-            this.headersSent = false;
-            this.ended = false;
-        }
-        writeHead(statusCode, statusMessage, headers) {
-            if (this.headersSent) return this;
-            this.statusCode = statusCode;
-            // statusMessage is optional; if it's an object it's the headers arg.
-            if (typeof statusMessage === "object" && statusMessage !== null) {
-                headers = statusMessage;
-                statusMessage = undefined;
-            }
-            if (statusMessage !== undefined) this.statusMessage = String(statusMessage);
-            if (headers) {
-                for (const k of Object.keys(headers)) {
-                    setHeader(this._headers, k, headers[k]);
-                }
-            }
-            this.headersSent = true;
-            return this;
-        }
-        setHeader(name, value) { setHeader(this._headers, name, value); return this; }
-        getHeader(name) { return getHeader(this._headers, name); }
-        removeHeader(name) { removeHeader(this._headers, name); return this; }
-        getHeaders() { return Object.assign({}, this._headers); }
-        write(chunk) {
-            if (this.ended) return false;
-            this.headersSent = true;
-            this._body.push(String(chunk));
-            return true;
-        }
-        end(chunk) {
-            if (this.ended) return this;
-            if (chunk !== undefined) this._body.push(String(chunk));
-            this.headersSent = true;
-            this.ended = true;
-            // Bridge: when running under createServer().listen() the
-            // adapter sets _resolve so .end() converts to a Web Response.
-            if (typeof this._resolve === "function") {
-                try {
-                    const r = new Response(this.body(), {
-                        status: this.statusCode,
-                        statusText: this.statusMessage || undefined,
-                        headers: Object.assign({}, this._headers),
-                    });
-                    this._resolve(r);
-                } catch (e) {
-                    if (typeof this._reject === "function") this._reject(e);
-                }
-            }
-            return this;
-        }
-        // Pilot helper: serialize body to string.
-        body() { return this._body.join(""); }
+    function ServerResponse() {
+        this.statusCode = 200;
+        this.statusMessage = "OK";
+        this._headers = makeHeaders();
+        this._body = [];
+        this.headersSent = false;
+        this.ended = false;
     }
+    ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
+        if (this.headersSent) return this;
+        this.statusCode = statusCode;
+        if (typeof statusMessage === "object" && statusMessage !== null) {
+            headers = statusMessage;
+            statusMessage = undefined;
+        }
+        if (statusMessage !== undefined) this.statusMessage = String(statusMessage);
+        if (headers) {
+            for (const k of Object.keys(headers)) {
+                setHeader(this._headers, k, headers[k]);
+            }
+        }
+        this.headersSent = true;
+        return this;
+    };
+    ServerResponse.prototype.setHeader = function (name, value) {
+        setHeader(this._headers, name, value); return this;
+    };
+    ServerResponse.prototype.getHeader = function (name) {
+        return getHeader(this._headers, name);
+    };
+    ServerResponse.prototype.removeHeader = function (name) {
+        removeHeader(this._headers, name); return this;
+    };
+    ServerResponse.prototype.getHeaders = function () {
+        return Object.assign({}, this._headers);
+    };
+    ServerResponse.prototype.write = function (chunk) {
+        if (this.ended) return false;
+        this.headersSent = true;
+        this._body.push(String(chunk));
+        return true;
+    };
+    ServerResponse.prototype.end = function (chunk) {
+        if (this.ended) return this;
+        if (chunk !== undefined) this._body.push(String(chunk));
+        this.headersSent = true;
+        this.ended = true;
+        if (typeof this._resolve === "function") {
+            try {
+                const r = new Response(this.body(), {
+                    status: this.statusCode,
+                    statusText: this.statusMessage || undefined,
+                    headers: Object.assign({}, this._headers),
+                });
+                this._resolve(r);
+            } catch (e) {
+                if (typeof this._reject === "function") this._reject(e);
+            }
+        }
+        return this;
+    };
+    ServerResponse.prototype.body = function () { return this._body.join(""); };
+
+    // EventEmitter-shape stubs on IncomingMessage and ServerResponse.
+    // light-my-request, fastify, many Node http consumers subscribe
+    // to 'data', 'end', 'close', 'finish', 'drain' events. Inject mode
+    // doesn't run a real socket loop, but listener wiring must accept
+    // registration and emit without throwing.
+    function _eeInit(self) {
+        if (!self._events) self._events = Object.create(null);
+    }
+    function _eeOn(event, fn) {
+        _eeInit(this);
+        if (!this._events[event]) this._events[event] = [];
+        this._events[event].push(fn);
+        return this;
+    }
+    function _eeOff(event, fn) {
+        _eeInit(this);
+        const list = this._events[event];
+        if (list) {
+            const idx = list.indexOf(fn);
+            if (idx >= 0) list.splice(idx, 1);
+        }
+        return this;
+    }
+    function _eeEmit(event) {
+        _eeInit(this);
+        const list = this._events[event];
+        if (!list || list.length === 0) return false;
+        const args = Array.prototype.slice.call(arguments, 1);
+        for (const fn of list.slice()) {
+            try { fn.apply(this, args); }
+            catch (e) {
+                if (typeof console !== "undefined" && console.error) {
+                    console.error("uncaught in EE listener:", e);
+                }
+            }
+        }
+        return true;
+    }
+    function _eeOnce(event, fn) {
+        _eeInit(this);
+        const self = this;
+        const wrap = function () {
+            self.removeListener(event, wrap);
+            fn.apply(self, arguments);
+        };
+        return self.on(event, wrap);
+    }
+    function _eeListeners(event) {
+        _eeInit(this);
+        return (this._events[event] || []).slice();
+    }
+    function _eeListenerCount(event) {
+        _eeInit(this);
+        return (this._events[event] || []).length;
+    }
+    function _eeRemoveAllListeners(event) {
+        _eeInit(this);
+        if (event === undefined) this._events = Object.create(null);
+        else delete this._events[event];
+        return this;
+    }
+    function _eeSetMaxListeners() { return this; }
+
+    for (const Klass of [IncomingMessage, ServerResponse]) {
+        Klass.prototype.on = _eeOn;
+        Klass.prototype.addListener = _eeOn;
+        Klass.prototype.off = _eeOff;
+        Klass.prototype.removeListener = _eeOff;
+        Klass.prototype.emit = _eeEmit;
+        Klass.prototype.once = _eeOnce;
+        Klass.prototype.listeners = _eeListeners;
+        Klass.prototype.listenerCount = _eeListenerCount;
+        Klass.prototype.removeAllListeners = _eeRemoveAllListeners;
+        Klass.prototype.setMaxListeners = _eeSetMaxListeners;
+        Klass.prototype.ref = function () { return this; };
+        Klass.prototype.unref = function () { return this; };
+    }
+
+    // Socket attachment stubs. light-my-request calls assignSocket
+    // with a null-socket adapter; we accept and stash without rejecting.
+    ServerResponse.prototype.assignSocket = function (socket) {
+        this.socket = socket;
+        this.connection = socket;
+        return this;
+    };
+    ServerResponse.prototype.detachSocket = function () {
+        this.socket = null;
+        this.connection = null;
+        return this;
+    };
+    ServerResponse.prototype.flushHeaders = function () {
+        this.headersSent = true;
+        return this;
+    };
+    ServerResponse.prototype.hasHeader = function (name) {
+        return getHeader(this._headers, name) !== undefined;
+    };
+    ServerResponse.prototype.appendHeader = ServerResponse.prototype.setHeader;
+    ServerResponse.prototype.pipe = function (dest) { return dest; };
 
     class ClientRequest {
         constructor(method, url) {

@@ -665,7 +665,44 @@ fn rewrite_destructure_exports(source: &str) -> String {
         let line = lines[i];
         let trimmed = line.trim_start();
         if trimmed.starts_with("export const {") || trimmed.starts_with("export const{") {
-            // Scan ahead for the matching `} = NAME;` close.
+            // Single-line case: `export const { A, B } = NAME;` on one line.
+            if let (Some(o), Some(c)) = (line.find('{'), line.rfind('}')) {
+                if c > o {
+                    let after = &line[c + 1..];
+                    if let Some(rest) = after.trim_start().strip_prefix('=') {
+                        if let Some(name_part) = rest.trim().strip_suffix(';') {
+                            let name = name_part.trim();
+                            let valid_name = !name.is_empty()
+                                && name.chars().enumerate().all(|(k, ch)| {
+                                    if k == 0 { ch.is_alphabetic() || ch == '_' || ch == '$' }
+                                    else { ch.is_alphanumeric() || ch == '_' || ch == '$' }
+                                });
+                            if valid_name {
+                                let inner = &line[o + 1..c];
+                                let cleaned: String = inner.split("//").next().unwrap_or("").to_string();
+                                let mut names: Vec<String> = Vec::new();
+                                for tok in cleaned.split(',') {
+                                    let stripped = tok.trim();
+                                    if stripped.is_empty() { continue; }
+                                    let n = stripped.split(':').next().unwrap_or("").trim();
+                                    let valid = !n.is_empty()
+                                        && n.chars().enumerate().all(|(k, ch)| {
+                                            if k == 0 { ch.is_alphabetic() || ch == '_' || ch == '$' }
+                                            else { ch.is_alphanumeric() || ch == '_' || ch == '$' }
+                                        });
+                                    if valid { names.push(n.to_string()); }
+                                }
+                                for n in names {
+                                    out.push_str(&format!("export const {0} = {1}.{0};\n", n, name));
+                                }
+                                i += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            // Scan ahead for the matching `} = NAME;` close (multi-line).
             let mut matched: Option<(usize, String, Vec<String>)> = None;
             let max_scan = std::cmp::min(lines.len(), i + 200);
             for j in (i + 1)..max_scan {

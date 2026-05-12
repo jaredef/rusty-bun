@@ -11301,6 +11301,309 @@ fn install_bun_small_utilities_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 return new Uint8Array(globalThis.__compression.zlib_deflate_stored(Array.from(bytes)));
             };
 
+            // Bun.YAML — safe-subset YAML parser + serializer. Covers the
+            // common config-file surface: scalars (null/bool/int/float/string),
+            // flow-mode [a,b] and {k:v}, block-mode lists and maps with
+            // indent-significant structure, single/double-quoted strings with
+            // basic escapes, # line comments, and | / > block scalars. Anchor/
+            // alias, tags, and merge-keys are out of scope (the "safe" subset).
+            Bun.YAML = (function() {
+                function parseScalar(s) {
+                    if (s === "" || s === "~" || s === "null" || s === "Null" || s === "NULL") return null;
+                    if (s === "true" || s === "True" || s === "TRUE") return true;
+                    if (s === "false" || s === "False" || s === "FALSE") return false;
+                    if (/^[-+]?\d+$/.test(s)) return parseInt(s, 10);
+                    if (/^[-+]?\d*\.\d+([eE][-+]?\d+)?$/.test(s)) return parseFloat(s);
+                    if (/^[-+]?\d+[eE][-+]?\d+$/.test(s)) return parseFloat(s);
+                    if (s === ".inf" || s === ".Inf" || s === ".INF") return Infinity;
+                    if (s === "-.inf" || s === "-.Inf" || s === "-.INF") return -Infinity;
+                    if (s === ".nan" || s === ".NaN" || s === ".NAN") return NaN;
+                    return s;
+                }
+                function unescapeDouble(s) {
+                    return s.replace(/\\([nrt"\\\/bfu])/g, (_, c) => {
+                        if (c === "n") return "\n";
+                        if (c === "r") return "\r";
+                        if (c === "t") return "\t";
+                        if (c === "b") return "\b";
+                        if (c === "f") return "\f";
+                        if (c === '"') return '"';
+                        if (c === "\\") return "\\";
+                        if (c === "/") return "/";
+                        return c;
+                    });
+                }
+                function parseFlow(text, i) {
+                    function skipWs() { while (i < text.length && /[\s]/.test(text[i])) i++; }
+                    function parseValue() {
+                        skipWs();
+                        const c = text[i];
+                        if (c === "[") { return parseArr(); }
+                        if (c === "{") { return parseObj(); }
+                        if (c === '"') { return parseDQ(); }
+                        if (c === "'") { return parseSQ(); }
+                        let j = i;
+                        while (j < text.length && !/[,\]\}\n]/.test(text[j])) j++;
+                        const tok = text.slice(i, j).trim();
+                        i = j;
+                        return parseScalar(tok);
+                    }
+                    function parseArr() {
+                        i++; const arr = [];
+                        skipWs();
+                        if (text[i] === "]") { i++; return arr; }
+                        while (i < text.length) {
+                            arr.push(parseValue());
+                            skipWs();
+                            if (text[i] === ",") { i++; skipWs(); continue; }
+                            if (text[i] === "]") { i++; return arr; }
+                            throw new SyntaxError("YAML flow array: expected , or ]");
+                        }
+                        throw new SyntaxError("YAML flow array: unterminated");
+                    }
+                    function parseObj() {
+                        i++; const obj = {};
+                        skipWs();
+                        if (text[i] === "}") { i++; return obj; }
+                        while (i < text.length) {
+                            skipWs();
+                            let key;
+                            if (text[i] === '"') key = parseDQ();
+                            else if (text[i] === "'") key = parseSQ();
+                            else {
+                                let j = i;
+                                while (j < text.length && text[j] !== ":" && text[j] !== "}") j++;
+                                key = text.slice(i, j).trim();
+                                i = j;
+                            }
+                            skipWs();
+                            if (text[i] !== ":") throw new SyntaxError("YAML flow object: expected :");
+                            i++; skipWs();
+                            obj[key] = parseValue();
+                            skipWs();
+                            if (text[i] === ",") { i++; continue; }
+                            if (text[i] === "}") { i++; return obj; }
+                            throw new SyntaxError("YAML flow object: expected , or }");
+                        }
+                        throw new SyntaxError("YAML flow object: unterminated");
+                    }
+                    function parseDQ() {
+                        i++; let j = i;
+                        while (j < text.length && text[j] !== '"') {
+                            if (text[j] === "\\") j += 2; else j++;
+                        }
+                        const s = unescapeDouble(text.slice(i, j));
+                        i = j + 1;
+                        return s;
+                    }
+                    function parseSQ() {
+                        i++; let j = i, s = "";
+                        while (j < text.length) {
+                            if (text[j] === "'" && text[j+1] === "'") { s += text.slice(i, j) + "'"; j += 2; i = j; continue; }
+                            if (text[j] === "'") break;
+                            j++;
+                        }
+                        s += text.slice(i, j);
+                        i = j + 1;
+                        return s;
+                    }
+                    return { value: parseValue(), endIndex: i };
+                }
+                function parse(text) {
+                    if (typeof text !== "string") text = String(text);
+                    // Strip BOM, normalize CRLF.
+                    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+                    text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+                    // Strip document markers and comments.
+                    const rawLines = text.split("\n");
+                    const lines = [];
+                    for (const rl of rawLines) {
+                        let l = rl;
+                        // Strip # comments unless inside quotes (best-effort).
+                        let inS = false, inD = false, cut = -1;
+                        for (let k = 0; k < l.length; k++) {
+                            const ch = l[k];
+                            if (ch === "'" && !inD) inS = !inS;
+                            else if (ch === '"' && !inS) inD = !inD;
+                            else if (ch === "\x23" && !inS && !inD && (k === 0 || /\s/.test(l[k-1]))) {
+                                cut = k; break;
+                            }
+                        }
+                        if (cut >= 0) l = l.slice(0, cut);
+                        l = l.replace(/\s+$/, "");
+                        if (l === "---" || l === "...") continue;
+                        lines.push(l);
+                    }
+                    let idx = 0;
+                    function lineIndent(l) {
+                        let n = 0;
+                        while (n < l.length && l[n] === " ") n++;
+                        return n;
+                    }
+                    function parseBlock(minIndent) {
+                        // Skip blanks
+                        while (idx < lines.length && lines[idx].trim() === "") idx++;
+                        if (idx >= lines.length) return null;
+                        const indent = lineIndent(lines[idx]);
+                        if (indent < minIndent) return null;
+                        const first = lines[idx].slice(indent);
+                        // List?
+                        if (first.startsWith("- ") || first === "-") {
+                            const arr = [];
+                            while (idx < lines.length) {
+                                if (lines[idx].trim() === "") { idx++; continue; }
+                                const li = lineIndent(lines[idx]);
+                                if (li < indent) break;
+                                if (li > indent) break;
+                                const t = lines[idx].slice(li);
+                                if (!t.startsWith("-")) break;
+                                const after = t === "-" ? "" : t.slice(2);
+                                if (after === "") {
+                                    idx++;
+                                    arr.push(parseBlock(indent + 1));
+                                } else if (/^[a-zA-Z_$\"\'][^:]*:(\s|$)/.test(after) || /^[\w-]+:(\s|$)/.test(after)) {
+                                    // Inline map starting on the - line
+                                    // Treat the rest of this line as the first map line of a nested map at indent+2
+                                    const lead = " ".repeat(indent + 2) + after;
+                                    lines[idx] = lead;
+                                    arr.push(parseBlock(indent + 2));
+                                } else {
+                                    idx++;
+                                    arr.push(parseInlineValue(after, indent + 2));
+                                }
+                            }
+                            return arr;
+                        }
+                        // Map?
+                        if (/^[^\s].*:(\s|$)/.test(first) || /^"[^"]*":(\s|$)/.test(first) || /^'[^']*':(\s|$)/.test(first)) {
+                            const obj = {};
+                            while (idx < lines.length) {
+                                if (lines[idx].trim() === "") { idx++; continue; }
+                                const li = lineIndent(lines[idx]);
+                                if (li < indent) break;
+                                if (li > indent) break;
+                                const t = lines[idx].slice(li);
+                                const colonPos = (() => {
+                                    let inS = false, inD = false;
+                                    for (let k = 0; k < t.length; k++) {
+                                        const ch = t[k];
+                                        if (ch === "'" && !inD) inS = !inS;
+                                        else if (ch === '"' && !inS) inD = !inD;
+                                        else if (ch === ":" && !inS && !inD && (k + 1 === t.length || /\s/.test(t[k+1]))) {
+                                            return k;
+                                        }
+                                    }
+                                    return -1;
+                                })();
+                                if (colonPos < 0) break;
+                                let key = t.slice(0, colonPos).trim();
+                                if (key[0] === '"' && key[key.length-1] === '"') key = unescapeDouble(key.slice(1, -1));
+                                else if (key[0] === "'" && key[key.length-1] === "'") key = key.slice(1, -1).replace(/''/g, "'");
+                                const after = t.slice(colonPos + 1).trim();
+                                idx++;
+                                if (after === "" || after === "|" || after === ">" || after === "|-" || after === ">-") {
+                                    if (after === "|" || after === "|-" || after === ">" || after === ">-") {
+                                        // Block scalar
+                                        const folded = after.startsWith(">");
+                                        const strip = after.endsWith("-");
+                                        const chunks = [];
+                                        const scalarIndent = (idx < lines.length) ? lineIndent(lines[idx]) : indent + 2;
+                                        if (scalarIndent <= indent) { obj[key] = ""; continue; }
+                                        while (idx < lines.length) {
+                                            if (lines[idx] === "") { chunks.push(""); idx++; continue; }
+                                            const li2 = lineIndent(lines[idx]);
+                                            if (li2 < scalarIndent) break;
+                                            chunks.push(lines[idx].slice(scalarIndent));
+                                            idx++;
+                                        }
+                                        // Trim trailing empty lines (default chomp keeps one \n).
+                                        while (chunks.length > 0 && chunks[chunks.length - 1] === "") chunks.pop();
+                                        let s = folded ? chunks.join(" ") : chunks.join("\n");
+                                        if (!strip) s += "\n";
+                                        obj[key] = s;
+                                    } else {
+                                        const v = parseBlock(indent + 1);
+                                        obj[key] = v === null ? null : v;
+                                    }
+                                } else {
+                                    obj[key] = parseInlineValue(after, indent + 2);
+                                }
+                            }
+                            return obj;
+                        }
+                        // Bare scalar / flow scalar at root
+                        idx++;
+                        return parseInlineValue(first, indent);
+                    }
+                    function parseInlineValue(s, contIndent) {
+                        s = s.trim();
+                        if (s === "") return null;
+                        if (s[0] === "[" || s[0] === "{") {
+                            const r = parseFlow(s, 0);
+                            return r.value;
+                        }
+                        if (s[0] === '"') {
+                            // Find end quote (no embedded newlines for safe subset)
+                            const end = (() => {
+                                for (let k = 1; k < s.length; k++) {
+                                    if (s[k] === "\\") { k++; continue; }
+                                    if (s[k] === '"') return k;
+                                }
+                                return -1;
+                            })();
+                            if (end > 0) return unescapeDouble(s.slice(1, end));
+                            return s;
+                        }
+                        if (s[0] === "'") {
+                            const end = s.lastIndexOf("'");
+                            if (end > 0) return s.slice(1, end).replace(/''/g, "'");
+                            return s;
+                        }
+                        return parseScalar(s);
+                    }
+                    return parseBlock(0);
+                }
+                function stringify(value, indent) {
+                    const ind = (typeof indent === "number") ? indent : 2;
+                    function quoteIfNeeded(s) {
+                        if (s === "" || s === "null" || s === "true" || s === "false") return '"' + s + '"';
+                        if (/^[-+]?\d/.test(s) || /^[\[{>|*&!#%@\`]/.test(s)) return '"' + s + '"';
+                        if (/[:#\n]/.test(s) || /^\s/.test(s) || /\s$/.test(s)) {
+                            return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+                                .replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t") + '"';
+                        }
+                        return s;
+                    }
+                    function emit(v, level) {
+                        const pad = " ".repeat(level * ind);
+                        if (v === null || v === undefined) return "null";
+                        if (typeof v === "boolean") return v ? "true" : "false";
+                        if (typeof v === "number") {
+                            if (!isFinite(v)) return v !== v ? ".nan" : (v > 0 ? ".inf" : "-.inf");
+                            return String(v);
+                        }
+                        if (typeof v === "string") return quoteIfNeeded(v);
+                        if (Array.isArray(v)) {
+                            if (v.length === 0) return "[]";
+                            return v.map(item => "\n" + pad + "- " + emit(item, level + 1).replace(/^\n/, "")).join("");
+                        }
+                        if (typeof v === "object") {
+                            const keys = Object.keys(v);
+                            if (keys.length === 0) return "{}";
+                            return keys.map(k => {
+                                const out = emit(v[k], level + 1);
+                                if (out.startsWith("\n")) return "\n" + pad + k + ":" + out;
+                                return "\n" + pad + k + ": " + out;
+                            }).join("");
+                        }
+                        return String(v);
+                    }
+                    const result = emit(value, 0);
+                    return result.startsWith("\n") ? result.slice(1) + "\n" : result + "\n";
+                }
+                return { parse, stringify };
+            })();
+
             // Bun.escapeHTML — common micro-helper.
             Bun.escapeHTML = function escapeHTML(input) {
                 return String(input)

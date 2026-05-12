@@ -11259,8 +11259,15 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
         // eval loop is driving microtasks + __keepAlive).
         ctx.globals().set("__asyncEvalActive", true)
             .map_err(|e| format!("init async flag: {:?}", e))?;
-        let _promise = Module::evaluate(ctx.clone(), entry_name.as_str(), source.as_str())
+        // Π2: declare then evaluate so we can populate import.meta.url
+        // (Node ESM idiom — dotenv/many libs derive __dirname from it).
+        let declared = Module::declare(ctx.clone(), entry_name.as_str(), source.as_str())
             .map_err(|e| format!("declare entry: {:?}", e))?;
+        let meta = declared.meta().map_err(|e| format!("meta: {:?}", e))?;
+        let file_url = format!("file://{}", entry_name);
+        meta.set("url", file_url).map_err(|e| format!("meta.url: {:?}", e))?;
+        meta.set("main", true).map_err(|e| format!("meta.main: {:?}", e))?;
+        let (_evaluated, _promise) = declared.eval().map_err(|e| format!("eval entry: {:?}", e))?;
         Ok(())
     })?;
     // Π2.6: drain microtasks AND tick keep-alive registry until both

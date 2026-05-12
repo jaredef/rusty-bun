@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "ohash": "^2.0.11"
+  }
+}

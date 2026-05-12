@@ -308,7 +308,48 @@ fn resolve_node_style(base: &str, specifier: &str) -> Option<std::path::PathBuf>
                     return Some(f);
                 }
             } else {
+                // Subpath request. First try the exports map's
+                // matching "./<sub>" key (with conditional walk).
                 let sub = sub_path.trim_start_matches('/');
+                let exports_key = format!("./{}", sub);
+                let pkg_json = pkg_root.join("package.json");
+                if pkg_json.is_file() {
+                    if let Ok(text) = std::fs::read_to_string(&pkg_json) {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(exports) = parsed.get("exports") {
+                                let conditions = ["bun", "import", "module", "node", "default"];
+                                if let Some(value) = exports.get(&exports_key) {
+                                    if let Some(rel) = resolve_exports_value(value, &conditions) {
+                                        let target = pkg_root.join(rel.trim_start_matches("./"));
+                                        if let Some(f) = try_extensions(&target) { return Some(f); }
+                                        if target.is_file() { return Some(target); }
+                                    }
+                                }
+                                // Pattern-match form: "./foo/*"
+                                if let Some(obj) = exports.as_object() {
+                                    for (k, v) in obj {
+                                        if k.ends_with("/*") {
+                                            let prefix = &k[..k.len() - 2];
+                                            if exports_key.starts_with(prefix)
+                                                && exports_key.len() > prefix.len()
+                                            {
+                                                let suffix = &exports_key[prefix.len() + 1..];
+                                                if let Some(rel) = resolve_exports_value(v, &conditions) {
+                                                    let resolved = rel.replace("*", suffix);
+                                                    let target = pkg_root.join(resolved.trim_start_matches("./"));
+                                                    if let Some(f) = try_extensions(&target) { return Some(f); }
+                                                    if target.is_file() { return Some(target); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fall back to direct subpath join (legacy non-exports
+                // packages or packages whose exports allows it).
                 let target = pkg_root.join(sub);
                 if let Some(f) = try_extensions(&target) {
                     return Some(f);

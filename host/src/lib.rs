@@ -3826,6 +3826,123 @@ fn wire_crypto<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<
                 }
                 throw new Error("Unsupported verify algorithm: " + alg.name);
             };
+
+            // generateKey(algorithm, extractable, keyUsages) → Promise<CryptoKey|CryptoKeyPair>
+            // Symmetric algorithms (HMAC, AES-GCM/CTR/CBC/KW) generate random bytes and
+            // wrap as a CryptoKey via importKey. ECDSA/ECDH delegate to the curve pilot
+            // for keypair generation (returns {privateKey, publicKey}). RSA keypair gen
+            // is deferred — large algorithmic surface; keepers usually pre-bake RSA keys.
+            subtle.generateKey = async function generateKey(algorithm, extractable, keyUsages) {
+                const alg = normalizeAlg(algorithm);
+                if (alg.name === "HMAC") {
+                    const hashName = (algorithm.hash && (typeof algorithm.hash === "string"
+                        ? algorithm.hash : algorithm.hash.name)) || "SHA-256";
+                    const lenBits = algorithm.length || ({
+                        "SHA-1": 512, "SHA-256": 512, "SHA-384": 1024, "SHA-512": 1024,
+                    }[hashName] || 256);
+                    const bytes = globalThis.crypto.getRandomBytes(Math.ceil(lenBits / 8));
+                    return subtle.importKey("raw", bytes,
+                        { name: "HMAC", hash: hashName }, !!extractable, keyUsages);
+                }
+                if (alg.name === "AESGCM" || alg.name === "AESCTR" || alg.name === "AESCBC"
+                    || alg.name === "AESKW") {
+                    const len = algorithm.length || 256;
+                    if (len !== 128 && len !== 192 && len !== 256) {
+                        throw new Error("AES: unsupported key length " + len);
+                    }
+                    const bytes = globalThis.crypto.getRandomBytes(len / 8);
+                    return subtle.importKey("raw", bytes,
+                        { name: algorithm.name }, !!extractable, keyUsages);
+                }
+                if (alg.name === "ECDSA" || alg.name === "ECDH") {
+                    const curve = algorithm.namedCurve || "P-256";
+                    if (typeof subtle.ecGenerateKeypairBytes !== "function") {
+                        throw new Error(alg.name + ": curve pilot does not expose ecGenerateKeypairBytes");
+                    }
+                    const pair = subtle.ecGenerateKeypairBytes(curve);
+                    // pair: [d, x, y] arrays.
+                    const priv = await subtle.importKey("pkcs8-raw",
+                        { d: pair[0], x: pair[1], y: pair[2] },
+                        { name: alg.name, namedCurve: curve },
+                        !!extractable,
+                        keyUsages.filter(u => u === "sign" || u === "deriveKey" || u === "deriveBits"));
+                    const pub = await subtle.importKey("raw",
+                        { x: pair[1], y: pair[2] },
+                        { name: alg.name, namedCurve: curve },
+                        true,
+                        keyUsages.filter(u => u === "verify"));
+                    return { privateKey: priv, publicKey: pub };
+                }
+                throw new Error("generateKey: unsupported algorithm " + alg.name);
+            };
+
+            // exportKey(format, key) → Promise<ArrayBuffer | JsonWebKey>
+            // raw: return _bytes (symmetric). jwk: minimal shape for HMAC/AES/EC.
+            // spki/pkcs8: stub — DER encoding deferred to consumer demand.
+            subtle.exportKey = async function exportKey(format, key) {
+                if (!key) throw new TypeError("exportKey: key is null");
+                if (!key.extractable) throw new Error("exportKey: key is not extractable");
+                if (format === "raw") {
+                    if (Array.isArray(key._bytes)) return new Uint8Array(key._bytes).buffer;
+                    if (key._x) return new Uint8Array([0x04].concat(key._x).concat(key._y || [])).buffer;
+                    throw new Error("exportKey raw: key has no raw representation");
+                }
+                if (format === "jwk") {
+                    const jwk = { ext: true, key_ops: key.usages };
+                    if (Array.isArray(key._bytes)) {
+                        jwk.kty = key._algName === "HMAC" ? "oct" : "oct";
+                        const b64u = (bytes) => {
+                            let bin = "";
+                            for (const b of bytes) bin += String.fromCharCode(b);
+                            return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+                        };
+                        jwk.k = b64u(key._bytes);
+                        if (key._algName === "HMAC") {
+                            const hash = key._hashSpec || "SHA-256";
+                            jwk.alg = "HS" + hash.replace("SHA-", "");
+                        } else if (key._algName && key._algName.startsWith("AES")) {
+                            jwk.alg = key._algName.replace("AES-", "A") + (key._bytes.length * 8);
+                        }
+                        return jwk;
+                    }
+                    if (key._x && key._y) {
+                        jwk.kty = "EC";
+                        jwk.crv = key._curve || "P-256";
+                        const b64u = (bytes) => {
+                            let bin = "";
+                            for (const b of bytes) bin += String.fromCharCode(b);
+                            return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+                        };
+                        jwk.x = b64u(key._x);
+                        jwk.y = b64u(key._y);
+                        if (key._d) jwk.d = b64u(key._d);
+                        return jwk;
+                    }
+                    throw new Error("exportKey jwk: unsupported key shape");
+                }
+                throw new Error("exportKey: format '" + format + "' not implemented");
+            };
+
+            // deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, usages)
+            // Composes deriveBits + importKey: derive the right number of bits for the
+            // derived algorithm, then import as that algorithm's key.
+            subtle.deriveKey = async function deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
+                const derivedAlg = normalizeAlg(derivedKeyAlgorithm);
+                let lenBits;
+                if (derivedAlg.name === "HMAC") {
+                    const hashName = (derivedKeyAlgorithm.hash && (typeof derivedKeyAlgorithm.hash === "string"
+                        ? derivedKeyAlgorithm.hash : derivedKeyAlgorithm.hash.name)) || "SHA-256";
+                    lenBits = derivedKeyAlgorithm.length || ({
+                        "SHA-1": 512, "SHA-256": 512, "SHA-384": 1024, "SHA-512": 1024,
+                    }[hashName] || 256);
+                } else if (derivedAlg.name.startsWith("AES")) {
+                    lenBits = derivedKeyAlgorithm.length || 256;
+                } else {
+                    throw new Error("deriveKey: unsupported derived algorithm " + derivedAlg.name);
+                }
+                const bits = await subtle.deriveBits(algorithm, baseKey, lenBits);
+                return subtle.importKey("raw", bits, derivedKeyAlgorithm, !!extractable, keyUsages);
+            };
         })();
     "#)?;
     Ok(())

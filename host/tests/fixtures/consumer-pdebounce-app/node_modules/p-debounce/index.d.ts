@@ -1,0 +1,113 @@
+export type Options = {
+	/**
+	Call the `fn` on the [leading edge of the timeout](https://css-tricks.com/debouncing-throttling-explained-examples/#article-header-id-1). Meaning immediately, instead of waiting for `wait` milliseconds.
+
+	@default false
+	*/
+	readonly before?: boolean;
+
+	/**
+	An `AbortSignal` to cancel the debounced function.
+	*/
+	readonly signal?: AbortSignal;
+};
+
+export type PromiseOptions = {
+	/**
+	If a call is made while a previous call is still running, queue the latest arguments and run the function again after the current execution completes.
+
+	@default false
+
+	Use cases:
+	- With `after: false` (default): API fetches, data loading, read operations - concurrent calls share the same result.
+	- With `after: true`: Saving data, file writes, state updates - ensures latest data is never lost.
+
+	@example
+	```
+	import {setTimeout as delay} from 'timers/promises';
+	import pDebounce from 'p-debounce';
+
+	const save = async data => {
+		await delay(200);
+		console.log(`Saved: ${data}`);
+		return data;
+	};
+
+	const debouncedSave = pDebounce.promise(save, {after: true});
+
+	// If data changes while saving, it will save again with the latest data
+	debouncedSave('data1');
+	debouncedSave('data2'); // This will run after the first save completes
+	//=> Saved: data1
+	//=> Saved: data2
+	```
+	*/
+	readonly after?: boolean;
+};
+
+declare const pDebounce: {
+	/**
+	[Debounce](https://css-tricks.com/debouncing-throttling-explained-examples/) promise-returning & async functions.
+
+	@param fn - Promise-returning/async function to debounce.
+	@param wait - Milliseconds to wait before calling `fn`.
+	@returns A function that delays calling `fn` until after `wait` milliseconds have elapsed since the last time it was called.
+
+	@example
+	```
+	import pDebounce from 'p-debounce';
+
+	const expensiveCall = async input => input;
+
+	const debouncedFunction = pDebounce(expensiveCall, 200);
+
+	for (const number of [1, 2, 3]) {
+		(async () => {
+			console.log(await debouncedFunction(number));
+		})();
+	}
+	//=> 3
+	//=> 3
+	//=> 3
+	```
+	*/
+	<This, ArgumentsType extends unknown[], ReturnType>(
+		fn: (this: This, ...arguments: ArgumentsType) => PromiseLike<ReturnType> | ReturnType,
+		wait: number,
+		options?: Options
+	): (this: This, ...arguments: ArgumentsType) => Promise<ReturnType>;
+
+	/**
+	Execute `function_` unless a previous call is still pending, in which case, return the pending promise. Useful, for example, to avoid processing extra button clicks if the previous one is not complete.
+
+	@param function_ - Promise-returning/async function to debounce.
+
+	@example
+	```
+	import {setTimeout as delay} from 'timers/promises';
+	import pDebounce from 'p-debounce';
+
+	const expensiveCall = async value => {
+		await delay(200);
+		return value;
+	};
+
+	const debouncedFunction = pDebounce.promise(expensiveCall);
+
+	for (const number of [1, 2, 3]) {
+		(async () => {
+			console.log(await debouncedFunction(number));
+		})();
+	}
+	//=> 1
+	//=> 1
+	//=> 1
+	```
+	*/
+	promise<This, ArgumentsType extends unknown[], ReturnType>(
+		function_: (this: This, ...arguments: ArgumentsType) => PromiseLike<ReturnType> | ReturnType,
+		options?: PromiseOptions
+	): (this: This, ...arguments: ArgumentsType) => Promise<ReturnType>;
+};
+
+export default pDebounce;

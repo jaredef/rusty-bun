@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "p-debounce": "^5.1.0"
+  }
+}

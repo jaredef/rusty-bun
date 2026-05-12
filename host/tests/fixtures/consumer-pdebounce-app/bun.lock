@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "p-debounce": "^5.1.0",
+      },
+    },
+  },
+  "packages": {
+    "p-debounce": ["p-debounce@5.1.0", "", {}, "sha512-3DNQmB7HPRMSuZ9P8JQFzEr7156s1S5Lqpi3mSrsZe5AHvl4ONfGrdB5azWqeOpNejQiemgQBkyU+IDKR5nwyg=="],
+  }
+}

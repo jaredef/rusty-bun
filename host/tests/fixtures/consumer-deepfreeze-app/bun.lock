@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "deep-freeze-es6": "^5.0.0",
+      },
+    },
+  },
+  "packages": {
+    "deep-freeze-es6": ["deep-freeze-es6@5.0.0", "", {}, "sha512-ovTuOE+wULT/D4E9RyRAEc2T4siqbhkw1Ak7OzfnfrI8wemiZzbvuAzIt6g0ciLggySPgMLJD91NyDoaI2WJnA=="],
+  }
+}

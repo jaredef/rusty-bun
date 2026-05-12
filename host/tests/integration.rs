@@ -7906,6 +7906,33 @@ fn consumer_subtle_ec_keygen_app_byte_identical_to_bun() {
 }
 
 
+macro_rules! consumer_test {
+    ($name:ident, $dir:literal) => {
+        #[test]
+        fn $name() {
+            use rusty_bun_host::eval_esm_module;
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(concat!("tests/fixtures/", $dir, "/main.mjs"));
+            let rb = eval_esm_module(fixture.to_str().unwrap()).unwrap();
+            let bun = match std::process::Command::new("bun")
+                .arg(fixture.to_str().unwrap())
+                .output() {
+                Ok(o) => o,
+                Err(_) => { eprintln!("skipped: bun not on PATH"); return; }
+            };
+            assert!(bun.status.success(), "bun exited: {}",
+                String::from_utf8_lossy(&bun.stderr));
+            let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
+            assert_eq!(rb.trim(), bun_out, "differential mismatch");
+        }
+    };
+}
+
+consumer_test!(consumer_babelparser_app_byte_identical_to_bun, "consumer-babelparser-app");
+consumer_test!(consumer_postcss_app_byte_identical_to_bun, "consumer-postcss-app");
+consumer_test!(consumer_fastxmlparser_app_byte_identical_to_bun, "consumer-fastxmlparser-app");
+consumer_test!(consumer_graphql_app_byte_identical_to_bun, "consumer-graphql-app");
+
 #[test]
 fn consumer_micromatch_app_byte_identical_to_bun() {
     use rusty_bun_host::eval_esm_module;

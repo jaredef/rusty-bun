@@ -5783,6 +5783,27 @@ const NODE_HTTP_JS: &str = r#"
                 ? { address: "127.0.0.1", family: "IPv4", port: this._port }
                 : null;
         }
+        // setTimeout(ms, cb?) — fastify calls server.setTimeout(connectionTimeout)
+        // at construction. We accept and store but don't enforce a real
+        // socket timeout (no inbound socket in inject() mode).
+        setTimeout(ms, cb) {
+            this._timeoutMs = ms;
+            if (typeof cb === "function") this.on("timeout", cb);
+            return this;
+        }
+        // Other server setters fastify pokes (no-op except recording):
+        get maxConnections() { return this._maxConnections || 0; }
+        set maxConnections(v) { this._maxConnections = v; }
+        // Event-emitter-shape addListener/removeListener stubs so libraries
+        // that subscribe to 'clientError', 'connection', etc. don't throw.
+        addListener(event, fn) { return this.on(event, fn); }
+        removeListener(_event, _fn) { return this; }
+        removeAllListeners(_event) { return this; }
+        emit(_event) { return false; }
+        once(event, fn) { return this.on(event, fn); }
+        off(event, fn) { return this.removeListener(event, fn); }
+        ref() { return this; }
+        unref() { return this; }
         // Pilot helper preserved: synchronous data-layer dispatch.
         dispatch(req) {
             const incoming = req instanceof IncomingMessage ? req : new IncomingMessage(req);
@@ -5792,8 +5813,11 @@ const NODE_HTTP_JS: &str = r#"
         }
     }
 
-    function createServer(handler) {
-        return new Server(handler);
+    function createServer(opts, handler) {
+        // Two-arg form: (options, handler). fastify passes (options.http, httpHandler).
+        // One-arg form: (handler) or (options).
+        if (typeof opts === "function") return new Server(opts);
+        return new Server(handler || null);
     }
 
     function request(options, cb) {
@@ -5920,30 +5944,62 @@ const COMMONJS_LOADER_JS: &str = r#"
         return null;
     }
 
+    // Resolve a conditional-exports value (string or recursive object)
+    // against a priority-ordered conditions list. Mirrors the Rust-side
+    // resolve_exports_value so ESM and CJS pick the same entry.
+    function resolveExportsValue(value, conditions) {
+        if (typeof value === "string") return value;
+        if (value && typeof value === "object") {
+            for (const cond of conditions) {
+                if (Object.prototype.hasOwnProperty.call(value, cond)) {
+                    const r = resolveExportsValue(value[cond], conditions);
+                    if (r) return r;
+                }
+            }
+            if (Object.prototype.hasOwnProperty.call(value, "default")) {
+                return resolveExportsValue(value["default"], conditions);
+            }
+        }
+        return null;
+    }
+
     function tryDirectoryWithIndex(absDir) {
         const pkgJson = absDir + "/package.json";
         if (pathExists(pkgJson)) {
             try {
                 const pkg = JSON.parse(readSourceUtf8(pkgJson));
-                // exports field — string or object with "." key.
+                // exports field — string or object. Recursively walk
+                // conditional keys: bun → require → node → default
+                // matches Bun's CJS resolution order.
                 if (pkg.exports) {
-                    let main = null;
-                    if (typeof pkg.exports === "string") main = pkg.exports;
-                    else if (typeof pkg.exports === "object") {
-                        const dot = pkg.exports["."];
-                        if (typeof dot === "string") main = dot;
-                        else if (dot && typeof dot === "object") {
-                            main = dot.require || dot.default || dot.node;
+                    const conditions = ["bun", "require", "node", "module", "default"];
+                    let root = null;
+                    if (typeof pkg.exports === "string") {
+                        root = pkg.exports;
+                    } else if (typeof pkg.exports === "object") {
+                        if (Object.prototype.hasOwnProperty.call(pkg.exports, ".")) {
+                            root = pkg.exports["."];
+                        } else {
+                            // No subpath keys (no leading "." entries) →
+                            // treat the whole object as a conditional set.
+                            const hasSubpath = Object.keys(pkg.exports).some(k => k.startsWith("."));
+                            if (!hasSubpath) root = pkg.exports;
                         }
                     }
-                    if (main) {
-                        const resolved = tryExtensions(normalizePath(joinPath(absDir, main)));
-                        if (resolved) return resolved;
+                    if (root != null) {
+                        const rel = resolveExportsValue(root, conditions);
+                        if (rel) {
+                            const target = normalizePath(joinPath(absDir, rel.replace(/^\.\//, "")));
+                            const asFile = tryExtensions(target);
+                            if (asFile) return asFile;
+                            if (pathExists(target)) return target;
+                        }
                     }
                 }
-                // main field.
-                if (typeof pkg.main === "string") {
-                    const resolved = tryExtensions(normalizePath(joinPath(absDir, pkg.main)));
+                // main / module fields.
+                const mainStr = pkg.main || pkg.module;
+                if (typeof mainStr === "string") {
+                    const resolved = tryExtensions(normalizePath(joinPath(absDir, mainStr)));
                     if (resolved) return resolved;
                 }
             } catch (e) {

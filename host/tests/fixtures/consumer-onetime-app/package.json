@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "onetime": "^8.0.0"
+  }
+}

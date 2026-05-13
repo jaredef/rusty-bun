@@ -41,6 +41,18 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `b059d33d` | **seed §VII sharpened** against the Π2.6.c + Π2.6.d milestone — fixture count 593→598, gap-to-full-parity reframed from three terms to two (cooperative-loop reactor question retired structurally), sub-criterion 3/4 updated to record the mio reactor + token-partitioned namespace + four external-fanout closures, §VII.A status block notes the nine-round sweep as retired |
+| 2026-05-13 | `3e8e0a5` (corpus) | **Doc 715 §X consolidation amendment** — five empirical findings from the nine-round cooperative-loop sweep: (a) reactor node corroborates P1 at substrate-internal scale; (b) external-fanout extension grows leaf set without growing alphabet; (c) five-surface ceiling analysis maps onto DAG-depth-from-substrate; (d) shift-3 diagnostic held empirically; (e) Tier-3 own-pid signal dispatch documented as authority-acceptable divergence. Operational implication: pre-partition the identity space at substrate construction (P1-aware design pattern) |
+| 2026-05-13 | `e2f15797` | **Π2.6.d.d async DNS** — per-thread eventfd + mpsc + worker thread; Bun.dns.lookup as real-async Promise; pump self-removes when __dnsPending empties; eval-loop consecutive_idle gate widened to alive_count > 0 OR reactor_alive; consumer-dns-async-app fixture |
+| 2026-05-13 | `0deb799d` | **Π2.6.d.c signals** — per-thread signalfd via libc, blocked via pthread_sigmask; signalfd registered with reactor at first handler; pump in new __keepAliveUnref set; process.kill own-pid shortcut dispatches via queueMicrotask (kernel-level delivery unreliable inside cargo test runner); reactor_alive gated on __reactorPending.size > 0; consumer-signal-handler-app fixture |
+| 2026-05-13 | `860167dc` | **Π2.6.d.b child-process pipes** — host/src/spawn_async.rs with per-thread ProcessHandle registry; pipe fds nonblocking via fcntl O_NONBLOCK; Bun.spawn JS facade rewritten with real ReadableStream stdout/stderr + real exited Promise + true stdin Writable. Two latent bugs surfaced + fixed: ReadableStream pull-trigger now re-fires when pull's promise resolves with pendingReads non-empty (was firing once per reader.read); eval-loop consecutive_idle bail suppressed when alive_count > 0 AND reactor_alive (pending I/O signal). consumer-spawn-async-app fixture |
+| 2026-05-13 | `f7868efc` | **Π2.6.d.a file watchers** — host/src/watchers.rs with libc inotify wrapper; __watch JS namespace; fs.watch rewritten from no-op stub to real reactor-driven watcher with 'rename'/'change' event mapping; latent wire_fs ordering bug surfaced (global.set('fs', ...) ran after the IIFE that referenced globalThis.fs → IIFE returned early every run, watch/createReadStream/constants assignments were dead code). consumer-fs-watch-app fixture |
+| 2026-05-13 | `72276baf` | **Π2.6.c.d TLS pump** — rusty-tls TlsError::WouldBlock + TcpTlsTransport.set_nonblocking + raw_fd + TlsSession.try_receive_application_data; __tls.tryRead/setNonblocking/rawFd; __reactor.registerFd/deregisterFd raw-token primitives; fetch HTTPS branch parks on reactor readiness; TLS Token namespace 0x40000000 + sid |
+| 2026-05-13 | `76e1a3fc` | **Π2.6.c.e WebSocket non-TLS pump** — pump uses TCP.tryRead instead of blocking TCP.read; transport sid setNonblocking + reactor-registered at WS open. Live ws round-trip 1.05s under wallclock=120s |
+| 2026-05-13 | `ae587666` | **Π2.6.c.c listener accept** — listener_raw_fd + listener_set_nonblocking + listener_try_accept in sockets pilot; TCP.tryAccept + TCP.listenerSetNonblocking primitives; __reactor.register/deregister polymorphic across stream + listener sids; reactor.register_fd idempotent; __reactorDrain no longer auto-deregisters; Bun.serve.listen() switched from bindAsync (thread+mpsc) to bind+nonblocking+reactor.register; one fewer OS thread per Bun.serve listener |
+| 2026-05-13 | `f5a7bd83` | **Π2.6.c.b empirical anchor** — consumer-deep-async-handler-app: Bun.serve handler with 32 awaits before first response byte, 4× the old 8-microtask burst ceiling. Pre-c.b structurally impossible; post-c.b lands byte-identical to Bun. Permanent falsifier against any regression that would reintroduce a bounded yield budget |
+| 2026-05-13 | `b13182e9` | **Π2.6.c.b fetch tryRead → reactor await** — TCP.waitReadable(sid) primitive; fetch WouldBlock branch: 8x Promise.resolve() + __tickKeepAlive → single await TCP.waitReadable; eval_esm_module + eval_string_async gained reactor as fourth idle source with 5ms cap; timer_only_idle bail gated on !reactor_alive; reactor switched from process-global singleton to thread_local (singleton contaminated across parallel cargo test threads) |
+| 2026-05-13 | `7012eca9` | **Π2.6.c.a reactor MVP** — mio dep added; host/src/reactor.rs with Poll + Token ready-queue; pilots/sockets exposes stream_raw_fd; globalThis.__reactor namespace; readable_event_fires_on_socketpair + poll_zero_timeout_is_nonblocking unit tests pass; no consumer migration this round |
 | 2026-05-13 | `c6bad4dc` | **.mjs-always-ESM force in FsLoader** — file extension takes precedence over heuristic per Node spec; tsx shape-parity fixture lands (both Bun and rusty-bun throw on import, tsx is CLI runtime wrapper). The fix is load-bearing for minified-ESM .mjs files whose first line begins with `var`/`let`/`const`/`!function` rather than `import` — previously these fell through the import-line-start scan into the CJS branch and parse-errored on embedded `import` statements. Predicted cascade per Doc 715 D1: an unenumerated set of bundler-output .mjs entries previously gated on parse classification. |
 | 2026-05-13 | `efdeac2f` | **High-fanout probe** — node-fetch + ioredis + eslint shape-parity; cooperative-loop and minified-ESM gates surfaced as the remaining structural gates |
 | 2026-05-13 | `0a404be4` | **E.19 megastack retired** — node:http METHODS + STATUS_CODES + globalAgent + Agent class; express + 6 middleware stack byte-identical |
@@ -319,18 +331,75 @@ The detailed sub-round records below remain as the engagement's history. Future 
 2. Substrate-widening priority is graph-theoretic — pick the substrate node with highest in-degree blocking the next consumer probe.
 3. L2M-saturation diagnostic anchors empirically — measure new-substrate-edges-exercised per probe; shift to corpus-tier consolidation when ratio drops below ~1.
 
-#### Remaining work toward telos closure (2026-05-13)
+---
 
-**Substantive multi-round:**
+#### Status at 2026-05-13 evening close (Π2.6.c + Π2.6.d cooperative-loop sweep)
+
+**Fixture count: 582 inner-loop + 16 slow-burst = 598 J.1.a fixtures.** Inner-loop suite ~25s on Pi. Five new fixtures landed in the sweep: consumer-deep-async-handler-app (32-await falsifier), consumer-fs-watch-app (inotify), consumer-spawn-async-app (cat with concurrent stdin/stdout), consumer-signal-handler-app (SIGUSR1 self-delivery), consumer-dns-async-app (localhost resolution).
+
+**Cooperative-loop reactor ceiling structurally retired.** Per the five-surface analysis from the morning's exchange, four of five surfaces are now closed at the substrate level via mio integration:
+1. ✅ **Handler-depth ceiling** — fetch's 8-microtask-burst busy-spin replaced with TCP.waitReadable Promise parking on mio readiness (Π2.6.c.b). 32-await handler fixture is the permanent falsifier.
+2. ✅ **True-concurrency ceiling** — each fetch parks per-token; mio multiplexes; no shared static yield budget (Π2.6.c.b + c.c + c.d).
+3. ✅ **External-fanout** — file watchers (inotify), child-process pipes, signals (signalfd), DNS (eventfd-driven worker) all reactor-registered under a partitioned Token namespace (Π2.6.d.a-d).
+4. ✅ **CPU-during-idle** — eval loop's reactor poll uses mio's block-with-timeout instead of busy-spin idleSpins (Π2.6.c.b + c.c).
+5. 🔬 **Adversarial-async-graph** — successor-engagement scope per Doc 715 §X.c. Sits at DAG-depth ~∞ from the reactor; only hand-rolling QuickJS's scheduler fully closes it.
+
+**Substrate widenings landed in the sweep (Π2.6.c + Π2.6.d):**
+- mio crate added; host/src/reactor.rs with per-thread Poll + ready-queue + registered-set
+- pilots/sockets exposes stream_raw_fd + listener_raw_fd + listener_set_nonblocking + listener_try_accept
+- rusty-tls extended: TlsError::WouldBlock + TcpTlsTransport.set_nonblocking + raw_fd + TlsSession.try_receive_application_data
+- host/src/watchers.rs (libc inotify wrapper)
+- host/src/spawn_async.rs (per-thread ProcessHandle registry; nonblocking pipe fds via fcntl)
+- host/src/signals.rs (per-thread signalfd via libc + pthread_sigmask)
+- host/src/dns_async.rs (per-thread eventfd + mpsc + worker thread pool)
+- libc dep added to host/Cargo.toml
+- Reactor Token namespace partitioned: TCP=0x00…, TLS=0x40…, signalfd=0x50…, DNS=0x55…, inotify=0x60…, spawn=0x70…
+- __reactor JS namespace: register/deregister/poll/takeReady/registerFd/deregisterFd/registeredCount
+- __reactorPending Map + __reactorDrain (Promise resolution on readiness)
+- TCP.waitReadable + TCP.tryAccept + TCP.listenerSetNonblocking
+- __tls.tryRead + __tls.setNonblocking + __tls.rawFd
+- __watch.create/addWatch/rawFd/readEventsJson/close
+- __spawn.spawnAsync/spawnAsyncPid/spawnPipeFd/spawnTryReadPipe/spawnWritePipe/spawnClosePipe/spawnTryWait/spawnKill/spawnDropHandle
+- __signals.addSignal/readSignals/fd; process.kill own-pid dispatch shortcut
+- __dns.submitLookup/drainLookups/eventFd; Bun.dns.lookup as real-async Promise
+- New globalThis.__keepAliveUnref Set (watchers tick but don't keep process alive)
+- fs.watch real implementation (was no-op stub)
+- Bun.spawn rewritten with real ReadableStream stdout/stderr + real exited Promise + Writable stdin
+- process.on('SIG*', fn) handlers fire on signal delivery via signalfd
+
+**Eval-loop discipline updates in the sweep:**
+- consecutive_idle bail suppressed when alive_count > 0 OR reactor_alive (was bailing in 5s flat for async-pipe consumers)
+- reactor_alive gated on __reactorPending.size > 0 (registered fd alone is wake mechanism, not pending I/O)
+- timer_only_idle bail gated on !reactor_alive (recurring middleware timer firing while fetch awaits is not "test done")
+- Reactor switched from process-global singleton to thread_local (singleton contaminated across parallel cargo test threads)
+- eval_string_async loop gained reactor + keep-alive sources (was timer-only)
+
+**Latent bugs surfaced + fixed (M7 fold-back):**
+- ReadableStream pull-trigger fired once per reader.read(); pull-driven sources that sometimes don't enqueue left subsequent reads waiting forever. Wrapped in a drivePull closure that fires again when pull's promise resolves with pendingReads non-empty.
+- wire_fs IIFE guarded on `typeof globalThis.fs === "undefined"` but `global.set("fs", fs)` ran after the eval — the IIFE returned early every run; fs.watch/createReadStream/constants assignments inside were dead code. Surfaced when fs.watch was first invoked.
+
+**Apparatus tier additions (Doc 715 §X consolidation amendment):**
+- Five empirical findings: (a) reactor node corroborates P1 at substrate-internal scale; (b) external-fanout extension grows leaf set without growing alphabet; (c) five-surface ceiling analysis maps onto DAG-depth-from-substrate; (d) shift-3 diagnostic held empirically through the sweep (~0.3 new-substrate-edges-per-probe, zero new alphabet elements); (e) Tier-3 own-pid signal dispatch documented as authority-acceptable divergence.
+- Operational implication: pre-partition the identity space at substrate construction (P1-aware design pattern).
+
+#### Remaining work toward telos closure (2026-05-13 evening)
+
+**Two structural blockers** (was three; cooperative-loop reactor is retired):
 - **Module-context dynamic eval (eval-ESM)** — prettier full-format only; 2-3 rounds; low-cascade value
-- **Real event-loop reactor (mio/epoll)** — for substantially-deeper async chains beyond the 8-yield model; 3-5 rounds; high-cascade value if attempted
-- **node:stream Transform objectMode + multi-phase parser composition** — E.29-bis fast-csv to full functionality; 1-2 rounds; medium-cascade
+- **Real-OSS basket expansion** — hono v4 full surface, elysia, drizzle-orm, prisma-client, etc.; each is typically single-fixture-per-round at current density coefficient
 
-**Opportunistic basket expansion** — npm package coverage continues to grow; ~10-30 fixtures per substrate widening at current density coefficient. No telos blocker; open-ended productivity.
+**Successor-engagement scope** (out of incremental round budget):
+- **Adversarial-async-graph (engine-internal scheduling)** — per Doc 715 §X.c, this is the only ceiling surface that remains and it sits at DAG-depth ~∞ from the reactor. Only hand-rolling QuickJS in Rust closes it. Per the earlier comparison (mio vs Boa vs hand-roll), this is engagement-scale rather than round-scale work. Recorded as a future engagement target.
 
-**Live cascade prediction (Doc 715 D1, posted 2026-05-13).** The .mjs-always-ESM gate just landed predicts retirement-fanout across bundler-output .mjs entries that previously parse-errored on the looks_like_cjs first-line scan. Empirical anchor: tsx surfaced the gap; sweeping minified-ESM-shaped packages in the queue should retire a non-trivial subset without further substrate work. If the prediction holds (≥5 packages retire on the next sweep), it corroborates Doc 715 P1 once more in the substrate-classifier layer (distinct from prior corroborations in the API-surface layer). If it doesn't, the parse-classification gate isn't load-bearing in the wild and the fix is local-only.
+**Opportunistic basket expansion** — npm package coverage continues to grow at the current density coefficient (50-200× retirement-fanout per substrate widening, ~0.3 new-substrate-edges-per-probe). No telos blocker; open-ended productivity. Per Doc 715 §X.b prediction: each new probe should retire mostly free, occasionally surfacing a leaf-set instance (not a new alphabet element).
 
-**Telos-anchored framing of current state.** Sub-criterion 5 (per-fixture differential) at 593 J.1.a fixtures, all byte-identical to Bun 1.3.11. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity (418/418), L4+ instance-fill regime in operation. The seed §VII "~40% against full parity" estimate is now stale on the curated-corpus axis; the remaining distance to full plug-and-play parity is dominated by (a) real-OSS basket expansion against canonical third-party packages already partially covered in the J.1.a basket, (b) the cooperative-loop reactor question (8-yield holds for canonical frameworks, unknown for deeper async), and (c) eval-ESM (prettier-class). The substrate-introduction phase appears effectively complete; the remaining work is consolidation under the joint-MI-DAG lens.
+**Strong external validation** — WPT runner adapter still queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
+
+**Permanent out-of-scope** (unchanged): WASM, HTTP/2, transpiler internals, debugger protocol.
+
+**Telos-anchored framing.** Sub-criterion 5 (per-fixture differential) at 598 J.1.a fixtures. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity (418/418), L4+ instance-fill regime. Sub-criterion 3 (transport-layer): functionally complete; the cooperative-loop reactor ceiling is structurally retired. Sub-criterion 4 (JS host integration): reactor + token-partitioned namespace + four external-fanout sources wired. The remaining distance to full plug-and-play parity is dominated by basket-coverage (mechanical) + eval-ESM (bounded). The substrate-introduction phase ended in the morning; the cooperative-loop reactor sweep ended in the evening; the engagement is fully in the consolidation regime per Doc 715 §VII shift 3 + §X.
+
+**Live cascade prediction (Doc 715 D1, posted 2026-05-13 morning).** The .mjs-always-ESM gate predicts retirement-fanout across bundler-output minified-ESM packages. Falsifier still open: ≥5 packages retire on the next probe sweep corroborates P1 in the parse-classifier layer; zero retirements means the fix was local-only.
 
 **Strong external validation** — WPT runner adapter remains queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
 

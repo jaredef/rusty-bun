@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "stream-json": "^2.1.0",
+      },
+    },
+  },
+  "packages": {
+    "stream-chain": ["stream-chain@3.6.2", "", {}, "sha512-MRUXdH/Fcv2I95WSkPthvpxGsuKeBpr50UXcP5Z3ncWafYxrWelMTVI3G7vJFABCs1ipoTPCN3J13ZcLpymrtA=="],
+
+    "stream-json": ["stream-json@2.1.0", "", { "dependencies": { "stream-chain": "^3.6.1" } }, "sha512-9gV/ywtebMn3DdKnNKYCb9iESvgR1dHbucNV+bRGvdvy+jV4c9FFgYKmENhpKv58jSwvs90Wk80RhfKk1KxHPg=="],
+  }
+}

@@ -7944,6 +7944,9 @@ consumer_test!(consumer_lru_cache_app_byte_identical_to_bun, "consumer-lru-cache
 consumer_test!(consumer_pino_pretty_app_byte_identical_to_bun, "consumer-pino-pretty-app");
 consumer_test!(consumer_winston_app_byte_identical_to_bun, "consumer-winston-app");
 consumer_test!(consumer_undici_real_app_byte_identical_to_bun, "consumer-undici-real-app");
+consumer_test!(consumer_stream_json_app_byte_identical_to_bun, "consumer-stream-json-app");
+consumer_test!(consumer_body_parser_app_byte_identical_to_bun, "consumer-body-parser-app");
+consumer_test!(consumer_inquirer_app_byte_identical_to_bun, "consumer-inquirer-app");
 
 #[test]
 fn consumer_micromatch_app_byte_identical_to_bun() {

@@ -490,7 +490,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "setMaxListeners", "getEventListeners"]),
         "node:util" | "util" => ("nodeUtil", &["promisify", "callbackify",
             "format", "formatWithOptions", "inspect", "isDeepStrictEqual",
-            "deprecate", "debuglog", "inherits", "types", "TextEncoder", "TextDecoder"]),
+            "deprecate", "debuglog", "inherits", "types", "TextEncoder", "TextDecoder",
+            "styleText", "parseArgs", "stripVTControlCharacters", "getSystemErrorName"]),
         "node:util/types" | "util/types" => ("nodeUtilTypes", &[
             "isPromise", "isDate", "isRegExp", "isMap", "isSet",
             "isArrayBuffer", "isTypedArray", "isUint8Array", "isInt8Array",
@@ -7923,6 +7924,43 @@ const COMMONJS_LOADER_JS: &str = r#"
             const pkgRoot = joinPath(dir, "node_modules/" + pkgName);
             if (pathExists(pkgRoot)) {
                 if (subPath.length > 0) {
+                    // First: check pkg.exports for an explicit subpath
+                    // or `./*` pattern (Node spec). stream-chain uses
+                    // `./*: ./src/*` to remap utils/X to src/utils/X.
+                    const pkgJsonPath = pkgRoot + "/package.json";
+                    if (pathExists(pkgJsonPath)) {
+                        try {
+                            const pkg = JSON.parse(readSourceUtf8(pkgJsonPath));
+                            if (pkg.exports && typeof pkg.exports === "object") {
+                                const conditions = ["bun", "require", "node", "module", "default"];
+                                const subKey = "." + subPath;  // subPath has leading /
+                                if (Object.prototype.hasOwnProperty.call(pkg.exports, subKey)) {
+                                    const rel = resolveExportsValue(pkg.exports[subKey], conditions);
+                                    if (rel) {
+                                        const target = normalizePath(joinPath(pkgRoot, rel.replace(/^\.\//, "")));
+                                        const asFile = tryExtensions(target);
+                                        if (asFile) return asFile;
+                                        if (pathExists(target)) return target;
+                                    }
+                                }
+                                for (const k of Object.keys(pkg.exports)) {
+                                    if (k.endsWith("/*")) {
+                                        const prefix = k.substring(0, k.length - 2);
+                                        if (subKey.startsWith(prefix) && subKey.length > prefix.length) {
+                                            const suffix = subKey.substring(prefix.length + 1);
+                                            const rel = resolveExportsValue(pkg.exports[k], conditions);
+                                            if (rel) {
+                                                const target = normalizePath(joinPath(pkgRoot, rel.replace("*", suffix).replace(/^\.\//, "")));
+                                                const asFile = tryExtensions(target);
+                                                if (asFile) return asFile;
+                                                if (pathExists(target)) return target;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (_) { /* fall through */ }
+                    }
                     const target = normalizePath(pkgRoot + subPath);
                     const asFile = tryExtensions(target);
                     if (asFile) return asFile;
@@ -8971,6 +9009,53 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
             };
 
+            // util.styleText (Node 22+) — ANSI styling. Map common format
+            // names; fall through identity for unknown.
+            const __ANSI = {
+                reset: "\x1b[0m", bold: "\x1b[1m", italic: "\x1b[3m", underline: "\x1b[4m",
+                inverse: "\x1b[7m", dim: "\x1b[2m", strikethrough: "\x1b[9m",
+                black: "\x1b[30m", red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+                blue: "\x1b[34m", magenta: "\x1b[35m", cyan: "\x1b[36m", white: "\x1b[37m",
+                gray: "\x1b[90m", grey: "\x1b[90m",
+                bgBlack: "\x1b[40m", bgRed: "\x1b[41m", bgGreen: "\x1b[42m",
+                bgYellow: "\x1b[43m", bgBlue: "\x1b[44m", bgMagenta: "\x1b[45m",
+                bgCyan: "\x1b[46m", bgWhite: "\x1b[47m",
+            };
+            function styleText(format, text) {
+                const formats = Array.isArray(format) ? format : [format];
+                let prefix = "";
+                for (const f of formats) prefix += __ANSI[f] || "";
+                return prefix + String(text) + __ANSI.reset;
+            }
+            // Default parseArgs: minimal Node parseArgs (Node 18+).
+            function parseArgs(config) {
+                const args = config.args || [];
+                const options = config.options || {};
+                const values = {};
+                const positionals = [];
+                for (let i = 0; i < args.length; i++) {
+                    const a = args[i];
+                    if (a.startsWith("--")) {
+                        const eq = a.indexOf("=");
+                        const name = eq < 0 ? a.slice(2) : a.slice(2, eq);
+                        const inline = eq < 0 ? undefined : a.slice(eq + 1);
+                        const opt = options[name] || {};
+                        if (opt.type === "boolean") {
+                            values[name] = inline === undefined ? true : inline !== "false";
+                        } else {
+                            values[name] = inline !== undefined ? inline : args[++i];
+                        }
+                    } else if (a.startsWith("-") && a.length > 1) {
+                        const name = a.slice(1);
+                        const opt = options[name] || {};
+                        if (opt.type === "boolean") values[name] = true;
+                        else values[name] = args[++i];
+                    } else {
+                        positionals.push(a);
+                    }
+                }
+                return { values, positionals };
+            }
             globalThis.nodeUtil = {
                 promisify,
                 callbackify,
@@ -8982,6 +9067,10 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 debuglog,
                 inherits,
                 types,
+                styleText,
+                parseArgs,
+                stripVTControlCharacters: (s) => String(s).replace(/\x1b\[[\d;]*m/g, ""),
+                getSystemErrorName: (errno) => "UNKNOWN",
                 TextEncoder: globalThis.TextEncoder,
                 TextDecoder: globalThis.TextDecoder,
             };

@@ -399,6 +399,13 @@ struct NodeResolver;
 
 impl Resolver for NodeResolver {
     fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> JsResult<String> {
+        // Π2.6.eval-ESM: data: URLs pass through as-is for the loader
+        // to decode. WHATWG dynamic-import-with-data-URL is the
+        // canonical pattern for evaluating bundled-as-string ESM
+        // source (prettier plugin loader, esbuild dev-runtime).
+        if name.starts_with("data:") {
+            return Ok(name.to_string());
+        }
         // node:* and bare-builtin names short-circuit; FsLoader recognizes them.
         if is_node_builtin(name) {
             return Ok(name.to_string());
@@ -941,6 +948,60 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
 /// `export {`, `export *`, `export default`, `import `, `import {`.
 /// The detection is conservative — a file with any ESM marker is treated
 /// as ESM. Comment-only matches survive but are rare.
+/// Π2.6.eval-ESM: RFC 4648 base64 decoder (alphabet A-Z, a-z, 0-9, +, /; padding =).
+/// Returns None on invalid input. Strips whitespace per RFC 2397 leniency.
+fn decode_base64_payload(s: &str) -> Option<Vec<u8>> {
+    let mut buf: [i16; 256] = [-1; 256];
+    let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (i, &c) in alpha.iter().enumerate() {
+        buf[c as usize] = i as i16;
+    }
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let mut bits: u32 = 0;
+    let mut nbits: u32 = 0;
+    for b in s.bytes() {
+        if b == b'=' || b == b'\n' || b == b'\r' || b == b' ' || b == b'\t' { continue; }
+        let v = buf[b as usize];
+        if v < 0 { return None; }
+        bits = (bits << 6) | (v as u32);
+        nbits += 6;
+        if nbits >= 8 {
+            nbits -= 8;
+            out.push((bits >> nbits) as u8 & 0xff);
+        }
+    }
+    Some(out)
+}
+
+/// Π2.6.eval-ESM: RFC 3986 percent-decoding for data: URL payloads.
+/// `%XX` triplets decode to byte XX; other bytes pass through.
+fn url_percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn looks_like_cjs(source: &str) -> bool {
     // Quick reject: any line starting with `import ` or `export `
     // (after trimming) implies ESM, even if the file also has stray
@@ -989,6 +1050,25 @@ fn inert_stub_esm(known_names: &[&str]) -> String {
 
 impl Loader for FsLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> JsResult<Module<'js, Declared>> {
+        // Π2.6.eval-ESM: data: URL → inline source. Format per RFC 2397:
+        //   data:[<mediatype>][;base64],<data>
+        // We accept any mediatype + optional ;base64. Without base64, the
+        // payload is URL-encoded. Always loaded as ESM (data: URLs always
+        // contain module-mode source in practice — that's the whole reason
+        // consumers use them).
+        if let Some(rest) = name.strip_prefix("data:") {
+            let comma = rest.find(',').ok_or_else(|| JsErr::new_loading(name))?;
+            let prefix = &rest[..comma];
+            let payload = &rest[comma + 1..];
+            let source: String = if prefix.contains(";base64") {
+                let decoded = decode_base64_payload(payload)
+                    .ok_or_else(|| JsErr::new_loading(name))?;
+                String::from_utf8(decoded).map_err(|_| JsErr::new_loading(name))?
+            } else {
+                url_percent_decode(payload)
+            };
+            return Module::declare(ctx.clone(), name, source);
+        }
         // Inert-stub interception. undici's CJS load chain pulls in ~30
         // transitive modules including worker_threads internals + TLS
         // sniffing + http/2 framing; stubbing it lets consumers that

@@ -7991,6 +7991,28 @@ consumer_test!(consumer_kysely_app_byte_identical_to_bun, "consumer-kysely-app")
 consumer_test!(consumer_ramda_app_byte_identical_to_bun, "consumer-ramda-app");
 consumer_test!(consumer_preact_app_byte_identical_to_bun, "consumer-preact-app");
 consumer_test!(consumer_nanostores_app_byte_identical_to_bun, "consumer-nanostores-app");
+consumer_test!(consumer_jotai_app_byte_identical_to_bun, "consumer-jotai-app");
+consumer_test!(consumer_valtio_app_byte_identical_to_bun, "consumer-valtio-app");
+consumer_test!(consumer_temporal_polyfill_app_byte_identical_to_bun, "consumer-temporal-polyfill-app");
+consumer_test!(consumer_joi_app_byte_identical_to_bun, "consumer-joi-app");
+consumer_test!(consumer_lodash_es_app_byte_identical_to_bun, "consumer-lodash-es-app");
+consumer_test!(consumer_consola_app_byte_identical_to_bun, "consumer-consola-app");
+consumer_test!(consumer_chalk_app_byte_identical_to_bun, "consumer-chalk-app");
+consumer_test!(consumer_ohash_app_byte_identical_to_bun, "consumer-ohash-app");
+consumer_test!(consumer_magic_string_app_byte_identical_to_bun, "consumer-magic-string-app");
+consumer_test!(consumer_fast_glob_app_byte_identical_to_bun, "consumer-fast-glob-app");
+consumer_test!(consumer_scrypt_js_app_byte_identical_to_bun, "consumer-scrypt-js-app");
+// yargs (E.62 deferred): eval entry Exception on import via yargs/yargs
+// subpath. Likely a syntax form QuickJS doesn't accept (top-level dynamic
+// import, decorators, or similar). Recorded; re-open requires identifying
+// the specific construct.
+// consumer_test!(consumer_yargs_app_byte_identical_to_bun, "consumer-yargs-app");
+consumer_test!(consumer_chalk_template_app_byte_identical_to_bun, "consumer-chalk-template-app");
+consumer_test!(consumer_just_curry_it_app_byte_identical_to_bun, "consumer-just-curry-it-app");
+consumer_test!(consumer_signale_app_byte_identical_to_bun, "consumer-signale-app");
+consumer_test!(consumer_loglevel_app_byte_identical_to_bun, "consumer-loglevel-app");
+consumer_test!(consumer_ts_pattern_app_byte_identical_to_bun, "consumer-ts-pattern-app");
+consumer_test!(consumer_hookable_app_byte_identical_to_bun, "consumer-hookable-app");
 // Elysia (E.60 basin boundary): SIGSEGV in QuickJS parser on the
 // 1987-line minified ESM bundle. Each transitive dependency loads
 // individually without issue. Process-level failure, can't be caught

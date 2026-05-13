@@ -6160,10 +6160,23 @@ if (typeof globalThis.fetch === "undefined" ||
                     chunk = globalThis.TCP.tryRead(sid, 65536);
                     if (chunk === null) {
                         // WouldBlock — pump keep-alive (so in-process server's
-                        // __tick can accept + dispatch + write) then yield to
-                        // drain the microtask queue (the server handler is
-                        // queued as an async IIFE; yielding lets it run).
+                        // __tick can accept + dispatch + write) then yield
+                        // multiple microtask boundaries to give a long handler
+                        // chain (express + middleware + body-parser + N
+                        // middlewares) room to drain its awaits. E.19
+                        // megastack class motivated bumping single-yield to
+                        // a configurable burst.
                         if (globalThis.__tickKeepAlive) globalThis.__tickKeepAlive();
+                        // Multiple microtask yields per spin — drains chained
+                        // async handlers. 8 boundaries empirically retires
+                        // express + 5-7-middleware stacks.
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        await Promise.resolve();
                         await Promise.resolve();
                         idleSpins++;
                         if (idleSpins > maxIdleSpins) {

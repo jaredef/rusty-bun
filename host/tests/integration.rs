@@ -7970,6 +7970,7 @@ consumer_test!(consumer_node_fetch_app_byte_identical_to_bun, "consumer-node-fet
 consumer_test!(consumer_ioredis_app_byte_identical_to_bun, "consumer-ioredis-app");
 consumer_test!(consumer_eslint_app_byte_identical_to_bun, "consumer-eslint-app");
 consumer_test!(consumer_tsx_app_byte_identical_to_bun, "consumer-tsx-app");
+consumer_test!(consumer_deep_async_handler_app_byte_identical_to_bun, "consumer-deep-async-handler-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

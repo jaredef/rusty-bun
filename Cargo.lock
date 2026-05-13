@@ -432,6 +432,17 @@ name = "rusty-http-codec"
 version = "0.1.0"
 
 [[package]]
+name = "rusty-js-ast"
+version = "0.1.0"
+
+[[package]]
+name = "rusty-js-parser"
+version = "0.1.0"
+dependencies = [
+ "rusty-js-ast",
+]
+
+[[package]]
 name = "rusty-node-fs"
 version = "0.1.0"
 

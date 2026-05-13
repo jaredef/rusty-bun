@@ -466,7 +466,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "rm", "unlink", "access", "readFile", "writeFile",
             "Dirent", "Stats",
             "appendFileSync", "rmSync", "copyFileSync", "renameSync",
-            "chmodSync", "utimesSync", "mkdirSync", "rmdirSync"]),
+            "chmodSync", "utimesSync", "mkdirSync", "rmdirSync",
+            "createReadStream", "createWriteStream", "openSync", "closeSync",
+            "writeSync", "readSync", "fstatSync", "ftruncateSync", "fsyncSync",
+            "watchFile", "unwatchFile", "watch", "constants"]),
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
             "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
             "sep", "delimiter", "posix", "win32"]),
@@ -499,7 +502,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:util" | "util" => ("nodeUtil", &["promisify", "callbackify",
             "format", "formatWithOptions", "inspect", "isDeepStrictEqual",
             "deprecate", "debuglog", "inherits", "types", "TextEncoder", "TextDecoder",
-            "styleText", "parseArgs", "stripVTControlCharacters", "getSystemErrorName"]),
+            "styleText", "parseArgs", "stripVTControlCharacters", "getSystemErrorName",
+            "aborted", "MIMEType", "MIMEParams", "deprecationWarned",
+            "getCallSite", "getSystemErrorMap", "transferableAbortController",
+            "transferableAbortSignal"]),
         "node:util/types" | "util/types" => ("nodeUtilTypes", &[
             "isPromise", "isDate", "isRegExp", "isMap", "isSet",
             "isArrayBuffer", "isTypedArray", "isUint8Array", "isInt8Array",
@@ -734,26 +740,50 @@ fn rewrite_destructure_exports(source: &str) -> String {
                 }
             }
             // Scan ahead for the matching `} = NAME;` close (multi-line).
-            let mut matched: Option<(usize, String, Vec<String>)> = None;
-            let max_scan = std::cmp::min(lines.len(), i + 200);
+            // matched: (last_line_index, synth_name, rhs_expr, names)
+            let mut matched: Option<(usize, String, String, Vec<String>)> = None;
+            let max_scan = std::cmp::min(lines.len(), i + 500);
             for j in (i + 1)..max_scan {
                 let t = lines[j].trim();
-                if let Some(rest) = t.strip_prefix("} = ") {
-                    if let Some(name) = rest.strip_suffix(";") {
-                        let name = name.trim();
-                        let valid_name = !name.is_empty()
-                            && name.chars().enumerate().all(|(k, c)| {
-                                if k == 0 { c.is_alphabetic() || c == '_' || c == '$' }
-                                else { c.is_alphanumeric() || c == '_' || c == '$' }
-                            });
-                        if !valid_name { break; }
+                // Match line containing "} = <expr>" anywhere (with the last
+                // field optionally inline before the }). Support both
+                // simple-name and arbitrary-expression rhs.
+                let close_idx = t.find("} = ").or_else(|| t.find("} ="));
+                if let Some(idx) = close_idx {
+                    // Take everything before the } as part of the inner.
+                    let rhs_part = &t[idx + 1..];  // starts with '= ' or ' = '
+                    let rest = rhs_part.trim_start_matches(|c: char| c.is_whitespace())
+                        .trim_start_matches('=').trim();
+                    // Use a synthetic name '__destructure_rhs_N' bound to the
+                    // expression; emit it as a const then build individual
+                    // export consts from it.
+                    let rhs = rest.trim_end_matches(';').trim();
+                    if rhs.is_empty() { break; }
+                    let synth = format!("__destructure_rhs_{}", i);
+                    let valid_name = true;
+                    let name = synth.clone();
+                    let _ = valid_name; let _ = &name;
+                    {
                         let joined: String = lines[i..=j].join("\n");
                         if let (Some(o), Some(c)) = (joined.find('{'), joined.rfind('}')) {
                             let inner = &joined[o + 1..c];
-                            // Strip line comments (// to end-of-line) BEFORE splitting on
-                            // commas — comments mid-list (e.g. `Foo, // deprecated\n  Bar`)
-                            // otherwise swallow the next identifier when split-then-strip.
-                            let cleaned: String = inner.lines().map(|l| {
+                            // Strip /* ... */ block comments (JSDoc between
+                            // destructure fields, common in TS-emitted code)
+                            // first, then strip // line comments.
+                            let mut without_block = String::with_capacity(inner.len());
+                            let bytes = inner.as_bytes();
+                            let mut k = 0;
+                            while k < bytes.len() {
+                                if k + 1 < bytes.len() && bytes[k] == b'/' && bytes[k + 1] == b'*' {
+                                    k += 2;
+                                    while k + 1 < bytes.len() && !(bytes[k] == b'*' && bytes[k + 1] == b'/') { k += 1; }
+                                    if k + 1 < bytes.len() { k += 2; }
+                                } else {
+                                    without_block.push(bytes[k] as char);
+                                    k += 1;
+                                }
+                            }
+                            let cleaned: String = without_block.lines().map(|l| {
                                 l.split("//").next().unwrap_or("").to_string()
                             }).collect::<Vec<_>>().join("\n");
                             let mut names: Vec<String> = Vec::new();
@@ -768,15 +798,32 @@ fn rewrite_destructure_exports(source: &str) -> String {
                                     });
                                 if valid { names.push(n.to_string()); }
                             }
-                            matched = Some((j, name.to_string(), names));
+                            matched = Some((j, name.to_string(), rhs.to_string(), names));
                         }
                         break;
                     }
                 }
             }
-            if let Some((j, name, names)) = matched {
+            if let Some((j, name, rhs, names)) = matched {
+                // If rhs is a plain identifier, skip the synth and reuse it
+                // directly. Otherwise emit the synthetic const.
+                let is_bare_ident = !name.starts_with("__destructure_rhs_")
+                    || rhs.chars().enumerate().all(|(k, c)| {
+                        if k == 0 { c.is_alphabetic() || c == '_' || c == '$' }
+                        else { c.is_alphanumeric() || c == '_' || c == '$' }
+                    });
+                let target = if is_bare_ident && !rhs.is_empty()
+                    && rhs.chars().enumerate().all(|(k, c)| {
+                        if k == 0 { c.is_alphabetic() || c == '_' || c == '$' }
+                        else { c.is_alphanumeric() || c == '_' || c == '$' }
+                    }) {
+                    rhs.clone()
+                } else {
+                    out.push_str(&format!("const {} = {};\n", name, rhs));
+                    name.clone()
+                };
                 for n in names {
-                    out.push_str(&format!("export const {0} = {1}.{0};\n", n, name));
+                    out.push_str(&format!("export const {0} = {1}.{0};\n", n, target));
                 }
                 i = j + 1;
                 continue;
@@ -5099,6 +5146,57 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             Ok(())
         })?,
     )?;
+    // Stream + file-descriptor surface — stub class + functions.
+    // Many libs (execa, fs-extra-shim, etc.) typeof-check these for
+    // capability detection without actually invoking them.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            if (typeof globalThis.fs === "undefined") return;
+            class FsReadStream {
+                constructor(path, opts) { this.path = path; this.opts = opts || {}; }
+                pipe(dst) { return dst; }
+                on() { return this; } off() { return this; } once() { return this; }
+                emit() { return false; }
+                close(cb) { if (cb) queueMicrotask(cb); }
+                destroy() { return this; }
+            }
+            class FsWriteStream extends FsReadStream {
+                write() { return true; } end() { return this; }
+            }
+            globalThis.fs.createReadStream = function(path, opts) { return new FsReadStream(path, opts); };
+            globalThis.fs.createWriteStream = function(path, opts) { return new FsWriteStream(path, opts); };
+            globalThis.fs.openSync = function(path, _flag, _mode) {
+                // Return a fake file descriptor; we dont track fds.
+                return 3;
+            };
+            globalThis.fs.closeSync = function(_fd) {};
+            globalThis.fs.writeSync = function(_fd, buf) { return buf && buf.length || 0; };
+            globalThis.fs.readSync = function(_fd, _buf, _offset, _len, _pos) { return 0; };
+            globalThis.fs.fstatSync = function(_fd) {
+                return { isFile: () => true, isDirectory: () => false, size: 0, mode: 0o644, mtimeMs: 0, atimeMs: 0, ctimeMs: 0 };
+            };
+            globalThis.fs.ftruncateSync = function() {};
+            globalThis.fs.fsyncSync = function() {};
+            globalThis.fs.watch = function(_path, _opts, _listener) {
+                return { close() {}, on() { return this; }, ref() {}, unref() {} };
+            };
+            globalThis.fs.watchFile = function() {};
+            globalThis.fs.unwatchFile = function() {};
+            globalThis.fs.constants = {
+                F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+                O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+                O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024,
+                S_IFMT: 0o170000, S_IFREG: 0o100000, S_IFDIR: 0o40000,
+                S_IFLNK: 0o120000, COPYFILE_EXCL: 1,
+            };
+            // F_OK/R_OK/W_OK/X_OK + ReadStream/WriteStream on the namespace
+            // for libs that read them off fs.* directly.
+            globalThis.fs.F_OK = 0; globalThis.fs.R_OK = 4;
+            globalThis.fs.W_OK = 2; globalThis.fs.X_OK = 1;
+            globalThis.fs.ReadStream = FsReadStream;
+            globalThis.fs.WriteStream = FsWriteStream;
+        })();
+    "#)?;
     fs.set(
         "existsSync",
         Function::new(ctx.clone(), |path: String| -> bool {
@@ -9208,6 +9306,29 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 parseArgs,
                 stripVTControlCharacters: (s) => String(s).replace(/\x1b\[[\d;]*m/g, ""),
                 getSystemErrorName: (errno) => "UNKNOWN",
+                getSystemErrorMap: () => new Map(),
+                aborted: (signal, resource) => {
+                    return new Promise((resolve, reject) => {
+                        if (signal.aborted) return reject(signal.reason);
+                        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                    });
+                },
+                MIMEType: class MIMEType {
+                    constructor(input) { this.input = String(input); }
+                    toString() { return this.input; }
+                },
+                MIMEParams: class MIMEParams {
+                    constructor() { this._params = new Map(); }
+                    get(name) { return this._params.get(name) || null; }
+                    set(name, value) { this._params.set(name, value); }
+                    delete(name) { this._params.delete(name); }
+                    has(name) { return this._params.has(name); }
+                    [Symbol.iterator]() { return this._params.entries(); }
+                },
+                deprecationWarned: new Map(),
+                getCallSite: () => [],
+                transferableAbortController: (controller) => controller,
+                transferableAbortSignal: (signal) => signal,
                 TextEncoder: globalThis.TextEncoder,
                 TextDecoder: globalThis.TextDecoder,
             };

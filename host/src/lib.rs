@@ -500,7 +500,7 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "watchFile", "unwatchFile", "watch", "constants"]),
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
             "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
-            "sep", "delimiter", "posix", "win32"]),
+            "sep", "delimiter", "posix", "win32", "toNamespacedPath", "matchesGlob"]),
         "node:http" | "http" => ("nodeHttp", &["createServer", "request", "get",
             "IncomingMessage", "ServerResponse", "ClientRequest", "Server",
             "METHODS", "STATUS_CODES", "globalAgent", "Agent"]),
@@ -2337,6 +2337,32 @@ fn wire_path<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()
                 sep: "\\",
                 delimiter: ";",
             });
+            // Node v20+ additions surfaced by upath and other normalizers.
+            // toNamespacedPath: identity on POSIX.
+            globalThis.path.toNamespacedPath = function toNamespacedPath(p) {
+                return p == null ? p : String(p);
+            };
+            // matchesGlob: minimal glob matcher covering the common shapes
+            // (literal, *, **, ?). Node's matcher is stricter but consumers
+            // mostly probe truthy/falsy.
+            globalThis.path.matchesGlob = function matchesGlob(p, pattern) {
+                if (typeof p !== 'string' || typeof pattern !== 'string') return false;
+                let re = '';
+                let i = 0;
+                while (i < pattern.length) {
+                    const c = pattern[i];
+                    if (c === '*' && pattern[i+1] === '*') { re += '.*'; i += 2; }
+                    else if (c === '*') { re += '[^/]*'; i++; }
+                    else if (c === '?') { re += '[^/]'; i++; }
+                    else if ('.+()^$|{}[]\\'.indexOf(c) >= 0) { re += '\\' + c; i++; }
+                    else { re += c; i++; }
+                }
+                return new RegExp('^' + re + '$').test(p);
+            };
+            globalThis.path.posix.toNamespacedPath = globalThis.path.toNamespacedPath;
+            globalThis.path.posix.matchesGlob = globalThis.path.matchesGlob;
+            globalThis.path.win32.toNamespacedPath = globalThis.path.toNamespacedPath;
+            globalThis.path.win32.matchesGlob = globalThis.path.matchesGlob;
         })();
     "#)?;
     Ok(())

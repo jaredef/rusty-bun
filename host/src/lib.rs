@@ -13161,7 +13161,11 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
     // termination invariant. Cap total wall-clock to keep fixtures
     // bounded; downstream tests are expected to call .close() to drain
     // pending intervals when they need a clean exit.
-    let wallclock_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // Wall-clock cap, env-configurable for slow-test runs.
+    // RUSTY_BUN_WALLCLOCK_SECS overrides the 15s inner-loop default.
+    let wallclock_secs: u64 = std::env::var("RUSTY_BUN_WALLCLOCK_SECS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(15);
+    let wallclock_deadline = std::time::Instant::now() + std::time::Duration::from_secs(wallclock_secs);
     // After this many idle ticks where the ONLY work is recurring timers
     // (no microtask, no keep-alive), give up — the test's productive
     // work is done.

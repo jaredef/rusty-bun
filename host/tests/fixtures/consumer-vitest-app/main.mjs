@@ -1,5 +1,9 @@
-// vitest — load surfaces a destructuring-target edge in vitest's
-// runner-or-expect chain (likely a complex left-hand destructure
-// pattern beyond current preprocessor). Recorded E.33 vitest-
-// destructure-target; deferred to shape-only.
-process.stdout.write(JSON.stringify({ probeRan: true }) + "\n");
+import * as vitest from "vitest";
+
+process.stdout.write(JSON.stringify({
+  hasDescribe: typeof vitest.describe === "function",
+  hasIt: typeof vitest.it === "function",
+  hasExpect: typeof vitest.expect === "function",
+  hasTest: typeof vitest.test === "function",
+  hasBeforeEach: typeof vitest.beforeEach === "function",
+}) + "\n");

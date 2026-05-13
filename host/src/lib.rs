@@ -875,7 +875,13 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
         let replacement = format!("{{_{};", kw);
         s = s.replace(&needle, &replacement);
     }
-    // Line-form: only when the entire trimmed line is `set;` etc.
+    // Skip rename for source files that declare the reserved-name as a
+    // top-level `var <kw>;` (signals a captured-binding pattern, not a
+    // class field — vitest's bundled CJS chunk uses `var set; set = X;`
+    // inside requireSet). Pre-compute the per-keyword skip flag.
+    let skip_set = source.contains("\nvar set;") || source.starts_with("var set;");
+    let skip_get = source.contains("\nvar get;") || source.starts_with("var get;");
+    let skip_delete = source.contains("\nvar delete;") || source.starts_with("var delete;");
     let mut out = String::with_capacity(s.len());
     for line in s.split_inclusive('\n') {
         let (body, nl) = match line.strip_suffix('\n') {
@@ -885,7 +891,10 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
         let trimmed = body.trim_end();
         let (indent_end, rest) = match trimmed.find(|c: char| !c.is_whitespace()) {
             Some(i) => trimmed.split_at(i),
-            None => { out.push_str(line); continue; }
+            None => {
+                out.push_str(line);
+                continue;
+            }
         };
         if (rest == "get;" || rest == "set;" || rest == "delete;")
             && !indent_end.is_empty()
@@ -896,19 +905,16 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
         } else if !indent_end.is_empty() && (
-            rest.starts_with("set =") || rest.starts_with("set=")
-            || rest.starts_with("get =") || rest.starts_with("get=")
-            || rest.starts_with("delete =") || rest.starts_with("delete=")
+            (rest.starts_with("set =") || rest.starts_with("set=")) && !skip_set
+            || (rest.starts_with("get =") || rest.starts_with("get=")) && !skip_get
+            || (rest.starts_with("delete =") || rest.starts_with("delete=")) && !skip_delete
         ) {
-            // Arrow-function or value-init class field: `  set = (k, v) => {...}`.
-            // hono context.js uses this for set/get/delete handlers.
             out.push_str(indent_end);
             out.push('_');
             out.push_str(rest);
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
         } else if !indent_end.is_empty() && rest.starts_with("static(") {
-            // Method named `static` in shorthand class body.
             out.push_str(indent_end);
             out.push_str("_static");
             out.push_str(&rest[6..]);
@@ -8014,30 +8020,42 @@ const COMMONJS_LOADER_JS: &str = r#"
     // Rename reserved-keyword class fields in CJS sources before eval.
     // Mirrors the FsLoader-side Rust preprocessor for the ESM path.
     function fixReservedClassFields(source) {
-        // Cheap rejection: if the source has no reserved-keyword names
-        // in suspicious class-body positions, skip the walk.
         if (!/[\s;{](?:static|set|get|delete)[\s(=;]/.test(source)) return source;
         const lines = source.split("\n");
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            // Find the first non-whitespace position
             let p = 0;
             while (p < line.length && (line[p] === " " || line[p] === "\t")) p++;
-            if (p === 0) continue;  // top-level, not class body
+            if (p === 0) continue;
             const rest = line.substring(p);
-            // Bare statement-form class fields (rare): `set;` `get;` `delete;`.
             if (rest === "set;" || rest === "get;" || rest === "delete;") {
                 lines[i] = line.substring(0, p) + "_" + rest;
                 continue;
             }
-            // Arrow-init class fields: `set = (k, v) => {...}`.
+            // Arrow-init class-field with reserved name. Heuristic guard
+            // against vitest-class non-class-body assignments (`var set;
+            // set = copyPrototype(...);` inside requireSet()): require
+            // the indent to be small (typical class-body indent ≤ 4
+            // spaces / 1 tab), AND require the rest to look like an
+            // arrow function or value-init (`= (` or `= function` or
+            // a non-reference RHS). vitest's pattern is `set = ` with
+            // a single-token RHS continuing on the same line, which
+            // does match — so add: skip rename if there is a top-level
+            // `var <kw>;` declaration anywhere in the source. That
+            // declares <kw> as a captured binding, signaling non-class.
             if (rest.startsWith("set =") || rest.startsWith("set=")
                 || rest.startsWith("get =") || rest.startsWith("get=")
                 || rest.startsWith("delete =") || rest.startsWith("delete=")) {
+                const kw = rest.startsWith("set") ? "set"
+                         : rest.startsWith("get") ? "get" : "delete";
+                // If the source has a top-level `var <kw>;` or `let <kw>;`
+                // or `const <kw>;` declaration, the assignment is a
+                // captured-binding write, not a class field. Skip rename.
+                const declRe = new RegExp("(?:^|[\\s;])(?:var|let|const)\\s+" + kw + "(?:\\s*[;,=]|\\s*$)", "m");
+                if (declRe.test(source)) continue;
                 lines[i] = line.substring(0, p) + "_" + rest;
                 continue;
             }
-            // Method-name shorthand in class body: `static(args) {`.
             if (rest.startsWith("static(")) {
                 lines[i] = line.substring(0, p) + "_" + rest;
                 continue;

@@ -8692,3 +8692,12 @@ consumer_test!(consumer_object_hash_app_byte_identical_to_bun, "consumer-object-
 consumer_test!(consumer_deepmerge_app_byte_identical_to_bun, "consumer-deepmerge-app");
 consumer_test!(consumer_dequal_app_byte_identical_to_bun, "consumer-dequal-app");
 consumer_test!(consumer_merge_options_app_byte_identical_to_bun, "consumer-merge-options-app");
+consumer_test!(consumer_color_convert_app_byte_identical_to_bun, "consumer-color-convert-app");
+consumer_test!(consumer_color_string_app_byte_identical_to_bun, "consumer-color-string-app");
+consumer_test!(consumer_parse5_app_byte_identical_to_bun, "consumer-parse5-app");
+consumer_test!(consumer_entities_app_byte_identical_to_bun, "consumer-entities-app");
+consumer_test!(consumer_iconv_lite_app_byte_identical_to_bun, "consumer-iconv-lite-app");
+consumer_test!(consumer_get_stream_app_byte_identical_to_bun, "consumer-get-stream-app");
+consumer_test!(consumer_into_stream_app_byte_identical_to_bun, "consumer-into-stream-app");
+consumer_test!(consumer_jsqr_app_byte_identical_to_bun, "consumer-jsqr-app");
+consumer_test!(consumer_postcss_selector_parser_app_byte_identical_to_bun, "consumer-postcss-selector-parser-app");

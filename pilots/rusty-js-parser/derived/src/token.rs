@@ -3,15 +3,9 @@
 //! Per specs/ecma262-lexical.spec.md. The TokenKind enum spans every
 //! InputElement category the module-goal grammar can consume.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl Span {
-    pub fn new(start: usize, end: usize) -> Self { Self { start, end } }
-}
+// Span is shared with rusty-js-ast so the parser can flow a single type
+// across lexer + AST. Re-exported here for the lexer's convenience.
+pub use rusty_js_ast::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {

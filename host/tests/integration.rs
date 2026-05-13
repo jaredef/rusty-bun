@@ -7952,6 +7952,11 @@ consumer_test!(consumer_qrcode_app_byte_identical_to_bun, "consumer-qrcode-app")
 consumer_test!(consumer_minimist_app_byte_identical_to_bun, "consumer-minimist-app");
 consumer_test!(consumer_validator_pkg_app_byte_identical_to_bun, "consumer-validator-pkg-app");
 consumer_test!(consumer_tweetnacl_util_app_byte_identical_to_bun, "consumer-tweetnacl-util-app");
+consumer_test!(consumer_crypto_js_app_byte_identical_to_bun, "consumer-crypto-js-app");
+consumer_test!(consumer_async_pkg_app_byte_identical_to_bun, "consumer-async-pkg-app");
+consumer_test!(consumer_bluebird_app_byte_identical_to_bun, "consumer-bluebird-app");
+consumer_test!(consumer_shelljs_app_byte_identical_to_bun, "consumer-shelljs-app");
+consumer_test!(consumer_fastdeepequal_app_byte_identical_to_bun, "consumer-fastdeepequal-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

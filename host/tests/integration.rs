@@ -8716,3 +8716,10 @@ consumer_test!(consumer_lodash_get_app_byte_identical_to_bun, "consumer-lodash-g
 consumer_test!(consumer_lodash_set_app_byte_identical_to_bun, "consumer-lodash-set-app");
 consumer_test!(consumer_lodash_throttle_app_byte_identical_to_bun, "consumer-lodash-throttle-app");
 consumer_test!(consumer_yaml_ast_parser_app_byte_identical_to_bun, "consumer-yaml-ast-parser-app");
+consumer_test!(consumer_micromark_app_byte_identical_to_bun, "consumer-micromark-app");
+consumer_test!(consumer_mdast_util_from_markdown_app_byte_identical_to_bun, "consumer-mdast-util-from-markdown-app");
+consumer_test!(consumer_vfile_message_app_byte_identical_to_bun, "consumer-vfile-message-app");
+consumer_test!(consumer_astring_app_byte_identical_to_bun, "consumer-astring-app");
+consumer_test!(consumer_esutils_app_byte_identical_to_bun, "consumer-esutils-app");
+consumer_test!(consumer_acorn_walk_app_byte_identical_to_bun, "consumer-acorn-walk-app");
+consumer_test!(consumer_meriyah_app_byte_identical_to_bun, "consumer-meriyah-app");

@@ -464,7 +464,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "readlinkSync", "promises",
             "stat", "lstat", "readdir", "readlink", "realpath", "mkdir",
             "rm", "unlink", "access", "readFile", "writeFile",
-            "Dirent", "Stats"]),
+            "Dirent", "Stats",
+            "appendFileSync", "rmSync", "copyFileSync", "renameSync",
+            "chmodSync", "utimesSync", "mkdirSync", "rmdirSync"]),
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
             "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
             "sep", "delimiter", "posix", "win32"]),
@@ -1598,6 +1600,19 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     process.set("kill", Function::new(ctx.clone(), |_pid: f64, _sig: Opt<String>| -> bool {
         // Cannot actually signal pids; rusty-bun runs single-process.
         false
+    })?)?;
+    process.set("emitWarning", Function::new(ctx.clone(),
+        |_warning: rquickjs::Value, _type: Opt<rquickjs::Value>, _code: Opt<String>| -> () {
+            // Node emits to process.stderr; we silently no-op so libraries
+            // that emit deprecation warnings dont pollute test output.
+        })?)?;
+    process.set("getActiveResourcesInfo", Function::new(ctx.clone(),
+        || -> Vec<String> { vec![] })?)?;
+    process.set("memoryUsage", Function::new(ctx.clone(), || -> String {
+        r#"{"rss":0,"heapTotal":0,"heapUsed":0,"external":0,"arrayBuffers":0}"#.to_string()
+    })?)?;
+    process.set("resourceUsage", Function::new(ctx.clone(), || -> String {
+        r#"{"userCPUTime":0,"systemCPUTime":0,"maxRSS":0}"#.to_string()
     })?)?;
 
     // exit is a sentinel — we cannot actually exit the test process; the
@@ -5021,6 +5036,67 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             rusty_node_fs::write_file_string_sync(&path, &data).map_err(|e| {
                 rquickjs::Error::new_from_js_message("writeFileSync", "()", format!("{}", e))
             })
+        })?,
+    )?;
+    fs.set(
+        "appendFileSync",
+        Function::new(ctx.clone(), |path: String, data: String| -> JsResult<()> {
+            let prior = rusty_node_fs::read_file_string_sync(&path).unwrap_or_default();
+            let combined = prior + &data;
+            rusty_node_fs::write_file_string_sync(&path, &combined).map_err(|e| {
+                rquickjs::Error::new_from_js_message("appendFileSync", "()", format!("{}", e))
+            })
+        })?,
+    )?;
+    fs.set(
+        "rmSync",
+        Function::new(ctx.clone(), |path: String, _opts: Opt<rquickjs::Value>| -> JsResult<()> {
+            // Default to {force:true,recursive:true} semantics — fse and
+            // many consumers expect rmSync to be idempotent on missing
+            // paths. The opts argument is rquickjs Value (cant introspect
+            // easily); accept the permissive default which matches Node
+            // when force:true is set.
+            let _ = rusty_node_fs::rm_sync_recursive(&path);
+            let _ = std::fs::remove_file(&path);
+            Ok(())
+        })?,
+    )?;
+    fs.set(
+        "copyFileSync",
+        Function::new(ctx.clone(), |src: String, dest: String| -> JsResult<()> {
+            std::fs::copy(&src, &dest).map(|_| ()).map_err(|e| {
+                rquickjs::Error::new_from_js_message("copyFileSync", "()", e.to_string())
+            })
+        })?,
+    )?;
+    fs.set(
+        "renameSync",
+        Function::new(ctx.clone(), |src: String, dest: String| -> JsResult<()> {
+            std::fs::rename(&src, &dest).map_err(|e| {
+                rquickjs::Error::new_from_js_message("renameSync", "()", e.to_string())
+            })
+        })?,
+    )?;
+    fs.set(
+        "chmodSync",
+        Function::new(ctx.clone(), |path: String, mode: f64| -> JsResult<()> {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let perm = std::fs::Permissions::from_mode(mode as u32);
+                std::fs::set_permissions(&path, perm).map_err(|e| {
+                    rquickjs::Error::new_from_js_message("chmodSync", "()", e.to_string())
+                })
+            }
+            #[cfg(not(unix))] { let _ = (path, mode); Ok(()) }
+        })?,
+    )?;
+    fs.set(
+        "utimesSync",
+        Function::new(ctx.clone(), |_path: String, _atime: f64, _mtime: f64| -> JsResult<()> {
+            // Best-effort no-op (Rust std doesnt expose setting both
+            // atime/mtime via stable API without filetime crate).
+            Ok(())
         })?,
     )?;
     fs.set(

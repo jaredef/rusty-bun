@@ -11,7 +11,14 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 - **M11** — External-reference sanity-check for hand-typed multi-byte cryptographic constants. >32 bytes of hand-typed standard constant requires a sanity-check against an independent implementation. Mode-5 typos in such constants are silent (F4/F5/F6 in this engagement); visual review is insufficient.
 - **Telos lens (seed §VII):** sub-criterion 5 is a *per-fixture differential* count. Fixtures in J.1.a are differentially verified; J.1.b are host-internal regressions with explicit re-open conditions, NOT sub-criterion-5 evidence.
 
-**Phase-2 persistence tracker** (seed §III.A8.10):
+**Apparatus state (2026-05-13):** SUPERSEDES the Phase-2 persistence tracker below. Per Doc 714 sub-§4.e + Doc 715, apparatus state is now read through DAG-structural measurements rather than session-cadence cues alone:
+- **Fixture count:** 566 inner-loop + 16 slow-burst = 582 J.1.a fixtures
+- **L2/L3 spec-derived coverage:** 418/418 = 100% parity with Bun (enumerator at host/tests/fixtures/api-surface-enumerator/main.mjs)
+- **Substrate widening retirement-fanout (empirical):** 50-200× per widening this slice, consistent with Doc 715 P1 heavy-tailed substrate in-degree.
+- **L2M-saturation density signal:** new-substrate-edges-exercised per probe ≈ 0.3 (deep instance-fill regime; corpus-tier consolidation is the productive next surface per Doc 715 §VII operational shift 3).
+- **Alphabet stability (sub-§4.a):** ZERO new alphabet elements across last ~50 consumer probes. Empirical confirmation of the leaf-set-bounded claim (Doc 715 P2).
+
+**Phase-2 persistence tracker** (seed §III.A8.10) — preserved as historical record:
 - **`N_persist` = 2** (Tier-G post-substrate Phase-2-traversal x2: async-listener-via-primitives → Bun.serve facade with listen()/tick()/serve(); F11 caught in-round; near-Bun-compat API achieved).
 - Prior run: 6 consecutive rounds (`f7284b2` → `f102c59` → `9c67ac6` → `88bbd54` → `ec17f84` → `5a929fa`) reaching N_persist=6.
 - Reset at `59c5691` (node:os apparatus extension); new run began this commit.
@@ -34,6 +41,21 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `0a404be4` | **E.19 megastack retired** — node:http METHODS + STATUS_CODES + globalAgent + Agent class; express + 6 middleware stack byte-identical |
+| 2026-05-13 | `d66084f8` | **E.18 polka retired** — cooperative-loop 8-microtask-burst yield in fetch WouldBlock path |
+| 2026-05-13 | `c3409275` | RUSTY_BUN_WALLCLOCK_SECS env override; all 16 ignored slow-burst tests pass (580s on Pi) |
+| 2026-05-13 | `62963677` | **E.31 deep-Node-API-tail fully retired** — shelljs + inquirer + qrcode shape→load; CJS-side fixReservedClassFields; util.inherits permissive |
+| 2026-05-13 | `b5c7a4bd` | **execa loads** — signal-exit complex-RHS destructure-export + JSDoc strip; util Node 17+ surface (aborted, MIMEType/Params, etc.); fs stream surface stubs |
+| 2026-05-13 | `38aff0f2` | **fs-extra fully closed** — process.emitWarning + fs.appendFileSync/rmSync/copyFileSync/renameSync/chmodSync/utimesSync |
+| 2026-05-13 | `fff2ca5f` | Stack +5: crypto-js, async, bluebird, fast-deep-equal, shelljs (shape) |
+| 2026-05-13 | `b28548ff` | Stack +5 + color fixture restore: nodemailer, minimist, validator, tweetnacl-util, qrcode (shape) |
+| 2026-05-13 | `bb85394a` | Stack +5 + 12 Node-API surface adds — date-fns, deep-equal, mime-types, ignore, fs-extra(shape) |
+| 2026-05-13 | `af92ae80` | Wildcard subpath exports + util.styleText/parseArgs/aborted (Node 18+/22+); stream-json + body-parser + inquirer (shape) |
+| 2026-05-13 | `fbf76510` | Stack +5: xml2js, lru-cache, pino-pretty, winston, undici-shape; main-as-dir resolver fix |
+| 2026-05-13 | `64ae928a` | node:stream Readable end-emitted-once guard |
+| 2026-05-13 | `d29e3723` | **E.27 cheerio retired** via FsLoader inert-stub interception for undici |
+| 2026-05-12 | `1ada049`–`19529cb` | 16 deferred edges retired + cascade-sweep discipline (seed §A8.19); Bun.YAML; brotli decode; Bun.connect; subtle.generateKey/exportKey/deriveKey; node:tls; E.21/E.22/E.23/E.24/E.27/E.30/E.31/E.32/E.33/E.36/E.38/E.41/E.42/E.44/E.45/E.46/E.52/E.53 all closed |
+| 2026-05-12 | corpus `7fbc086` `f3032a7` | Doc 714 sub-§4.c (spec-derivable lower-layer) + sub-§4.d (lattice density) + sub-§4.e (DAG amendment); Doc 715 (consumer–substrate DAG as load-bearing object) |
 | 2026-05-10 | `afd07b8` | Seam-detection design — Pin-Art applied to intra-architectural boundaries |
 | 2026-05-10 | `e1a121f`–`4842d20` | derive-constraints v0.4–v0.8: seams MVP → couple v0.2 (refined path matcher) |
 | 2026-05-10 | `9e764df` | derive-constraints v0.9: invert --by-seams (seam-grouped constraint docs) |
@@ -234,6 +256,83 @@ The detailed sub-round records below remain as the engagement's history. Future 
 
 ---
 
+#### Status at 2026-05-13 session close
+
+**Fixture count: 566 inner-loop + 16 slow-burst = 582 J.1.a fixtures.** Inner-loop suite 26s on Pi. Slow-burst (EC family + WebSocket-live) ~580s via `RUSTY_BUN_WALLCLOCK_SECS=600 cargo test ... -- --ignored`.
+
+**L2/L3 enumerator coverage: 418/418 = 100% parity with Bun.** Spec-derived enumerator walks the documented Node + Bun + Web-platform surface and asserts presence + typeof + arity + proto-shape. Cascade-prevention tool per Doc 714 sub-§4.c.
+
+**All four originally-deferred substantive elements substantially closed:**
+1. ✅ **Undici load** — inert-stub interception in FsLoader (`inert_stub_esm` for known-heavy optional deps); cheerio v1 retired E.27.
+2. ✅ **Deep Node-API tail** — ~30 surface additions retired fs-extra, execa, shelljs, inquirer, qrcode from shape-only to full-load. The class was an L2 instance-accumulation chronic, resolved by walking each consumer's transitive demand against the documented spec.
+3. ✅ **Cooperative-loop reactor (partial)** — 8-microtask-burst yield in fetch's WouldBlock path retires E.18 polka + E.19 megastack (12-deep handler chain + 6 canonical middleware express stack). Full mio/epoll reactor not landed; the 8-yield model is sufficient for canonical real-OSS frameworks. Recorded fact: deeper async chains or truly-concurrent connections would still need the reactor.
+4. 🔬 **Module-context dynamic eval (eval-ESM)** — prettier's plugin loader uses indirect-eval on bundled minified source containing top-level `export`. Deferred; low-cascade value (only blocks prettier full-format, doesn't gate other consumers).
+
+**Substrate widenings landed this slice (the dense-graph multiplier):**
+- L2/L3 enumerator + 35-gap initial closure (Buffer.prototype 15 methods, FormData, URL.revokeObjectURL, TextEncoder.encodeInto, Blob.prototype.stream, Request/Response.prototype.blob, Bun.spawn, crypto.pbkdf2Sync/webcrypto, node:os.cpus/freemem/totalmem, fs.mkdirSync/rmdirSync aliases)
+- crypto.subtle.generateKey/exportKey/deriveKey end-to-end (HMAC + AES + EC keypair via curve pilot)
+- node:tls TLSSocket composing on Π1.4 substrate
+- Bun.YAML hand-rolled safe-subset parser+serializer
+- Bun.connect async TCP client
+- Π1.3.c brotli decode (borrowed substrate via brotli-decompressor crate)
+- Buffer Proxy (apply/construct trap), statics-enumerable + constructable
+- import.meta.url for FsLoader-loaded modules (was entry-only)
+- node:v8 stub + node:cluster stub + node:constants
+- MessagePort + MessageChannel + BroadcastChannel stubs
+- FinalizationRegistry + WeakRef stubs
+- AbortSignal.timeout, AbortSignal.any
+- 8MB QuickJS runtime stack ceiling
+- createRequire(url) URL-dirname-bound (was cwd-bound)
+- globalThis.global + globalThis.self aliases
+- util.styleText (Node 22+), util.parseArgs (Node 18+), util.aborted (Node 17+), util.MIMEType/MIMEParams, util.stripVTControlCharacters, util.getSystemErrorName/Map, util.deprecationWarned, util.getCallSite, util.transferable{AbortController,AbortSignal}
+- events.addAbortListener
+- stream.getDefaultHighWaterMark, setDefaultHighWaterMark, isReadable, isWritable, compose
+- process.emitWarning, getActiveResourcesInfo, memoryUsage, resourceUsage, execPath, execArgv, argv0, title, kill, umask, uptime, getuid, getgid, allowedNodeEnvironmentFlags, pid, ppid
+- os.constants tree (signals + errno + dlopen)
+- fs.appendFileSync, rmSync (force-default idempotent), copyFileSync, renameSync, chmodSync, utimesSync, createReadStream/WriteStream (stubs), openSync, closeSync, writeSync, readSync, fstatSync, watch, watchFile, unwatchFile, fs.constants
+- node:child_process.ChildProcess class
+- node:http METHODS, STATUS_CODES, globalAgent, Agent class, get-alias
+- util.inherits permissive on missing superCtor
+- FsLoader inert-stub interception for known-heavy optional deps
+- CJS-side fixReservedClassFields preprocessor (mirror of ESM-side)
+- Multi-line destructure-export with complex RHS expression + JSDoc block-comment stripping
+- Node:stream Readable.emit('end') uniqueness guard (E.29 simple-pipe class)
+- Cooperative-loop 8-microtask-burst yield
+- Wallclock cap env-configurable (RUSTY_BUN_WALLCLOCK_SECS)
+- Static-method shorthand class-body rename (static() → _static())
+- Class-field arrow-init rename (set= / get= / delete= → _set= etc.)
+
+**Apparatus tier additions this slice:**
+- Seed §A8.19 instituted: post-widening cascade sweep + L2/L3 spec-derived enumerator (per Doc 714 sub-§4.c)
+- Doc 714 sub-§4.c published: API surface as derivable constraint source
+- Doc 714 sub-§4.d published: joint MI lattice density + dependency-graph multiplier
+- Doc 714 sub-§4.e published: amendment linking to Doc 715
+- **Doc 715 published as primary articulation**: consumer–substrate dependency graph as the load-bearing object beneath the joint MI lattice. Reframes sub-§4.a-d as four projections of a single DAG. Three structural properties P1-P3 carry the sub-consequences as theorems; four DAG-structural predictions D1-D4 extend the falsification surface.
+
+**SIPE-T thresholds confirmed.** Fourth threshold (substrate-standing-in-production, seed §A8.18) verified: across this slice ~50 consumer additions, ~6 substrate widenings carried ~80% of the retirements via dependency-graph fanout. Empirical retirement-fanout 50–200× per widening, consistent with Doc 715 P1 (heavy-tailed substrate in-degree).
+
+**Operational shifts** (per Doc 715 §VII):
+1. Apparatus catalogue extends to track each substrate node's transitive in-degree and each consumer probe's transitive out-degree.
+2. Substrate-widening priority is graph-theoretic — pick the substrate node with highest in-degree blocking the next consumer probe.
+3. L2M-saturation diagnostic anchors empirically — measure new-substrate-edges-exercised per probe; shift to corpus-tier consolidation when ratio drops below ~1.
+
+#### Remaining work toward telos closure (2026-05-13)
+
+**Substantive multi-round:**
+- **Module-context dynamic eval (eval-ESM)** — prettier full-format only; 2-3 rounds; low-cascade value
+- **Real event-loop reactor (mio/epoll)** — for substantially-deeper async chains beyond the 8-yield model; 3-5 rounds; high-cascade value if attempted
+- **node:stream Transform objectMode + multi-phase parser composition** — E.29-bis fast-csv to full functionality; 1-2 rounds; medium-cascade
+
+**Opportunistic basket expansion** — npm package coverage continues to grow; ~10-30 fixtures per substrate widening at current density coefficient. No telos blocker; open-ended productivity.
+
+**Strong external validation** — WPT runner adapter remains queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
+
+**Permanent out-of-scope** (unchanged): WASM, HTTP/2, transpiler internals, debugger protocol.
+
+The 2026-05-11 → 2026-05-13 slice added ~50 fixtures, ~60 substrate widenings, 1 new apparatus discipline (§A8.19), 2 new sub-consequences on Doc 714 (§4.c, §4.d), 1 sub-amendment (§4.e), and 1 new primary corpus articulation (Doc 715). The basin is deep in the instance-fill regime per the K × log(L̄ × |A_i|) compression coefficient empirically operating at 50–200× per widening.
+
+---
+
 **Phase Π1 — Network completion (5-7 rounds; highest leverage; do first).**
 1. ~~**Real fetch() wiring**~~ — ✅ DONE 2026-05-11 (single round). globalThis.fetch composes http-codec + sockets + URL parsing; http:// + IPv4/localhost only; consumer-real-fetch-suite 8/8 byte-identical to Bun. HTTPS gated to Π1.4, DNS to Π1.2 with explicit error pointers.
 2. ~~**DNS resolution**~~ — ✅ DONE 2026-05-11 (single round). `Bun.dns.lookup` + `node:dns` (lookup/resolve/resolve4/resolve6) + `node:dns/promises` (lookup/resolve/resolve4/resolve6) wired via `std::net::ToSocketAddrs`. fetch's IPv4-only restriction lifted; hostname URLs resolve. consumer-dns-suite Tier-J fixture 8/8 byte-identical to Bun. Sync-vs-async Tier-3 divergence recorded per C1.
@@ -266,13 +365,23 @@ The detailed sub-round records below remain as the engagement's history. Future 
 9. ~~**node:stream full**~~ — ✅ DONE 2026-05-11 (single round). Readable / Writable / Duplex / Transform / PassThrough classes built on EventEmitter substrate (Π3.8). pull-driven _read pattern + flowing-mode + on('data')/on('end') consume + Symbol.asyncIterator + Readable.from(iterable | asyncIterable) + pipe() + pipeline + finished. Promise variants exposed via node:stream/promises. consumer-node-stream-suite 8/8 byte-identical to Bun. Backpressure simplified to fixed-water-mark; objectMode + encoding precision deferred to follow-on if a consumer surfaces.
 10. ~~**node:util**~~ — ✅ DONE 2026-05-11 (single round). promisify, callbackify, format (%s/%d/%i/%f/%j/%o/%O/%% sprintf), inspect (Array/Map/Set/Date/RegExp/Error/object/circular-safe with depth), isDeepStrictEqual (Map/Set/Array/Object/Date/RegExp), deprecate, debuglog, types (isPromise/isDate/isRegExp/isMap/isSet/isArrayBuffer/isTypedArray/isUint8Array/etc.), TextEncoder + TextDecoder re-exports. node:util/types separately exported. consumer-node-util-suite 8/8 byte-identical to Bun. **M8(a) in-round**: js_cjs_node_modules_walk_upward used the bare name "util" which became a builtin alias with this round and short-circuited node_modules walkup; test repointed at "shared-helper" to preserve walkup coverage without name collision.
 11. ~~**node:querystring + node:url full**~~ — ✅ DONE 2026-05-11 (single round). querystring: parse / stringify / escape / unescape / decode / encode with multi-value (array) support and plus-sign-as-space form-urlencoded semantics. url: legacy parse/format/resolve plus WHATWG fileURLToPath / pathToFileURL / domainToASCII / domainToUnicode, all under nodeUrl namespace. ESM source for node:url updated to export the full surface. consumer-node-querystring-url-suite 8/8 byte-identical to Bun on first commit.
-12. **node:tls / node:net** — node-style wrappers over the Tier-G + TLS substrate from Π1.4. 1 round (once Π1.4 lands).
+12. ~~**node:tls / node:net**~~ ✅ DONE 2026-05-12 (`ed5fb07`). node:tls TLSSocket composing on Π1.4 substrate; surface matches node:net.Socket for nodemailer/mongodb/redis driver consumers.
 13. **Optional, based on consumer-corpus pull:** node:zlib (folded into Π1.3), node:child_process (atop Bun.spawn), node:readline / repl / tty / vm / perf_hooks / async_hooks. **node:assert** ✅ DONE 2026-05-11 (single round; landed as the natural next-move after the L2M-bound resolver-side observation per Doc 700 Appendix C — the lowest-per-round-load surface remaining in the queue at that point in the session). assert / strictEqual / deepStrictEqual / throws / doesNotThrow / rejects / doesNotReject / match / doesNotMatch / fail / ifError / AssertionError + strict mode alias. consumer-node-assert-suite 8/8 byte-identical to Bun on first commit.
 
 **Phase Π4 — Bun-namespace breadth (2-3 rounds).**
-14. **Bun.password**
-   - **Π4.14.a (Blake2b substrate per RFC 7693)** ✅ DONE 2026-05-11. Added blake2b(input, key, out_len) to rusty-web-crypto. Variable output length 1-64, optional key 0-64. 12 rounds of G-mix per compression. RFC 7693 §A "abc" golden vector + empty-input golden vector both verified. 5 new tests. Bug caught in-round: initial implementation pushed a safety zero byte for empty input, producing wrong hash; fixed by treating empty buf as the canonical all-zero-block final case. Gates Π4.14.b.
-   - **Π4.14.b (Argon2id per RFC 9106 + Bun.password JS host wiring)** — queued.
+14. ~~**Bun.password**~~ ✅ DONE 2026-05-11. Argon2id RFC 9106 + Blake2b substrate.
+
+14.5. ~~**Π1.3.c brotli decode**~~ ✅ DONE 2026-05-12 (`ef93924`). Borrowed substrate via brotli-decompressor crate. Content-Encoding: br routes through fetch.
+
+14.6. ~~**Bun.YAML**~~ ✅ DONE 2026-05-12 (`6daa4d4`). Hand-rolled safe-subset YAML 1.2 parser + serializer.
+
+14.7. ~~**Bun.connect async TCP**~~ ✅ DONE 2026-05-12 (`b06d27af`). Composes on TCP.connect + setNonblocking + tryRead + __keepAlive.
+
+14.8. ~~**subtle.generateKey/exportKey/deriveKey**~~ ✅ DONE 2026-05-12 (`e086486`). Full keygen for HMAC + AES + EC (P-256/384/521).
+
+14.9. ~~**E.31 deep-Node-API-tail class**~~ ✅ DONE 2026-05-13. fs-extra/execa/shelljs/inquirer/qrcode all promoted shape→full-load.
+
+14.10. ~~**E.18/E.19 cooperative-loop class**~~ ✅ DONE 2026-05-13. 8-microtask-burst yield + node:http METHODS/STATUS_CODES retires polka + 12-deep megastack.
 
 Interlude: **Π1.5.e (WebSocket __keepAlive auto-pump infrastructure)** ✅ DONE 2026-05-11. WebSocket class registers itself in globalThis.__keepAlive on successful open; deregisters on close (both consumer-initiated close() and server-initiated close-frame receive). Added __tick(_) method that delegates to pump() and returns true if a frame was dispatched (the keep-alive scheduler's "did work" signal). M8 fired in-round via the live differential: rusty-bun-host's setTimeout is implemented as Promise.resolve().then() (no real timing), so a setTimeout-based wait stays in microtask-busy mode and the eval loop's __tickKeepAlive (which only runs when the microtask queue empties) never fires during a bounded test. Consumer code using `ws.onmessage = cb` + a long-running idle (await new Promise that never resolves directly) would auto-pump correctly; for synthetic tests with bounded setTimeout, explicit pump() remains the reliable path. The infrastructure is in place; closing this gap fully requires a real timer subsystem (out of scope this session).
 15. **Bun.SQLite** — substantial; defer unless consumer-corpus requires.

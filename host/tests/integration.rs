@@ -8670,3 +8670,11 @@ consumer_test!(consumer_jsonstream_app_byte_identical_to_bun, "consumer-jsonstre
 consumer_test!(consumer_redis_app_byte_identical_to_bun, "consumer-redis-app");
 consumer_test!(consumer_mqtt_app_byte_identical_to_bun, "consumer-mqtt-app");
 consumer_test!(consumer_planetscale_db_app_byte_identical_to_bun, "consumer-planetscale-db-app");
+consumer_test!(consumer_superagent_app_byte_identical_to_bun, "consumer-superagent-app");
+consumer_test!(consumer_ws_app_byte_identical_to_bun, "consumer-ws-app");
+consumer_test!(consumer_openai_app_byte_identical_to_bun, "consumer-openai-app");
+consumer_test!(consumer_anthropic_app_byte_identical_to_bun, "consumer-anthropic-app");
+consumer_test!(consumer_dotenv_expand_app_byte_identical_to_bun, "consumer-dotenv-expand-app");
+consumer_test!(consumer_dompurify_app_byte_identical_to_bun, "consumer-dompurify-app");
+consumer_test!(consumer_upath_app_byte_identical_to_bun, "consumer-upath-app");
+consumer_test!(consumer_cron_app_byte_identical_to_bun, "consumer-cron-app");

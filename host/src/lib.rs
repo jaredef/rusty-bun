@@ -7808,8 +7808,18 @@ const COMMONJS_LOADER_JS: &str = r#"
                 // main / module fields.
                 const mainStr = pkg.main || pkg.module;
                 if (typeof mainStr === "string") {
-                    const resolved = tryExtensions(normalizePath(joinPath(absDir, mainStr)));
+                    const target = normalizePath(joinPath(absDir, mainStr));
+                    const resolved = tryExtensions(target);
                     if (resolved) return resolved;
+                    // main might point at a directory — walk into it for
+                    // its index.js (Node's "./node" → "./node/index.js"
+                    // resolution; @dabh/diagnostics uses this pattern).
+                    if (fs.isDirectorySync(target)) {
+                        for (const idx of ["/index.js", "/index.json", "/index.cjs"]) {
+                            const candidate = target + idx;
+                            if (pathExists(candidate)) return candidate;
+                        }
+                    }
                 }
             } catch (e) {
                 // Ignore malformed package.json; fall through to index.

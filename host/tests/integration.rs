@@ -7939,6 +7939,11 @@ consumer_test!(consumer_prettier_app_byte_identical_to_bun, "consumer-prettier-a
 consumer_test!(consumer_datefns_app_byte_identical_to_bun, "consumer-datefns-app");
 consumer_test!(consumer_fastcsv_app_byte_identical_to_bun, "consumer-fastcsv-app");
 consumer_test!(consumer_deepequal_app_byte_identical_to_bun, "consumer-deepequal-app");
+consumer_test!(consumer_xml2js_app_byte_identical_to_bun, "consumer-xml2js-app");
+consumer_test!(consumer_lru_cache_app_byte_identical_to_bun, "consumer-lru-cache-app");
+consumer_test!(consumer_pino_pretty_app_byte_identical_to_bun, "consumer-pino-pretty-app");
+consumer_test!(consumer_winston_app_byte_identical_to_bun, "consumer-winston-app");
+consumer_test!(consumer_undici_real_app_byte_identical_to_bun, "consumer-undici-real-app");
 
 #[test]
 fn consumer_micromatch_app_byte_identical_to_bun() {

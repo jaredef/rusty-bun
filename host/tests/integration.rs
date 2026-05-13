@@ -7962,6 +7962,10 @@ consumer_test!(consumer_megastack_app_byte_identical_to_bun, "consumer-megastack
 consumer_test!(consumer_mongoose_app_byte_identical_to_bun, "consumer-mongoose-app");
 consumer_test!(consumer_vitest_app_byte_identical_to_bun, "consumer-vitest-app");
 consumer_test!(consumer_knex_app_byte_identical_to_bun, "consumer-knex-app");
+consumer_test!(consumer_vite_app_byte_identical_to_bun, "consumer-vite-app");
+consumer_test!(consumer_rollup_app_byte_identical_to_bun, "consumer-rollup-app");
+consumer_test!(consumer_chokidar_app_byte_identical_to_bun, "consumer-chokidar-app");
+consumer_test!(consumer_lit_app_byte_identical_to_bun, "consumer-lit-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

@@ -506,7 +506,7 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "styleText", "parseArgs", "stripVTControlCharacters", "getSystemErrorName",
             "aborted", "MIMEType", "MIMEParams", "deprecationWarned",
             "getCallSite", "getSystemErrorMap", "transferableAbortController",
-            "transferableAbortSignal"]),
+            "transferableAbortSignal", "parseEnv", "_extend"]),
         "node:util/types" | "util/types" => ("nodeUtilTypes", &[
             "isPromise", "isDate", "isRegExp", "isMap", "isSet",
             "isArrayBuffer", "isTypedArray", "isUint8Array", "isInt8Array",
@@ -560,7 +560,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["readFile", "writeFile", "mkdir", "rm", "stat", "lstat",
               "access", "readdir", "unlink", "readlink", "realpath",
               "rename", "rmdir", "chmod", "chown", "utimes", "appendFile",
-              "copyFile", "open"]),
+              "copyFile", "open", "constants", "watch", "cp", "lchmod",
+              "lchown", "link", "lutimes", "mkdtemp", "opendir", "symlink",
+              "truncate"]),
         "node:stream/web" | "stream/web" => ("nodeStreamWeb",
             &["ReadableStream", "WritableStream", "TransformStream",
               "ByteLengthQueuingStrategy", "CountQueuingStrategy",
@@ -9449,6 +9451,27 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 types,
                 styleText,
                 parseArgs,
+                parseEnv: (text) => {
+                    // Minimal .env parser: KEY=VALUE per line, hash-prefixed
+                    // comments stripped. (Avoid hash char in raw-string content.)
+                    const out = {};
+                    const COMMENT = String.fromCharCode(35);
+                    for (const line of String(text).split(/\r?\n/)) {
+                        const trimmed = line.replace(/^\s+|\s+$/g, "");
+                        if (!trimmed || trimmed.charAt(0) === COMMENT) continue;
+                        const eq = trimmed.indexOf("=");
+                        if (eq < 0) continue;
+                        const k = trimmed.substring(0, eq).trim();
+                        let v = trimmed.substring(eq + 1).trim();
+                        if ((v.startsWith('"') && v.endsWith('"'))
+                            || (v.startsWith("'") && v.endsWith("'"))) {
+                            v = v.slice(1, -1);
+                        }
+                        out[k] = v;
+                    }
+                    return out;
+                },
+                _extend: (target, source) => Object.assign(target, source),
                 stripVTControlCharacters: (s) => String(s).replace(/\x1b\[[\d;]*m/g, ""),
                 getSystemErrorName: (errno) => "UNKNOWN",
                 getSystemErrorMap: () => new Map(),
@@ -10944,6 +10967,27 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 open: async (_p, _flags) => {
                     throw new Error("fs.open not supported (no FileHandle yet)");
                 },
+                constants: {
+                    F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+                    O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+                    O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024,
+                    COPYFILE_EXCL: 1,
+                },
+                watch: async function* () {},
+                cp: async (src, dest) => fs.writeFileSync(dest, fs.readFileSync(src)),
+                lchmod: async () => {},
+                lchown: async () => {},
+                link: async () => {},
+                lutimes: async () => {},
+                mkdtemp: async (prefix) => {
+                    const suffix = Math.random().toString(36).slice(2, 8);
+                    const path = prefix + suffix;
+                    if (fs.mkdirSyncRecursive) fs.mkdirSyncRecursive(path);
+                    return path;
+                },
+                opendir: async () => { throw new Error("fs.opendir not supported"); },
+                symlink: async () => { throw new Error("fs.symlink not supported"); },
+                truncate: async () => { throw new Error("fs.truncate not supported"); },
             };
 
             // node:stream/web → WHATWG streams (already on globalThis).

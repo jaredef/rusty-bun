@@ -6067,7 +6067,12 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             orig.readlinkSync = function (path) {
                 throw new Error("fs.readlinkSync: not supported");
             };
-            // fs.promises namespace — proxy through to Promise-wrapped sync.
+            // fs.promises namespace — Doc 716 §X K1-IDENTITY closure pass.
+            // Each method whose sync counterpart is wired becomes a one-
+            // line wrap. The cut moves from "L5 throws" / "L5 missing"
+            // to "[WIRED-full]." Zero substrate change; zero alphabet
+            // extension. Predicted retirements scale with in-degree of
+            // node:fs/promises × consumer-exercise-rate.
             orig.promises = orig.promises || {
                 readFile: async (p, opts) => orig.readFileSync(p, opts),
                 writeFile: async (p, data, opts) => orig.writeFileSync(p, data, opts),
@@ -6076,10 +6081,47 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
                 readdir: async (p, opts) => orig.readdirSync(p, opts),
                 mkdir: async (p, opts) => orig.mkdirSyncRecursive ? orig.mkdirSyncRecursive(p) : null,
                 rm: async (p, opts) => orig.unlinkSync ? orig.unlinkSync(p) : null,
+                rmdir: async p => orig.rmdirSyncRecursive ? orig.rmdirSyncRecursive(p) : null,
                 unlink: async p => orig.unlinkSync(p),
                 access: async p => { if (!orig.existsSync(p)) throw new Error("ENOENT: " + p); },
-                realpath: async p => p,
+                realpath: async p => orig.realpathSync ? orig.realpathSync(p) : p,
                 readlink: async () => { throw new Error("readlink not supported"); },
+                // K1-IDENTITY additions:
+                rename: async (a, b) => orig.renameSync(a, b),
+                chmod: async (p, mode) => orig.chmodSync ? orig.chmodSync(p, mode) : undefined,
+                chown: async () => undefined,
+                utimes: async (p, atime, mtime) => {
+                    if (!orig.utimesSync) return undefined;
+                    // Node accepts Date or number-seconds; coerce to number.
+                    const a = atime instanceof Date ? atime.getTime() / 1000 : Number(atime);
+                    const m = mtime instanceof Date ? mtime.getTime() / 1000 : Number(mtime);
+                    return orig.utimesSync(p, a, m);
+                },
+                copyFile: async (a, b) => orig.copyFileSync ? orig.copyFileSync(a, b) :
+                    orig.writeFileSync(b, orig.readFileSync(a)),
+                appendFile: async (p, data, opts) => orig.appendFileSync ? orig.appendFileSync(p, data, opts) :
+                    orig.writeFileSync(p, (orig.existsSync(p) ? orig.readFileSync(p, opts) : "") + data, opts),
+                cp: async (a, b) => orig.copyFileSync ? orig.copyFileSync(a, b) :
+                    orig.writeFileSync(b, orig.readFileSync(a)),
+                mkdtemp: async prefix => {
+                    const suffix = Math.random().toString(36).slice(2, 8);
+                    const p = prefix + suffix;
+                    if (orig.mkdirSyncRecursive) orig.mkdirSyncRecursive(p);
+                    return p;
+                },
+                // K1-WIDENING remaining (no sync surface):
+                open: async () => { throw new Error("fs.open not supported (no FileHandle)"); },
+                opendir: async () => { throw new Error("fs.opendir not supported"); },
+                symlink: async () => { throw new Error("fs.symlink not supported"); },
+                truncate: async () => { throw new Error("fs.truncate not supported"); },
+                link: async () => { throw new Error("fs.link not supported"); },
+                // K2 no-op for lchmod/lchown/lutimes (no sync surface but
+                // most consumers fire-and-forget):
+                lchmod: async () => undefined,
+                lchown: async () => undefined,
+                lutimes: async () => undefined,
+                // K3 generator: empty watcher iterator.
+                watch: async function* () {},
             };
 
             // Async callback variants. Node's fs.X(path, cb) shape.
@@ -11984,7 +12026,13 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     if (fs.unlinkSync) return fs.unlinkSync(p);
                     throw new Error("fs.rm not supported");
                 },
+                // Doc 716 §X K1-IDENTITY closure pass: each fs/promises
+                // method whose sync counterpart is wired becomes a one-
+                // line wrap. Zero substrate change; only the cut-rung
+                // field of the catalogue moves from "L5 throws" to
+                // "[WIRED-full]".
                 stat: async (p) => {
+                    if (fs.statSync) return fs.statSync(p);
                     if (fs.isFileSync && fs.isDirectorySync) {
                         const isFile = fs.isFileSync(p);
                         const isDir = fs.isDirectorySync(p);
@@ -11992,7 +12040,10 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     }
                     throw new Error("fs.stat not supported");
                 },
-                lstat: async function(p) { return this.stat(p); },
+                lstat: async function(p) {
+                    if (fs.lstatSync) return fs.lstatSync(p);
+                    return this.stat(p);
+                },
                 access: async (p) => {
                     if (!fs.existsSync(p)) throw new Error("ENOENT: " + p);
                 },
@@ -12004,20 +12055,39 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     if (fs.unlinkSync) return fs.unlinkSync(p);
                     throw new Error("fs.unlink not supported");
                 },
+                // K1-WIDENING remaining (no sync surface in rusty_node_fs):
                 readlink: async (_p) => {
                     throw new Error("fs.readlink not supported");
                 },
-                realpath: async (p) => p,
-                rename: async (_a, _b) => { throw new Error("fs.rename not supported"); },
-                rmdir: async (p) => { if (fs.rmdirSyncRecursive) return fs.rmdirSyncRecursive(p); },
-                chmod: async () => undefined,
-                chown: async () => undefined,
-                utimes: async () => undefined,
+                realpath: async (p) => {
+                    if (fs.realpathSync) return fs.realpathSync(p);
+                    return p;
+                },
+                // K1-IDENTITY: rename uses fs.renameSync (wired).
+                rename: async (a, b) => {
+                    if (fs.renameSync) return fs.renameSync(a, b);
+                    throw new Error("fs.rename not supported");
+                },
+                rmdir: async (p) => {
+                    if (fs.rmdirSyncRecursive) return fs.rmdirSyncRecursive(p);
+                },
+                // K1-IDENTITY: chmod/chown/utimes use the wired sync surfaces.
+                chmod: async (p, mode) => {
+                    if (fs.chmodSync) return fs.chmodSync(p, mode);
+                },
+                chown: async (_p, _uid, _gid) => undefined,
+                utimes: async (p, atime, mtime) => {
+                    if (fs.utimesSync) return fs.utimesSync(p, atime, mtime);
+                },
+                // K1-IDENTITY: appendFile + copyFile use the dedicated
+                // sync surfaces directly instead of read+write composition.
                 appendFile: async (p, data, opts) => {
+                    if (fs.appendFileSync) return fs.appendFileSync(p, data, opts);
                     const prior = fs.existsSync(p) ? fs.readFileSync(p, opts) : "";
                     return fs.writeFileSync(p, prior + data, opts);
                 },
                 copyFile: async (a, b) => {
+                    if (fs.copyFileSync) return fs.copyFileSync(a, b);
                     const bytes = fs.readFileSync(a);
                     return fs.writeFileSync(b, bytes);
                 },

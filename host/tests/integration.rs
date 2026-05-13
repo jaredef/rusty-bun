@@ -8678,3 +8678,4 @@ consumer_test!(consumer_dotenv_expand_app_byte_identical_to_bun, "consumer-doten
 consumer_test!(consumer_dompurify_app_byte_identical_to_bun, "consumer-dompurify-app");
 consumer_test!(consumer_upath_app_byte_identical_to_bun, "consumer-upath-app");
 consumer_test!(consumer_cron_app_byte_identical_to_bun, "consumer-cron-app");
+consumer_test!(consumer_fs_promises_app_byte_identical_to_bun, "consumer-fs-promises-app");

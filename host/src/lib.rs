@@ -6263,6 +6263,54 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             orig.Stats = class Stats {};
         })();
     "#)?;
+    // Bun-parity cleanup: (a) remove our private helper names from the public
+    // fs surface — they were exposed historically as the only string/byte
+    // variants of readFileSync, but Bun's fs doesn't include them. fs-extra
+    // and similar wrappers Object.keys(fs) and re-export every key. (b) stub
+    // out the Node v20+ surface we don't actually implement so the namespace
+    // shape matches Bun. Stubs throw on call; callers that only enumerate
+    // (typeof / Object.keys) work fine.
+    ctx.eval::<(), _>(r#"
+        (function() {
+            if (typeof globalThis.fs === "undefined") return;
+            const fs = globalThis.fs;
+            // Polluters — internal names that aren't part of Bun/Node fs.
+            // We can't delete them outright (bootRequire and internal helpers
+            // still call them), so mark them non-enumerable. Object.keys(fs)
+            // — used by fs-extra and similar wrappers — skips them.
+            for (const n of ["readFileSyncUtf8","readFileSyncBytes",
+                             "isFileSync","isDirectorySync","fileSizeSync",
+                             "listDirectorySync","mkdirSyncRecursive",
+                             "rmdirSyncRecursive"]) {
+                const v = fs[n];
+                if (typeof v !== "undefined") {
+                    try {
+                        Object.defineProperty(fs, n, {
+                            value: v, writable: true, configurable: true, enumerable: false,
+                        });
+                    } catch (_) {}
+                }
+            }
+            // Stubs for the Node fs surface we don't yet implement. Throws
+            // on invocation; namespace-shape parity is satisfied by typeof.
+            const throwStub = (name) => function() {
+                throw new Error("fs." + name + " is not yet implemented in rusty-bun-host");
+            };
+            for (const n of ["Dir","_toUnixTimestamp","accessSync","appendFile",
+                             "copyFile","cp","cpSync","fdatasync","fdatasyncSync",
+                             "fsync","ftruncate","futimes","futimesSync","glob",
+                             "globSync","link","linkSync","lutimes","lutimesSync",
+                             "mkdtemp","mkdtempSync","openAsBlob","opendir",
+                             "opendirSync","readvSync","rename","rmdir","statfs",
+                             "statfsSync","symlink","symlinkSync","truncate",
+                             "truncateSync","utimes","writevSync",
+                             "chmod","chown","chownSync","fchmod","fchmodSync",
+                             "fchown","fchownSync","fstat","lchmod","lchmodSync",
+                             "lchown","lchownSync"]) {
+                if (typeof fs[n] === "undefined") fs[n] = throwStub(n);
+            }
+        })();
+    "#)?;
     Ok(())
 }
 

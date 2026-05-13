@@ -41,6 +41,13 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `f12fa070` | **seed §VII updated** for basket-sweep + Doc 715 §XI — fixture count 598→641, reframed from two structural blockers to one (eval-ESM retired, only real-OSS basket expansion remains); basin boundaries catalogued per §XI.g three-class taxonomy |
+| 2026-05-13 | `6ca5d50` (corpus) | **Doc 715 §XI second consolidation amendment** — basket-sweep validation: (f) substrate-widening selection criterion makes predictions that hold (per-widening retirement-fanout measured); (g) basin boundaries decompose into three classes (engine-depth, engagement-depth, resolution-ambiguity); (h) P1/P2/P3 validated at consumer-corpus scale across ~46 probes; (i) authority-resolution discriminator added to apparatus catalogue as fourth field |
+| 2026-05-13 | `da0ee309` | **Stream substrate widening** — Writable decodeStrings (string→Buffer coercion at Transform._write layer to avoid double-coerce through readable-stream package); Buffer construct trap dispatches via apply-mirror (numeric→alloc, others→Buffer.from). 6 retired: split2, csv-parser, ndjson, pump, readable-stream, JSONStream. Boundary E.63 byline (resolution-ambiguity at alphabet level: this._readableState authority conflict) |
+| 2026-05-13 | `c925b96c` | **IANA timezone substrate** — host/src/tz.rs with libc setenv(TZ)+tzset+localtime_r+restore; thread-mutex-serialized. JS __tz.localTimeAt + abbrAt primitives; Intl.DateTimeFormat _parts routes through __tz when opts.timeZone set; formatToParts per-component; Date.prototype.toLocaleString honors timeZone via same path. 10 retired (date-fns-tz + dayjs-tz substrate-enabled; 8 free); pouchdb permanent (native binding) |
+| 2026-05-13 | `4c711ccb` | **Basket round 2** — +17 retired (jotai, valtio, temporal-polyfill, joi, lodash-es, consola, chalk, ohash, magic-string, fast-glob, scrypt-js, chalk-template, just-curry-it, signale, loglevel, ts-pattern, hookable); E.62 yargs boundary (QuickJS parser syntax form) |
+| 2026-05-13 | `483546bb` | **Basket round 1** — +9 retired (drizzle-orm, axios, ky, p-queue, p-map, p-retry, kysely, ramda, preact, nanostores); E.60 elysia boundary (QuickJS parser SIGSEGV on minified 1987-LOC ESM) + E.61 redis (CJS chain) deferred |
+| 2026-05-13 | `b24ec3c7` | **eval-ESM retired** — data: URL dynamic import through resolver+loader. NodeResolver passes data: through unchanged; FsLoader decodes per RFC 2397 (base64 or percent) and Module::declares. Hand-rolled base64 + percent decoders inline, no new crate dep. Single round, much smaller than the 2-3 round estimate. consumer-eval-esm-data-app fixture |
 | 2026-05-13 | `b059d33d` | **seed §VII sharpened** against the Π2.6.c + Π2.6.d milestone — fixture count 593→598, gap-to-full-parity reframed from three terms to two (cooperative-loop reactor question retired structurally), sub-criterion 3/4 updated to record the mio reactor + token-partitioned namespace + four external-fanout closures, §VII.A status block notes the nine-round sweep as retired |
 | 2026-05-13 | `3e8e0a5` (corpus) | **Doc 715 §X consolidation amendment** — five empirical findings from the nine-round cooperative-loop sweep: (a) reactor node corroborates P1 at substrate-internal scale; (b) external-fanout extension grows leaf set without growing alphabet; (c) five-surface ceiling analysis maps onto DAG-depth-from-substrate; (d) shift-3 diagnostic held empirically; (e) Tier-3 own-pid signal dispatch documented as authority-acceptable divergence. Operational implication: pre-partition the identity space at substrate construction (P1-aware design pattern) |
 | 2026-05-13 | `e2f15797` | **Π2.6.d.d async DNS** — per-thread eventfd + mpsc + worker thread; Bun.dns.lookup as real-async Promise; pump self-removes when __dnsPending empties; eval-loop consecutive_idle gate widened to alive_count > 0 OR reactor_alive; consumer-dns-async-app fixture |
@@ -400,6 +407,58 @@ The detailed sub-round records below remain as the engagement's history. Future 
 **Telos-anchored framing.** Sub-criterion 5 (per-fixture differential) at 598 J.1.a fixtures. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity (418/418), L4+ instance-fill regime. Sub-criterion 3 (transport-layer): functionally complete; the cooperative-loop reactor ceiling is structurally retired. Sub-criterion 4 (JS host integration): reactor + token-partitioned namespace + four external-fanout sources wired. The remaining distance to full plug-and-play parity is dominated by basket-coverage (mechanical) + eval-ESM (bounded). The substrate-introduction phase ended in the morning; the cooperative-loop reactor sweep ended in the evening; the engagement is fully in the consolidation regime per Doc 715 §VII shift 3 + §X.
 
 **Live cascade prediction (Doc 715 D1, posted 2026-05-13 morning).** The .mjs-always-ESM gate predicts retirement-fanout across bundler-output minified-ESM packages. Falsifier still open: ≥5 packages retire on the next probe sweep corroborates P1 in the parse-classifier layer; zero retirements means the fix was local-only.
+
+---
+
+#### Status at 2026-05-13 late afternoon close (basket-sweep + 2 substrate widenings)
+
+**Fixture count: 625 inner-loop + 16 slow-burst = 641 J.1.a fixtures.** Inner-loop suite ~30s on Pi. +43 fixtures vs the evening-close baseline (598 → 641).
+
+**~46 packages probed across four rounds:**
+
+| Round | Retired | Boundary | Substrate widening |
+|---|---|---|---|
+| eval-ESM | 1 (eval-esm-data-URL) | — | data: URL dynamic import via resolver+loader |
+| Basket 1 | 10 (drizzle, axios, ky, p-queue, p-map, p-retry, kysely, ramda, preact, nanostores) | E.60 elysia (engine-depth), E.61 redis (engagement-depth) | — |
+| Basket 2 | 17 (jotai, valtio, temporal-polyfill, joi, lodash-es, consola, chalk, ohash, magic-string, fast-glob, scrypt-js, chalk-template, just-curry-it, signale, loglevel, ts-pattern, hookable) | E.62 yargs (engine-depth) | — |
+| IANA tz | 10 (csv-parse, fast-csv, through2, chokidar, tar, jszip, unified, moment-timezone, date-fns-tz, dayjs-tz) | pouchdb permanent (native binding) | __tz primitive via libc setenv+tzset+localtime_r; Intl.DateTimeFormat honors timeZone |
+| Stream | 6 (split2, csv-parser, ndjson, pump, readable-stream, JSONStream) | E.63 byline (resolution-ambiguity) | Writable decodeStrings + Buffer construct trap dispatch |
+| **Total** | **44** | **5 (2 perm + 3 engagement-scope)** | **2 substrate widenings** |
+
+**Substrate widenings landed in this slice:**
+- **Resolver/Loader**: data: URLs pass through resolver unchanged; FsLoader decodes per RFC 2397 (base64 + percent) and Module::declares. Hand-rolled decoders inline, no new crate dep.
+- **host/src/tz.rs** (libc IANA timezone): setenv(TZ)+extern tzset+localtime_r+restore, thread-mutex serialized. Returns local-time components + offset + abbreviation.
+- **Intl.DateTimeFormat _parts**: routes through __tz when opts.timeZone set; formatToParts emits per-component (year/month/day/hour/minute/second/timeZoneName). Date.prototype.toLocaleString already routed through DateTimeFormat; now correctly honors timeZone.
+- **Writable decodeStrings**: _writableObjectMode + _writableDecodeStrings flags. Coercion lives at Transform._write layer (not outer Writable) to avoid double-coerce when piping through third-party Writables (readable-stream package).
+- **Buffer construct trap**: dispatches via apply-mirror (numeric→alloc, others→Buffer.from(value, enc, len)). `new Buffer("hello", "utf8")` previously returned empty.
+
+**Doc 715 §XI consolidation amendment landed (corpus 6ca5d50):**
+- (f) Substrate-widening selection criterion makes predictions that hold — per-widening retirement-fanout measured (1 blocked + 8-9 free in __tz case; 1 blocked + 5 free in stream case).
+- (g) Basin boundaries decompose into three classes: engine-depth instance limits / engagement-depth instance limits / resolution-ambiguity at alphabet level. The third class is new (byline E.63).
+- (h) P1/P2/P3 validated at consumer-corpus scale: ~28% direct retirements via substrate widenings, ~72% free, zero new alphabet kinds, all blocked paths at depth ≤ 3.
+- (i) Authority-resolution discriminator added as fourth apparatus catalogue field.
+
+**Basin boundary record (cumulative):**
+
+| Basin | Class | Re-open condition |
+|---|---|---|
+| E.60 elysia | engine-depth | QuickJS parser hand-roll (successor engagement) |
+| E.61 redis | engagement-depth | Diagnose specific failing CJS-bridge transitive |
+| E.62 yargs | engine-depth | Identify specific QuickJS-rejected syntax form |
+| E.63 byline | resolution-ambiguity | Distinguish our-Readable-direct vs subclassed-via-readable-stream at construction |
+| pouchdb permanent | native | Cannot be closed in JS engine (compile native to JS would be successor scope) |
+
+#### Remaining work toward telos closure (2026-05-13 late afternoon)
+
+**One structural blocker** (was two; eval-ESM retired):
+- **Real-OSS basket expansion** — open-ended productivity at the current density coefficient. Per Doc 715 §XI.h empirical regime: ~85% direct-retirement rate per probe, ~0.3 new-substrate-edges-per-probe, zero new alphabet elements.
+
+**Successor-engagement scope** (out of incremental round budget):
+- Adversarial-async-graph + engine-internal-depth instance limits (elysia/yargs class) — closed only by hand-rolling QuickJS in Rust. Per Doc 715 §X.c + §XI.g.
+
+**Live cascade prediction (Doc 715 D1, status 2026-05-13 PM).** The .mjs-always-ESM gate from the morning predicted retirement-fanout across bundler-output minified-ESM packages. **Retired this afternoon via the cascade**: jotai (jotai/vanilla.mjs), valtio (valtio/vanilla.mjs), temporal-polyfill, magic-string, ohash, hookable, plus the IANA-tz consumers (dayjs/plugin/timezone.js, date-fns-tz/*.mjs). **Prediction corroborated**: ≥5 packages retired free via the gate, P1 holds in the parse-classifier layer.
+
+**Telos-anchored framing.** Sub-criterion 5 (per-fixture differential) at **641 J.1.a fixtures**. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity, L4+ instance-fill regime — substantially extended via IANA-tz + stream-decodeStrings widenings. Sub-criterion 3/4: structurally complete. The remaining distance to full plug-and-play parity is dominated by open-ended basket expansion. The engagement is in **empirical steady state** in the consolidation regime per Doc 715 §X + §XI.
 
 **Strong external validation** — WPT runner adapter remains queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
 

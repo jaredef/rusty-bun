@@ -30,6 +30,7 @@ mod watchers;
 mod spawn_async;
 mod signals;
 mod dns_async;
+mod tz;
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
@@ -11332,6 +11333,43 @@ fn install_node_https_perf_async_hooks_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
 }
 
 fn install_intl_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
+    // Π2.6.basket-tz: expose __tz.localTimeAt for timezone-aware
+    // Intl.DateTimeFormat. Returns a 9-element array shape so the JS
+    // side parses without object marshaling cost.
+    let global = ctx.globals();
+    let tz_ns = Object::new(ctx.clone())?;
+    tz_ns.set(
+        "localTimeAt",
+        Function::new(ctx.clone(), |utc_ms: f64, tz_name: String| -> JsResult<Vec<f64>> {
+            let lt = crate::tz::tz::local_time_at(utc_ms as i64, &tz_name)
+                .map_err(|e| rquickjs::Error::new_from_js_message("tz", "localTimeAt", e))?;
+            // Encode as Vec<f64>; abbr is dropped (most consumers don't use it
+            // directly — they call formatToParts which we synthesize from the
+            // numeric parts).
+            Ok(vec![
+                lt.year as f64, lt.month as f64, lt.day as f64,
+                lt.hour as f64, lt.minute as f64, lt.second as f64,
+                lt.offset_minutes as f64, lt.weekday as f64,
+                // 9th: abbr length-prefixed via a parallel call would be
+                // cleaner; for now, callers that need abbr use the dedicated
+                // primitive below.
+                0.0,
+            ])
+        })?,
+    )?;
+    tz_ns.set(
+        "abbrAt",
+        Function::new(ctx.clone(), |utc_ms: f64, tz_name: String| -> JsResult<String> {
+            crate::tz::tz::local_time_at(utc_ms as i64, &tz_name)
+                .map(|lt| lt.abbr)
+                .map_err(|e| rquickjs::Error::new_from_js_message("tz", "abbrAt", e))
+        })?,
+    )?;
+    global.set("__tz", tz_ns)?;
+    install_intl_js_inner(ctx)
+}
+
+fn install_intl_js_inner<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
     // S11 closure (partial): a minimal Intl.NumberFormat sufficient for
     // pretty-bytes (E.35), the date-fns/luxon (E.22) common path, and
     // any consumer using maximumFractionDigits / useGrouping. Locale
@@ -11493,31 +11531,105 @@ fn install_intl_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     this._locale = Array.isArray(locales) ? (locales[0] || "en") : (locales || "en");
                     this._opts = options;
                 }
+                _parts(date) {
+                    // Π2.6.basket-tz: resolve year/month/day/h/m/s in the
+                    // configured timeZone via __tz.localTimeAt. Without
+                    // timeZone option, fall back to Date's local time
+                    // (which is UTC inside QuickJS).
+                    const utcMs = date.getTime();
+                    if (this._opts.timeZone && typeof globalThis.__tz !== "undefined") {
+                        const arr = globalThis.__tz.localTimeAt(utcMs, this._opts.timeZone);
+                        const abbr = globalThis.__tz.abbrAt(utcMs, this._opts.timeZone);
+                        return {
+                            year: arr[0], month: arr[1], day: arr[2],
+                            hour: arr[3], minute: arr[4], second: arr[5],
+                            offsetMin: arr[6], weekday: arr[7],
+                            tzAbbr: abbr,
+                        };
+                    }
+                    return {
+                        year: date.getUTCFullYear(),
+                        month: date.getUTCMonth() + 1,
+                        day: date.getUTCDate(),
+                        hour: date.getUTCHours(),
+                        minute: date.getUTCMinutes(),
+                        second: date.getUTCSeconds(),
+                        offsetMin: 0,
+                        weekday: date.getUTCDay(),
+                        tzAbbr: "UTC",
+                    };
+                }
                 format(date) {
                     date = date instanceof Date ? date : new Date(date);
                     const o = this._opts;
+                    const p = this._parts(date);
                     const pad = (n, w = 2) => String(n).padStart(w, "0");
-                    const y = date.getFullYear();
-                    const mo = date.getMonth() + 1;
-                    const d = date.getDate();
-                    const h = date.getHours();
-                    const mi = date.getMinutes();
-                    const s = date.getSeconds();
-                    // Heuristic: dateStyle: "short" → M/D/YYYY; long/full add weekday + month name
-                    if (o.dateStyle === "short" && !o.timeStyle) return mo + "/" + d + "/" + y;
+                    const months = ["January","February","March","April","May","June",
+                                    "July","August","September","October","November","December"];
+                    const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+                    if (o.dateStyle === "short" && !o.timeStyle) return p.month + "/" + p.day + "/" + p.year;
                     if (o.dateStyle === "long" && !o.timeStyle) {
-                        const months = ["January","February","March","April","May","June",
-                                        "July","August","September","October","November","December"];
-                        return months[mo-1] + " " + d + ", " + y;
+                        return months[p.month-1] + " " + p.day + ", " + p.year;
                     }
+                    // Honor explicit year/month/day/hour/minute/second
+                    // options as Bun's default-and-numeric shape.
+                    let datePart = "";
+                    if (o.year !== undefined || o.month !== undefined || o.day !== undefined) {
+                        const monthStr = (o.month === "long") ? months[p.month-1]
+                            : (o.month === "short") ? months[p.month-1].slice(0,3)
+                            : (o.month === "2-digit") ? pad(p.month)
+                            : (o.month === "numeric") ? String(p.month)
+                            : pad(p.month);
+                        const yearStr = (o.year === "2-digit") ? pad(p.year % 100) : String(p.year);
+                        const dayStr = (o.day === "2-digit") ? pad(p.day) : String(p.day);
+                        if (o.month === "long" || o.month === "short") {
+                            datePart = monthStr + " " + dayStr + ", " + yearStr;
+                        } else {
+                            datePart = monthStr + "/" + dayStr + "/" + yearStr;
+                        }
+                    }
+                    let timePart = "";
+                    if (o.hour !== undefined || o.minute !== undefined || o.second !== undefined) {
+                        const hh = (o.hour12 === false || o.hourCycle === "h23") ? pad(p.hour)
+                            : pad(p.hour % 12 === 0 ? 12 : p.hour % 12);
+                        timePart = hh + ":" + pad(p.minute) + ":" + pad(p.second);
+                    }
+                    if (datePart && timePart) return datePart + ", " + timePart;
+                    if (datePart) return datePart;
+                    if (timePart) return timePart;
                     // Default ISO-like fallback.
-                    return mo + "/" + d + "/" + y + ", " + h + ":" + pad(mi) + ":" + pad(s);
+                    return p.month + "/" + p.day + "/" + p.year + ", " + p.hour + ":" + pad(p.minute) + ":" + pad(p.second);
                 }
                 formatToParts(date) {
-                    return [{ type: "literal", value: this.format(date) }];
+                    date = date instanceof Date ? date : new Date(date);
+                    const p = this._parts(date);
+                    const o = this._opts;
+                    const pad = (n, w = 2) => String(n).padStart(w, "0");
+                    const months = ["January","February","March","April","May","June",
+                                    "July","August","September","October","November","December"];
+                    // Emit per-component parts so consumers (date-fns-tz)
+                    // that walk formatToParts can extract numeric pieces.
+                    const parts = [];
+                    parts.push({ type: "year", value: String(p.year) });
+                    parts.push({ type: "literal", value: "-" });
+                    parts.push({ type: "month", value: pad(p.month) });
+                    parts.push({ type: "literal", value: "-" });
+                    parts.push({ type: "day", value: pad(p.day) });
+                    parts.push({ type: "literal", value: " " });
+                    parts.push({ type: "hour", value: pad(p.hour) });
+                    parts.push({ type: "literal", value: ":" });
+                    parts.push({ type: "minute", value: pad(p.minute) });
+                    parts.push({ type: "literal", value: ":" });
+                    parts.push({ type: "second", value: pad(p.second) });
+                    if (p.tzAbbr) {
+                        parts.push({ type: "literal", value: " " });
+                        parts.push({ type: "timeZoneName", value: p.tzAbbr });
+                    }
+                    return parts;
                 }
                 resolvedOptions() {
-                    return Object.assign({ locale: this._locale, timeZone: "UTC" }, this._opts);
+                    const tz = this._opts.timeZone || "UTC";
+                    return Object.assign({ locale: this._locale, timeZone: tz }, this._opts);
                 }
             }
             DateTimeFormat.supportedLocalesOf = function(locales) {

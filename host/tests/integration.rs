@@ -8652,3 +8652,12 @@ fn consumer_yargsp_app_byte_identical_to_bun() {
     let bun_out = String::from_utf8_lossy(&bun.stdout).trim().to_string();
     assert_eq!(rb.trim(), bun_out, "differential mismatch");
 }
+consumer_test!(consumer_csv_parse_app_byte_identical_to_bun, "consumer-csv-parse-app");
+consumer_test!(consumer_fast_csv_app_byte_identical_to_bun, "consumer-fast-csv-app");
+consumer_test!(consumer_through2_app_byte_identical_to_bun, "consumer-through2-app");
+consumer_test!(consumer_jszip_app_byte_identical_to_bun, "consumer-jszip-app");
+consumer_test!(consumer_date_fns_tz_app_byte_identical_to_bun, "consumer-date-fns-tz-app");
+consumer_test!(consumer_unified_app_byte_identical_to_bun, "consumer-unified-app");
+consumer_test!(consumer_moment_tz_app_byte_identical_to_bun, "consumer-moment-tz-app");
+consumer_test!(consumer_dayjs_tz_app_byte_identical_to_bun, "consumer-dayjs-tz-app");
+consumer_test!(consumer_tar_app_byte_identical_to_bun, "consumer-tar-app");

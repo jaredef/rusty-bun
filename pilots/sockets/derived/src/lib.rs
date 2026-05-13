@@ -288,6 +288,28 @@ pub fn stream_try_read(id: u64, max: usize) -> Result<Option<Vec<u8>>, SocketErr
     }
 }
 
+/// Π2.6.c.a: expose the original fd backing a stream id, for
+/// registration with an external readiness reactor (mio). Returns the
+/// fd of the stream stored in the registry — not a clone — so the fd
+/// stays valid for the registration's lifetime (until stream_close
+/// drops the entry). Unix-only; non-unix platforms return WrongKind
+/// so the caller falls back to the cooperative-yield path.
+#[cfg(unix)]
+pub fn stream_raw_fd(id: u64) -> Result<std::os::unix::io::RawFd, SocketError> {
+    use std::os::unix::io::AsRawFd;
+    let r = registry().lock().expect("sockets: registry poisoned");
+    let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+    match h {
+        Handle::Stream(s) => Ok(s.as_raw_fd()),
+        _ => Err(SocketError::WrongKind),
+    }
+}
+
+#[cfg(not(unix))]
+pub fn stream_raw_fd(_id: u64) -> Result<i32, SocketError> {
+    Err(SocketError::WrongKind)
+}
+
 /// Close a handle (listener or stream) by removing it from the registry.
 /// Drop runs the OS close.
 pub fn handle_close(id: u64) -> Result<(), SocketError> {

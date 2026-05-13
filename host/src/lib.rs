@@ -25,6 +25,8 @@ use rquickjs::{
     Context, Ctx, Error as JsErr, Function, Module, Object, Result as JsResult, Runtime, Value,
 };
 
+mod reactor;
+
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
 /// (Tier-H.3); CommonJS is still wired JS-side via `bootRequire(absPath)`.
@@ -2870,6 +2872,55 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
         })?,
     )?;
     global.set("__sockets", ns)?;
+    // Π2.6.c.a: mio reactor primitives. Single-process readiness
+    // multiplexer; takes ownership of nothing — fd lifetime stays with
+    // the sockets pilot's registry. JS layer (added below) exposes a
+    // globalThis.__reactor namespace. No consumer migration this
+    // round; the existing tryRead/idleSpin path stays operational.
+    let reactor_ns = Object::new(ctx.clone())?;
+    reactor_ns.set(
+        "register",
+        Function::new(ctx.clone(), |sid: f64| -> JsResult<()> {
+            let id = sid as u64;
+            let fd = rusty_sockets::stream_raw_fd(id).map_err(|e| {
+                rquickjs::Error::new_from_js_message("reactor", "register-fd-lookup", e.to_string())
+            })?;
+            crate::reactor::register_fd(id, fd)
+                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "register", e))
+        })?,
+    )?;
+    reactor_ns.set(
+        "deregister",
+        Function::new(ctx.clone(), |sid: f64| -> JsResult<()> {
+            let id = sid as u64;
+            let fd = rusty_sockets::stream_raw_fd(id).map_err(|e| {
+                rquickjs::Error::new_from_js_message("reactor", "deregister-fd-lookup", e.to_string())
+            })?;
+            crate::reactor::deregister_fd(id, fd)
+                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "deregister", e))
+        })?,
+    )?;
+    reactor_ns.set(
+        "poll",
+        Function::new(ctx.clone(), |timeout_ms: f64| -> JsResult<f64> {
+            crate::reactor::poll_once(timeout_ms as i64)
+                .map(|n| n as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "poll", e))
+        })?,
+    )?;
+    reactor_ns.set(
+        "takeReady",
+        Function::new(ctx.clone(), || -> JsResult<Vec<f64>> {
+            Ok(crate::reactor::take_ready().into_iter().map(|t| t as f64).collect())
+        })?,
+    )?;
+    reactor_ns.set(
+        "registeredCount",
+        Function::new(ctx.clone(), || -> JsResult<f64> {
+            Ok(crate::reactor::registered_count() as f64)
+        })?,
+    )?;
+    global.set("__reactor", reactor_ns)?;
     // JS-side facade: globalThis.TCP with parsed-result helpers + the
     // toByteArray pattern (per F8) for typed-array → Vec<u8> calls.
     ctx.eval::<(), _>(r#"

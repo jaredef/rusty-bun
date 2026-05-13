@@ -447,7 +447,8 @@ fn is_node_builtin(name: &str) -> bool {
         "node:module" | "module" |
         "node:cluster" | "cluster" |
         "node:tls" | "tls" |
-        "node:v8" | "v8"
+        "node:v8" | "v8" |
+        "node:constants" | "constants"
     )
 }
 
@@ -477,17 +478,22 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:buffer" | "buffer" => ("Buffer", &[]),  // see special handling below
         "node:url" | "url" => ("URL", &[]),
         "node:os" | "os" => ("os", &["platform", "arch", "type", "tmpdir",
-            "homedir", "hostname", "endianness", "EOL"]),
+            "homedir", "hostname", "endianness", "EOL",
+            "cpus", "freemem", "totalmem", "uptime", "loadavg",
+            "networkInterfaces", "userInfo", "constants"]),
         "node:process" | "process" => ("process", &["argv", "env", "platform",
             "arch", "version", "versions", "cwd", "exit", "stdout", "stderr",
-            "hrtime"]),
+            "hrtime", "pid", "ppid", "nextTick", "execPath", "execArgv",
+            "title", "argv0", "allowedNodeEnvironmentFlags", "stdin",
+            "on", "once", "off", "emit", "removeListener", "removeAllListeners",
+            "kill", "umask", "uptime", "getuid", "getgid"]),
         "node:dns" | "dns" => ("nodeDns", &["lookup", "resolve", "resolve4",
             "resolve6", "promises"]),
         "node:dns/promises" | "dns/promises" => ("nodeDnsPromises",
             &["lookup", "resolve", "resolve4", "resolve6"]),
         "node:events" | "events" => ("nodeEvents", &["EventEmitter",
             "once", "on", "captureRejectionSymbol", "errorMonitor",
-            "setMaxListeners", "getEventListeners"]),
+            "setMaxListeners", "getEventListeners", "addAbortListener"]),
         "node:util" | "util" => ("nodeUtil", &["promisify", "callbackify",
             "format", "formatWithOptions", "inspect", "isDeepStrictEqual",
             "deprecate", "debuglog", "inherits", "types", "TextEncoder", "TextDecoder",
@@ -498,7 +504,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "isAsyncFunction", "isGeneratorFunction"]),
         "node:stream" | "stream" => ("nodeStream", &["Readable", "Writable",
             "Duplex", "Transform", "PassThrough", "pipeline", "finished",
-            "Stream"]),
+            "Stream", "getDefaultHighWaterMark", "setDefaultHighWaterMark",
+            "isReadable", "isWritable", "compose"]),
         "node:stream/promises" | "stream/promises" => ("nodeStreamPromises",
             &["pipeline", "finished"]),
         "node:querystring" | "querystring" => ("nodeQuerystring",
@@ -510,7 +517,7 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             "ifError", "strict", "AssertionError"]),
         "node:child_process" | "child_process" => ("nodeChildProcess",
             &["spawn", "spawnSync", "exec", "execSync", "execFile",
-              "execFileSync", "fork"]),
+              "execFileSync", "fork", "ChildProcess"]),
         "node:net" | "net" => ("nodeNet",
             &["Socket", "connect", "createConnection", "createServer"]),
         "node:tty" | "tty" => ("nodeTty",
@@ -584,6 +591,10 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["serialize", "deserialize", "getHeapStatistics",
               "getHeapSpaceStatistics", "cachedDataVersionTag",
               "setFlagsFromString", "writeHeapSnapshot"]),
+        "node:constants" | "constants" => ("nodeConstants",
+            &["O_RDONLY", "O_WRONLY", "O_RDWR", "O_CREAT", "O_EXCL",
+              "O_TRUNC", "O_APPEND", "S_IFMT", "S_IFREG", "S_IFDIR",
+              "EACCES", "EEXIST", "ENOENT", "EPERM"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -1573,6 +1584,21 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     })?)?;
     process.set("pid", std::process::id() as i64)?;
     process.set("ppid", 0_i64)?;
+    process.set("execPath", std::env::current_exe()
+        .ok().and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "rusty-bun-host".to_string()))?;
+    process.set("execArgv", Vec::<String>::new())?;
+    process.set("argv0", "rusty-bun-host")?;
+    process.set("title", "rusty-bun-host")?;
+    process.set("allowedNodeEnvironmentFlags", Vec::<String>::new())?;
+    process.set("umask", Function::new(ctx.clone(), || -> i32 { 0o022 })?)?;
+    process.set("uptime", Function::new(ctx.clone(), || -> f64 { 0.0 })?)?;
+    process.set("getuid", Function::new(ctx.clone(), || -> i32 { -1 })?)?;
+    process.set("getgid", Function::new(ctx.clone(), || -> i32 { -1 })?)?;
+    process.set("kill", Function::new(ctx.clone(), |_pid: f64, _sig: Opt<String>| -> bool {
+        // Cannot actually signal pids; rusty-bun runs single-process.
+        false
+    })?)?;
 
     // exit is a sentinel — we cannot actually exit the test process; the
     // function records the code on globalThis.__exitCode and throws to
@@ -1801,6 +1827,31 @@ fn wire_os<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
         if cfg!(target_endian = "little") { "LE" } else { "BE" }
     })?)?;
     os.set("EOL", if cfg!(target_os = "windows") { "\r\n" } else { "\n" })?;
+    // os.constants: posix signals + dlopen + errno
+    {
+        let c = Object::new(ctx.clone())?;
+        let signals = Object::new(ctx.clone())?;
+        signals.set("SIGINT", 2i32)?; signals.set("SIGTERM", 15i32)?;
+        signals.set("SIGKILL", 9i32)?; signals.set("SIGHUP", 1i32)?;
+        signals.set("SIGUSR1", 10i32)?; signals.set("SIGUSR2", 12i32)?;
+        signals.set("SIGPIPE", 13i32)?; signals.set("SIGALRM", 14i32)?;
+        signals.set("SIGCHLD", 17i32)?; signals.set("SIGSTOP", 19i32)?;
+        signals.set("SIGCONT", 18i32)?; signals.set("SIGSEGV", 11i32)?;
+        signals.set("SIGABRT", 6i32)?; signals.set("SIGFPE", 8i32)?;
+        c.set("signals", signals)?;
+        let errno = Object::new(ctx.clone())?;
+        errno.set("EACCES", 13i32)?; errno.set("EEXIST", 17i32)?;
+        errno.set("ENOENT", 2i32)?; errno.set("EPERM", 1i32)?;
+        errno.set("EBADF", 9i32)?; errno.set("EINVAL", 22i32)?;
+        errno.set("EISDIR", 21i32)?; errno.set("ENOTDIR", 20i32)?;
+        errno.set("ENOSPC", 28i32)?; errno.set("EPIPE", 32i32)?;
+        c.set("errno", errno)?;
+        let dlopen = Object::new(ctx.clone())?;
+        dlopen.set("RTLD_LAZY", 1i32)?; dlopen.set("RTLD_NOW", 2i32)?;
+        dlopen.set("RTLD_GLOBAL", 256i32)?; dlopen.set("RTLD_LOCAL", 0i32)?;
+        c.set("dlopen", dlopen)?;
+        os.set("constants", c)?;
+    }
     // Memory + cpu stubs. Best-effort: read /proc on Linux, return small
     // sane defaults otherwise. Consumers (pino, debug, node-fetch) read
     // these for diagnostics; exact accuracy is rarely load-bearing.
@@ -8073,6 +8124,8 @@ const COMMONJS_LOADER_JS: &str = r#"
         "tls": () => globalThis.nodeTls,
         "node:v8": () => globalThis.nodeV8,
         "v8": () => globalThis.nodeV8,
+        "node:constants": () => globalThis.nodeConstants,
+        "constants": () => globalThis.nodeConstants,
     };
 
     function loadModule(absPath) {
@@ -8131,7 +8184,7 @@ const COMMONJS_LOADER_JS: &str = r#"
         return loadModule(absPath);
     };
     // Expose resolution + cache for tests/diagnostics.
-    globalThis.__cjs = { resolvePath, moduleCache, loadModule };
+    globalThis.__cjs = { resolvePath, moduleCache, loadModule, NODE_BUILTINS };
 
     // Top-level globalThis.require — Bun exposes require() in ESM modules
     // for compatibility with libraries that conditionally use either
@@ -8736,6 +8789,14 @@ fn install_node_events_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 return emitter.listeners ? emitter.listeners(eventName) : [];
             };
 
+            // Module-level helpers (Node 18+) on EventEmitter as namespace.
+            EventEmitter.addAbortListener = function(signal, listener) {
+                if (signal && typeof signal.addEventListener === "function") {
+                    signal.addEventListener("abort", listener, { once: true });
+                }
+                return { [Symbol.dispose]() {} };
+            };
+            EventEmitter.captureRejections = false;
             globalThis.nodeEvents = EventEmitter;
             globalThis.EventEmitter = EventEmitter;
         })();
@@ -9500,6 +9561,11 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             Readable.pipeline = pipeline;
             Readable.finished = finished;
             Readable.Stream = Readable;
+            Readable.getDefaultHighWaterMark = (objectMode) => objectMode ? 16 : 16 * 1024;
+            Readable.setDefaultHighWaterMark = () => {};
+            Readable.isReadable = (s) => s instanceof Readable || (s && typeof s.read === "function");
+            Readable.isWritable = (s) => s instanceof Writable || (s && typeof s.write === "function");
+            Readable.compose = (...args) => { throw new Error("stream.compose not implemented"); };
             globalThis.nodeStream = Readable;
             globalThis.nodeStreamPromises = {
                 pipeline: pipelinePromise,
@@ -10765,9 +10831,29 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 "readline/promises","module"
             ];
             globalThis.nodeModule = {
-                createRequire(_url) {
-                    // Return a function with the same shape as globalThis.require.
-                    return globalThis.require;
+                createRequire(url) {
+                    // Per Node spec: returns a require() bound to the URL's
+                    // containing directory. Strip file:// prefix and use the
+                    // dirname as the resolution anchor.
+                    let path = String(url);
+                    if (path.startsWith("file://")) path = path.slice(7);
+                    const slash = path.lastIndexOf("/");
+                    const dir = slash > 0 ? path.substring(0, slash) : "/";
+                    const NB = globalThis.__cjs.NODE_BUILTINS;
+                    const r = function require(spec) {
+                        if (typeof spec !== "string") throw new TypeError("require: spec must be a string");
+                        if (NB && Object.prototype.hasOwnProperty.call(NB, spec)) {
+                            return NB[spec]();
+                        }
+                        const resolved = globalThis.__cjs.resolvePath(spec, dir);
+                        return globalThis.__cjs.loadModule(resolved);
+                    };
+                    r.cache = globalThis.__cjs.moduleCache;
+                    r.resolve = function (spec) {
+                        if (NB && Object.prototype.hasOwnProperty.call(NB, spec)) return spec;
+                        return globalThis.__cjs.resolvePath(spec, dir);
+                    };
+                    return r;
                 },
                 builtinModules: builtinModulesList,
                 isBuiltin(name) {
@@ -10810,6 +10896,17 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                     return { code_and_metadata_size: 0, bytecode_and_metadata_size: 0,
                              external_script_source_size: 0 };
                 },
+            };
+            // node:constants — deprecated namespace alias for os.constants
+            // and fs constants. Stub with the most-commonly-checked values;
+            // libs typically just check existence not exact byte values.
+            globalThis.nodeConstants = {
+                O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+                O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024,
+                S_IFMT: 0o170000, S_IFREG: 0o100000, S_IFDIR: 0o40000,
+                S_IFLNK: 0o120000, S_IFCHR: 0o20000, S_IFBLK: 0o60000,
+                EACCES: 13, EEXIST: 17, ENOENT: 2, EPERM: 1, EBADF: 9,
+                EINVAL: 22, EIO: 5, EISDIR: 21, ENOTDIR: 20, ENOSPC: 28,
             };
             // node:cluster stub — rusty-bun is single-process. Master flag
             // is true, worker is undefined. Surface matches the read-mostly
@@ -11145,7 +11242,27 @@ fn install_node_child_process_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 throw new Error("rusty-bun-host: node:child_process." + name +
                     " not implemented (only spawnSync composes on Bun.spawnSync)");
             };
+            // ChildProcess class — stub for libs that import the class
+            // (typeof check + instanceof). Real subprocess work routes
+            // through spawnSync.
+            class ChildProcess {
+                constructor() {
+                    this.stdin = null; this.stdout = null; this.stderr = null;
+                    this.pid = -1; this.exitCode = null; this.signalCode = null;
+                    this.killed = false; this._listeners = new Map();
+                }
+                on(ev, cb) {
+                    if (!this._listeners.has(ev)) this._listeners.set(ev, []);
+                    this._listeners.get(ev).push(cb); return this;
+                }
+                off() { return this; }
+                kill() { this.killed = true; return true; }
+                disconnect() {}
+                ref() {} unref() {}
+                send() { return false; }
+            }
             globalThis.nodeChildProcess = {
+                ChildProcess,
                 spawnSync(command, args, options) {
                     const opts = options || {};
                     const argv = [String(command)].concat((args || []).map(String));

@@ -7947,6 +7947,11 @@ consumer_test!(consumer_undici_real_app_byte_identical_to_bun, "consumer-undici-
 consumer_test!(consumer_stream_json_app_byte_identical_to_bun, "consumer-stream-json-app");
 consumer_test!(consumer_body_parser_app_byte_identical_to_bun, "consumer-body-parser-app");
 consumer_test!(consumer_inquirer_app_byte_identical_to_bun, "consumer-inquirer-app");
+consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
+consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
+consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");
+consumer_test!(consumer_fs_extra_app_byte_identical_to_bun, "consumer-fs-extra-app");
+consumer_test!(consumer_execa_app_byte_identical_to_bun, "consumer-execa-app");
 
 #[test]
 fn consumer_micromatch_app_byte_identical_to_bun() {

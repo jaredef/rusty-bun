@@ -27,6 +27,7 @@ use rquickjs::{
 
 mod reactor;
 mod watchers;
+mod spawn_async;
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
@@ -7180,6 +7181,79 @@ fn wire_bun_spawn_static<'js>(
             }
         })?,
     )?;
+    // Π2.6.d.b: async-spawn primitives. Pipes are nonblocking so
+    // reads return WouldBlock instead of stalling the eval loop;
+    // the consumer registers stdout/stderr fds with __reactor.
+    ns.set("spawnAsync", Function::new(ctx.clone(),
+        |args: Vec<String>, env_pairs: Opt<Vec<Vec<String>>>, cwd: Opt<String>| -> JsResult<f64> {
+            let env = env_pairs.0.map(|pairs| pairs.into_iter()
+                .filter_map(|p| if p.len() == 2 { Some((p[0].clone(), p[1].clone())) } else { None })
+                .collect::<Vec<_>>());
+            crate::spawn_async::spawn_async(&args, env, cwd.0)
+                .map(|id| id as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "spawn", e))
+        })?,
+    )?;
+    ns.set("spawnAsyncPid", Function::new(ctx.clone(),
+        |id: f64| -> JsResult<f64> {
+            crate::spawn_async::pid(id as u32)
+                .map(|p| p as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "pid", e))
+        })?,
+    )?;
+    #[cfg(unix)]
+    ns.set("spawnPipeFd", Function::new(ctx.clone(),
+        |id: f64, which: f64| -> JsResult<i32> {
+            crate::spawn_async::pipe_fd(id as u32, which as u32)
+                .map(|fd| fd as i32)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "pipeFd", e))
+        })?,
+    )?;
+    // tryReadPipe returns Vec<i32>: [-1] = WouldBlock, [] = EOF, [bytes...] = data
+    ns.set("spawnTryReadPipe", Function::new(ctx.clone(),
+        |id: f64, which: f64, max: f64| -> JsResult<Vec<i32>> {
+            match crate::spawn_async::try_read_pipe(id as u32, which as u32, max as usize) {
+                Ok(Some(buf)) => Ok(buf.iter().map(|&b| b as i32).collect()),
+                Ok(None) => Ok(vec![-1]),
+                Err(e) => Err(rquickjs::Error::new_from_js_message("spawn_async", "tryReadPipe", e)),
+            }
+        })?,
+    )?;
+    ns.set("spawnWritePipe", Function::new(ctx.clone(),
+        |id: f64, data: Vec<u8>| -> JsResult<f64> {
+            crate::spawn_async::write_pipe(id as u32, &data)
+                .map(|n| n as f64)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "writePipe", e))
+        })?,
+    )?;
+    ns.set("spawnClosePipe", Function::new(ctx.clone(),
+        |id: f64, which: f64| -> JsResult<()> {
+            crate::spawn_async::close_pipe(id as u32, which as u32)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "closePipe", e))
+        })?,
+    )?;
+    // tryWait returns f64: -1 = still running, >=0 = exit code
+    ns.set("spawnTryWait", Function::new(ctx.clone(),
+        |id: f64| -> JsResult<f64> {
+            match crate::spawn_async::try_wait(id as u32) {
+                Ok(Some(c)) => Ok(c as f64),
+                Ok(None) => Ok(-1.0_f64),
+                Err(e) => Err(rquickjs::Error::new_from_js_message("spawn_async", "tryWait", e)),
+            }
+        })?,
+    )?;
+    ns.set("spawnKill", Function::new(ctx.clone(),
+        |id: f64| -> JsResult<()> {
+            crate::spawn_async::kill(id as u32)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "kill", e))
+        })?,
+    )?;
+    ns.set("spawnDropHandle", Function::new(ctx.clone(),
+        |id: f64| -> JsResult<()> {
+            crate::spawn_async::drop_handle(id as u32)
+                .map_err(|e| rquickjs::Error::new_from_js_message("spawn_async", "dropHandle", e))
+        })?,
+    )?;
     global.set("__spawn", ns)?;
     Ok(())
 }
@@ -7190,17 +7264,125 @@ const BUN_SPAWN_JS: &str = r#"
     // object with .exited (Promise<exitCode>), .stdout / .stderr as strings,
     // .pid, .kill(). Real async pipe streaming is deferred; spawnSync is
     // synchronous and the caller's await on .exited resolves immediately.
+    // Π2.6.d.b: real async Bun.spawn. Returns a subprocess with
+    // .pid, .exited (Promise<exitCode>), .stdout / .stderr as
+    // ReadableStream-shape async iterables, .stdin as a writable,
+    // .kill(). Pipes are reactor-registered; the eval loop's __tick
+    // resolves pending pipe reads + the exit-wait Promise.
     Bun.spawn = function spawn(args, options) {
-        const r = Bun.spawnSync(args, options || {});
-        return {
-            pid: r.pid || -1,
-            exitCode: r.exitCode,
-            exited: Promise.resolve(r.exitCode),
-            stdout: r.stdout,
-            stderr: r.stderr,
-            success: r.success,
-            kill() {},
+        const opts = options || {};
+        const envPairs = opts.env ? Object.entries(opts.env) : undefined;
+        const cwd = typeof opts.cwd === "string" ? opts.cwd : undefined;
+        const id = envPairs && cwd ? __spawn.spawnAsync(args, envPairs, cwd)
+                 : envPairs ? __spawn.spawnAsync(args, envPairs)
+                 : cwd ? __spawn.spawnAsync(args, undefined, cwd)
+                 : __spawn.spawnAsync(args);
+        const pid = __spawn.spawnAsyncPid(id);
+        // Register pipe fds with reactor for readiness.
+        const stdoutFd = __spawn.spawnPipeFd(id, 1);
+        const stderrFd = __spawn.spawnPipeFd(id, 2);
+        const stdoutToken = 0x70000000 + id * 4 + 0;
+        const stderrToken = 0x70000000 + id * 4 + 1;
+        try { __reactor.registerFd(stdoutToken, stdoutFd); } catch (_) {}
+        try { __reactor.registerFd(stderrToken, stderrFd); } catch (_) {}
+
+        // Collect stdout/stderr as bytes until pipe EOF. Resolves
+        // when the child exits AND both pipes hit EOF.
+        const stdoutChunks = [];
+        const stderrChunks = [];
+        let stdoutDone = false, stderrDone = false;
+        let exited = false, exitCode = -1;
+        const exitedResolvers = [];
+        const exitedPromise = new Promise(function(resolve) {
+            exitedResolvers.push(resolve);
+        });
+
+        function drainPipe(which, target, doneFlagSetter) {
+            const arr = __spawn.spawnTryReadPipe(id, which, 65536);
+            if (arr.length === 1 && arr[0] === -1) return false;  // WouldBlock
+            if (arr.length === 0) { doneFlagSetter(); return true; }  // EOF
+            target.push(new Uint8Array(arr));
+            return true;
+        }
+
+        const handle = {
+            pid,
+            get exitCode() { return exited ? exitCode : null; },
+            exited: exitedPromise,
+            // ReadableStream-shape: async iterator yielding Uint8Array.
+            stdout: makeStream(() => stdoutDone, () => drainPipe(1, stdoutChunks, () => { stdoutDone = true; }), stdoutChunks),
+            stderr: makeStream(() => stderrDone, () => drainPipe(2, stderrChunks, () => { stderrDone = true; }), stderrChunks),
+            stdin: {
+                write(data) {
+                    let bytes;
+                    if (typeof data === "string") bytes = Array.from(new TextEncoder().encode(data));
+                    else if (data instanceof Uint8Array) bytes = Array.from(data);
+                    else bytes = Array.from(data);
+                    return __spawn.spawnWritePipe(id, bytes);
+                },
+                end() { try { __spawn.spawnClosePipe(id, 0); } catch (_) {} },
+            },
+            kill() { try { __spawn.spawnKill(id); } catch (_) {} },
+            __tick() {
+                let progressed = false;
+                if (!stdoutDone && drainPipe(1, stdoutChunks, () => { stdoutDone = true; })) progressed = true;
+                if (!stderrDone && drainPipe(2, stderrChunks, () => { stderrDone = true; })) progressed = true;
+                if (!exited) {
+                    const c = __spawn.spawnTryWait(id);
+                    if (c >= 0) {
+                        exited = true;
+                        exitCode = c;
+                        progressed = true;
+                    }
+                }
+                // Resolve exitedPromise only after child has exited
+                // AND both pipes have hit EOF (so collected output is
+                // complete).
+                if (exited && stdoutDone && stderrDone && exitedResolvers.length > 0) {
+                    try { __reactor.deregisterFd(stdoutToken, stdoutFd); } catch (_) {}
+                    try { __reactor.deregisterFd(stderrToken, stderrFd); } catch (_) {}
+                    for (const fn of exitedResolvers.splice(0)) {
+                        try { fn(exitCode); } catch (_) {}
+                    }
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.delete(handle);
+                    // Don't dropHandle here — the consumer may still
+                    // call .stdout/.stderr drainPipe after teardown.
+                    // The pull function's drain call surfaces as
+                    // an invalid-handle error otherwise. Let the
+                    // handle linger; the process is reaped on close.
+                }
+                return progressed;
+            },
         };
+
+        if (globalThis.__keepAlive) globalThis.__keepAlive.add(handle);
+
+        // ReadableStream of Uint8Array chunks. Real WHATWG shape so
+        // `new Response(proc.stdout).text()` works portably across
+        // Bun and rusty-bun-host.
+        function makeStream(isDone, drain, chunks) {
+            let cursor = 0;
+            return new ReadableStream({
+                async pull(controller) {
+                    while (cursor >= chunks.length) {
+                        if (isDone() && exited) {
+                            drain();
+                            while (cursor < chunks.length) {
+                                controller.enqueue(chunks[cursor++]);
+                            }
+                            controller.close();
+                            return;
+                        }
+                        drain();
+                        if (cursor < chunks.length) break;
+                        await new Promise(r => setTimeout(r, 1));
+                    }
+                    controller.enqueue(chunks[cursor++]);
+                },
+            });
+        }
+
+        return handle;
     };
     Bun.spawnSync = function spawnSync(args, options) {
         const stdinOpt = (options && options.stdin && typeof options.stdin === "string")
@@ -7476,23 +7658,36 @@ const STREAMS_JS: &str = r#"
                 s._pendingReads.push({ resolve, reject });
                 // Trigger pull if source is pull-driven.
                 if (s._source.pull && !s._pulling) {
-                    s._pulling = true;
-                    Promise.resolve().then(() => {
-                        try {
-                            const r = s._source.pull(s._controller);
-                            if (r && typeof r.then === "function") {
-                                r.then(
-                                    () => { s._pulling = false; },
-                                    (e) => { s._controller.error(e); s._pulling = false; }
-                                );
-                            } else {
+                    const drivePull = () => {
+                        s._pulling = true;
+                        Promise.resolve().then(() => {
+                            try {
+                                const r = s._source.pull(s._controller);
+                                const settled = () => {
+                                    s._pulling = false;
+                                    // Π2.6.d.b: if pull returned without
+                                    // enqueuing enough chunks AND there are
+                                    // still pending reads AND stream is
+                                    // still readable, fire pull again.
+                                    // Without this, pull-driven sources that
+                                    // sometimes "pass" (don't enqueue) leave
+                                    // readers blocked forever.
+                                    if (s._state === "readable" && s._pendingReads.length > 0) {
+                                        drivePull();
+                                    }
+                                };
+                                if (r && typeof r.then === "function") {
+                                    r.then(settled, (e) => { s._controller.error(e); s._pulling = false; });
+                                } else {
+                                    settled();
+                                }
+                            } catch (e) {
+                                s._controller.error(e);
                                 s._pulling = false;
                             }
-                        } catch (e) {
-                            s._controller.error(e);
-                            s._pulling = false;
-                        }
-                    });
+                        });
+                    };
+                    drivePull();
                 }
             });
         }
@@ -13821,6 +14016,16 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
                 let cap = sleep_ms.min(50) as u64;
                 std::thread::sleep(std::time::Duration::from_millis(cap));
                 consecutive_idle = 0;
+                continue;
+            }
+            // Π2.6.d.b: when alive_count > 0 AND reactor_alive, the
+            // loop has both keep-alive work AND mio-watched fds —
+            // events may still arrive (e.g., child-process pipe
+            // becomes readable). Don't count this as idle; rely on
+            // the wallclock cap above for runaway safety. Sleep
+            // briefly so we don't busy-spin between mio polls.
+            if alive_count > 0 && reactor_alive {
+                std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
             consecutive_idle += 1;

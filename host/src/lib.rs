@@ -399,21 +399,33 @@ fn normalize_path(p: &std::path::Path) -> std::path::PathBuf {
 struct NodeResolver;
 
 impl Resolver for NodeResolver {
-    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> JsResult<String> {
-        // Π2.6.eval-ESM: data: URLs pass through as-is for the loader
-        // to decode. WHATWG dynamic-import-with-data-URL is the
-        // canonical pattern for evaluating bundled-as-string ESM
-        // source (prettier plugin loader, esbuild dev-runtime).
+    fn resolve<'js>(&mut self, ctx: &Ctx<'js>, base: &str, name: &str) -> JsResult<String> {
         if name.starts_with("data:") {
             return Ok(name.to_string());
         }
-        // node:* and bare-builtin names short-circuit; FsLoader recognizes them.
         if is_node_builtin(name) {
             return Ok(name.to_string());
         }
         match resolve_node_style(base, name) {
             Some(p) => Ok(p.to_string_lossy().into_owned()),
-            None => Err(JsErr::new_resolving(base, name)),
+            None => {
+                // Bun-parity error shape: throw a globalThis.ResolveMessage
+                // with the Bun-format message "Cannot find package 'X' from
+                // 'ABSOLUTE_PATH'". Absolute path is the canonical form of
+                // the importing module's path.
+                let abs_base = std::fs::canonicalize(base)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| base.to_string());
+                let msg = format!("Cannot find package '{}' from '{}'", name, abs_base);
+                let throw_code = format!(
+                    "(function() {{ throw new globalThis.ResolveMessage({}); }})()",
+                    json_str(&msg)
+                );
+                match ctx.eval::<(), _>(throw_code.as_bytes()) {
+                    Ok(_) => Err(JsErr::new_resolving(base, name)),
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
 }
@@ -1582,6 +1594,15 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(r#"
         if (typeof globalThis.global === "undefined") globalThis.global = globalThis;
         if (typeof globalThis.self === "undefined") globalThis.self = globalThis;
+        // Bun-parity: ResolveMessage is the error class Bun throws for
+        // module-resolution failures. Probes (and consumer error handling)
+        // discriminate by e.constructor.name. The NodeResolver throws an
+        // instance of this class instead of rquickjs's default ReferenceError.
+        if (typeof globalThis.ResolveMessage === "undefined") {
+            globalThis.ResolveMessage = class ResolveMessage extends Error {
+                constructor(message) { super(message); this.name = "ResolveMessage"; }
+            };
+        }
     "#)?;
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;

@@ -473,8 +473,9 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
         "node:path" | "path" => ("path", &["basename", "dirname", "extname", "join",
             "normalize", "isAbsolute", "resolve", "relative", "parse", "format",
             "sep", "delimiter", "posix", "win32"]),
-        "node:http" | "http" => ("nodeHttp", &["createServer", "request",
-            "IncomingMessage", "ServerResponse", "ClientRequest", "Server"]),
+        "node:http" | "http" => ("nodeHttp", &["createServer", "request", "get",
+            "IncomingMessage", "ServerResponse", "ClientRequest", "Server",
+            "METHODS", "STATUS_CODES", "globalAgent", "Agent"]),
         // webcrypto is the Web Crypto API namespace (nanoid + many libs
         // pull it from node:crypto). It is structurally identical to the
         // globalThis.crypto object (.subtle + .getRandomValues + .randomUUID).
@@ -7758,10 +7759,34 @@ const NODE_HTTP_JS: &str = r#"
     globalThis.nodeHttp = {
         createServer,
         request,
+        get: request,
         IncomingMessage,
         ServerResponse,
         ClientRequest,
         Server,
+        METHODS: ["ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE",
+            "GET", "HEAD", "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY",
+            "MKCALENDAR", "MKCOL", "MOVE", "NOTIFY", "OPTIONS", "PATCH",
+            "POST", "PROPFIND", "PROPPATCH", "PURGE", "PUT", "REBIND",
+            "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "TRACE", "UNBIND",
+            "UNLINK", "UNLOCK", "UNSUBSCRIBE"],
+        STATUS_CODES: {
+            100: "Continue", 101: "Switching Protocols", 102: "Processing",
+            200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
+            301: "Moved Permanently", 302: "Found", 304: "Not Modified",
+            307: "Temporary Redirect", 308: "Permanent Redirect",
+            400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
+            404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout",
+            409: "Conflict", 410: "Gone", 413: "Payload Too Large",
+            415: "Unsupported Media Type", 418: "I'm a Teapot", 422: "Unprocessable Entity",
+            429: "Too Many Requests", 500: "Internal Server Error",
+            501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable",
+            504: "Gateway Timeout",
+        },
+        globalAgent: { maxSockets: Infinity, keepAlive: false },
+        Agent: class Agent {
+            constructor(opts) { Object.assign(this, opts || {}); }
+        },
     };
 })();
 "#;

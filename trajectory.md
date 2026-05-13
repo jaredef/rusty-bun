@@ -41,6 +41,14 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `dfd0a6c9` | **fs/promises K1-IDENTITY closure pass per Doc 716 §X** — empirical test of the closure-class conjecture. Closures: rename / chmod / utimes / copyFile / appendFile / cp / mkdtemp / rmdir all moved from K1-throw or K2-no-op to [WIRED-full]. Zero substrate change, zero new alphabet kinds, ~30 LOC mechanical wrap (exactly as predicted). M7 fold-back: utimesSync Date→number coercion. consumer-fs-promises-app fixture. Conjecture validated empirically. |
+| 2026-05-13 | `21d8fb5` (corpus) | **Doc 716 §X amendment** — closure-class as fourth axis (IDENTITY / WIDENING / SUCCESSOR). K1/K2/K3 have different predictability profiles at substrate-derivation level. IDENTITY = pure cut-rung movement (zero substrate change). WIDENING = requires new substrate (heavy-tail rules apply). SUCCESSOR = engagement-unreachable depth. Six of nine possible (kind × closure-class) combinations observed in the engagement. Substrate-derivation becomes prospectively legible at the catalogue level. |
+| 2026-05-13 | `a179d3ce` | **Stub tracker built per Doc 716 §VI** — detector (host/tools/stub-list.sh) scans host + pilot crates for K1/K2/K3 syntactic signatures; catalogue (host/tools/stub-catalog.md) records per-stub (substrate node, cut rung, kind, in-degree, known consumers, re-open). First-run findings: ~22 K1, ~25 K2, ~7 K3. Stub-alphabet stability check passes (zero K4 candidates). |
+| 2026-05-13 | `cc5702a` (corpus) | **Doc 716 published — Stubs as Named Cuts** — primary articulation. Names the cut-character stratum (K1 throw-on-use / K2 no-op return / K3 hardcoded-sentinel); states the stub-alphabet stability conjecture at cardinality three. Three projections of Doc 715's DAG each inform a tracker axis: DAG (priority by in-degree), lattice (cut rung), alphabet (kind). Three operational outputs: ranked priority list, per-rung audit, alphabet stability check. |
+| 2026-05-13 | `df02f4d8` | **Basket round 3** — +10 retired (marked, superagent, ws, openai, @anthropic-ai/sdk, dotenv-expand, nodemailer, dompurify, upath, cron). 2 boundaries deferred (cosmiconfig, rc — new sub-class: runtime-env-divergence-not-substrate). |
+| 2026-05-13 | `319cfc3f` | **Substrate-tail closure** — node:sqlite + node:inspector stubs land. Broader 548-package sample re-ranked: ZERO [OPEN] substrate nodes. Substrate-introduction phase empirically depleted at every measurable scope. |
+| 2026-05-13 | `28cd2a28` | **host/tools/substrate-rank.sh** — empirical substrate-in-degree ranker per Doc 715 §VII shift 2. Walks fixture node_modules trees, classifies bare-specifier imports as builtin/npm, marks [WIRED]/[OPEN]. First-run found only node:sqlite (4 uses) as the unwired tail. |
+| 2026-05-13 | `e2aee16d` | **CJS-bridge edge retirement (E.61 redis)** — one-line `Readable.EventEmitter = EE` exposes Node's legacy stream.EventEmitter re-export. Retired 3: redis (E.61), mqtt, @planetscale/database. Bonus: confirmed E.20 glob already retired via existing substrate. |
 | 2026-05-13 | `f12fa070` | **seed §VII updated** for basket-sweep + Doc 715 §XI — fixture count 598→641, reframed from two structural blockers to one (eval-ESM retired, only real-OSS basket expansion remains); basin boundaries catalogued per §XI.g three-class taxonomy |
 | 2026-05-13 | `6ca5d50` (corpus) | **Doc 715 §XI second consolidation amendment** — basket-sweep validation: (f) substrate-widening selection criterion makes predictions that hold (per-widening retirement-fanout measured); (g) basin boundaries decompose into three classes (engine-depth, engagement-depth, resolution-ambiguity); (h) P1/P2/P3 validated at consumer-corpus scale across ~46 probes; (i) authority-resolution discriminator added to apparatus catalogue as fourth field |
 | 2026-05-13 | `da0ee309` | **Stream substrate widening** — Writable decodeStrings (string→Buffer coercion at Transform._write layer to avoid double-coerce through readable-stream package); Buffer construct trap dispatches via apply-mirror (numeric→alloc, others→Buffer.from). 6 retired: split2, csv-parser, ndjson, pump, readable-stream, JSONStream. Boundary E.63 byline (resolution-ambiguity at alphabet level: this._readableState authority conflict) |
@@ -459,6 +467,45 @@ The detailed sub-round records below remain as the engagement's history. Future 
 **Live cascade prediction (Doc 715 D1, status 2026-05-13 PM).** The .mjs-always-ESM gate from the morning predicted retirement-fanout across bundler-output minified-ESM packages. **Retired this afternoon via the cascade**: jotai (jotai/vanilla.mjs), valtio (valtio/vanilla.mjs), temporal-polyfill, magic-string, ohash, hookable, plus the IANA-tz consumers (dayjs/plugin/timezone.js, date-fns-tz/*.mjs). **Prediction corroborated**: ≥5 packages retired free via the gate, P1 holds in the parse-classifier layer.
 
 **Telos-anchored framing.** Sub-criterion 5 (per-fixture differential) at **641 J.1.a fixtures**. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity, L4+ instance-fill regime — substantially extended via IANA-tz + stream-decodeStrings widenings. Sub-criterion 3/4: structurally complete. The remaining distance to full plug-and-play parity is dominated by open-ended basket expansion. The engagement is in **empirical steady state** in the consolidation regime per Doc 715 §X + §XI.
+
+---
+
+#### Status at 2026-05-13 evening close (Doc 716 + stub tracker + fs/promises K1-IDENTITY)
+
+**Fixture count: 638 inner-loop + 16 slow-burst = 654 J.1.a fixtures.** +13 inner-loop vs late-afternoon baseline (625 → 638). Suite ~33s.
+
+**The afternoon→evening slice added 5 apparatus artifacts:**
+
+1. **substrate-rank.sh** (`28cd2a28`) — empirical substrate-in-degree ranker. Operationalizes Doc 715 §VII shift 2 + §X.a. First-run output proved the substrate-introduction phase empirically depleted: zero [OPEN] substrate nodes against a 548-package broader sample.
+2. **CJS-bridge edge fix** (`e2aee16d`) — one-line `Readable.EventEmitter = EE`, retired redis (E.61) + mqtt + @planetscale/database via shared CJS-class-extending-from-stream pattern.
+3. **Substrate-tail closure** (`319cfc3f`) — node:sqlite + node:inspector stubs land, broader sample now shows ZERO [OPEN] substrate.
+4. **Doc 716 published** (corpus `cc5702a` + `21d8fb5`) — primary articulation (*Stubs as Named Cuts*) + §X amendment (closure-class as fourth axis). Names the cut-character stratum and the stub-alphabet stability conjecture at cardinality three.
+5. **Stub tracker built** (`a179d3ce`) — detector + canonical catalogue. First-run: ~22 K1, ~25 K2, ~7 K3, zero K4 candidates (conjecture holds).
+6. **fs/promises K1-IDENTITY closure pass** (`dfd0a6c9`) — empirical test of Doc 716 §X's closure-class conjecture. Zero substrate change, zero new alphabet kinds, ~30 LOC mechanical wrap — exactly as predicted. consumer-fs-promises-app fixture lands.
+
+**The day's full picture (morning → evening):**
+
+| Phase | Substrate work | Fixtures | Boundaries |
+|---|---|---|---|
+| Morning (Π2.6.c + d sweep) | mio reactor + 4 external-fanout sources | +5 | — |
+| Afternoon (basket sweep) | eval-ESM data:URL, IANA tz, stream decodeStrings, Buffer ctor, CJS-bridge | +37 | E.60 elysia, E.61 redis (→retired), E.62 yargs, E.63 byline |
+| Late afternoon (apparatus tools) | substrate-rank.sh, stub tracker, sqlite/inspector stubs | +1 | — |
+| Evening (Doc 716 + fs/promises) | closure-class framework + IDENTITY closures | +1 (anchor) | — |
+
+**Total today**: +44 fixtures (594 → 638 inner-loop), 4 basin boundaries recorded, 2 high-leverage substrate widenings + 1 closure-class round, 2 corpus articulations (Doc 715 §X + §XI, Doc 716 + §X), 2 apparatus tools (substrate-rank.sh, stub tracker), 0 new alphabet kinds.
+
+**Doc 716 §X closure-class validation.** The fs/promises round was the conjecture's first empirical test. Pre-derivation prediction (Doc 716 §X.IDENTITY): pure cut-rung movement, zero substrate, zero alphabet extension, mechanical LOC. Post-derivation observation: held exactly. The closure-class field on each catalogue entry is now an empirically-validated cost predictor. Substrate-derivation became prospectively legible at the stub-catalogue level.
+
+#### Remaining work toward telos closure (2026-05-13 evening close)
+
+**Single remaining productive surface**: real-OSS basket expansion at the empirical steady state (~85% direct retirement, ~0.3 new-substrate-edges-per-probe). Per Doc 715 §XI.h. Open-ended; not a structural blocker.
+
+**Closable stub priority list** (from Doc 716 §VI output 1):
+1. fs/promises K1-IDENTITY remaining methods (read-link, open, opendir, symlink, truncate, link) — **K1-WIDENING**, not IDENTITY. Need new Rust bindings. Defer.
+2. Worker-class K2 (node:cluster, node:worker_threads) — **K2-SUCCESSOR**. Engagement-unreachable scope.
+3. Locale-data K3 (Intl.PluralRules, Segmenter for non-grapheme) — **K3-WIDENING**. Requires CLDR data import.
+
+**No structural blocker remains**; productive work is open-ended basket expansion and (optionally) widening/successor-scope stub closures.
 
 **Strong external validation** — WPT runner adapter remains queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
 

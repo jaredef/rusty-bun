@@ -1,0 +1,159 @@
+# Curated top-100-ish npm packages by usage. Each line is a single
+# package spec (no version pin → latest). Lines beginning with # are
+# comments. Native-binding packages (better-sqlite3, sharp, etc.)
+# excluded — they cannot be loaded by a QuickJS-based runtime.
+
+# Validation / schema
+zod
+yup
+joi
+ajv
+valibot
+runtypes
+io-ts
+arktype
+superstruct
+
+# State / reactivity
+jotai
+valtio
+nanostores
+immer
+mitt
+rxjs
+
+# Util
+lodash
+lodash-es
+ramda
+remeda
+rfdc
+deepmerge
+dequal
+merge-options
+object-hash
+fast-deep-equal
+fast-equals
+
+# Date / time
+dayjs
+date-fns
+luxon
+moment
+moment-timezone
+temporal-polyfill
+
+# HTTP / fetch
+axios
+ky
+got
+node-fetch
+superagent
+
+# Async / control
+p-queue
+p-map
+p-retry
+p-defer
+p-finally
+p-throttle
+p-limit
+p-timeout
+neverthrow
+
+# Encoding / parse
+parse5
+entities
+iconv-lite
+marked
+markdown-it
+micromark
+jsonc-parser
+yaml
+pako
+fflate
+
+# Streams
+split2
+csv-parse
+csv-parser
+ndjson
+through2
+pump
+get-stream
+into-stream
+
+# CLI / terminal
+chalk
+chalk-template
+kleur
+ansi-colors
+colorette
+picocolors
+consola
+signale
+loglevel
+debug
+ora
+prompts
+enquirer
+yargs
+commander
+minimist
+
+# Math / numeric
+bignumber.js
+decimal.js
+
+# Type / case
+pluralize
+change-case
+camelcase
+
+# Path / fs
+glob
+fast-glob
+picomatch
+micromatch
+minimatch
+fs-extra
+pathe
+upath
+
+# Functional
+fp-ts
+
+# AST tools
+acorn
+acorn-walk
+meriyah
+esutils
+astring
+escodegen
+magic-string
+
+# Crypto / auth
+bcryptjs
+scrypt-js
+jose
+jsonwebtoken
+tweetnacl
+
+# IDs
+uuid
+nanoid
+ulid
+
+# Time / version
+semver
+ms
+
+# Misc
+ts-pattern
+just-curry-it
+hookable
+ohash
+defu
+ufo
+destr
+unified

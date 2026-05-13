@@ -1151,7 +1151,13 @@ impl Loader for FsLoader {
                    const m = globalThis.__cjsBridge[{}];\n\
                    if (m == null) return [];\n\
                    if (typeof m !== 'object' && typeof m !== 'function') return [];\n\
-                   return Object.keys(m);\n\
+                   // Bun parity: use getOwnPropertyNames to surface non-enumerable\n\
+                   // own props (function .length/.name/.prototype, defineProperty'd\n\
+                   // keys, etc.). Bun includes function intrinsics as named exports,\n\
+                   // so we do too. Only 'caller' and 'arguments' are filtered as\n\
+                   // they're forbidden strict-mode binding names.\n\
+                   const SKIP = new Set(['caller','arguments']);\n\
+                   return Object.getOwnPropertyNames(m).filter(k => !SKIP.has(k));\n\
                  }})()",
                 json_str(name)
             );

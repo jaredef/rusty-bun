@@ -8687,3 +8687,8 @@ consumer_test!(consumer_jsonc_parser_app_byte_identical_to_bun, "consumer-jsonc-
 consumer_test!(consumer_enquirer_app_byte_identical_to_bun, "consumer-enquirer-app");
 consumer_test!(consumer_io_ts_app_byte_identical_to_bun, "consumer-io-ts-app");
 consumer_test!(consumer_neverthrow_app_byte_identical_to_bun, "consumer-neverthrow-app");
+consumer_test!(consumer_nunjucks_app_byte_identical_to_bun, "consumer-nunjucks-app");
+consumer_test!(consumer_object_hash_app_byte_identical_to_bun, "consumer-object-hash-app");
+consumer_test!(consumer_deepmerge_app_byte_identical_to_bun, "consumer-deepmerge-app");
+consumer_test!(consumer_dequal_app_byte_identical_to_bun, "consumer-dequal-app");
+consumer_test!(consumer_merge_options_app_byte_identical_to_bun, "consumer-merge-options-app");

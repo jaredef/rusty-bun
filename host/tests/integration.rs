@@ -7974,6 +7974,7 @@ consumer_test!(consumer_deep_async_handler_app_byte_identical_to_bun, "consumer-
 consumer_test!(consumer_fs_watch_app_byte_identical_to_bun, "consumer-fs-watch-app");
 consumer_test!(consumer_spawn_async_app_byte_identical_to_bun, "consumer-spawn-async-app");
 consumer_test!(consumer_signal_handler_app_byte_identical_to_bun, "consumer-signal-handler-app");
+consumer_test!(consumer_dns_async_app_byte_identical_to_bun, "consumer-dns-async-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

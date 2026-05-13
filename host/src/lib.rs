@@ -29,6 +29,7 @@ mod reactor;
 mod watchers;
 mod spawn_async;
 mod signals;
+mod dns_async;
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
@@ -2718,6 +2719,28 @@ fn wire_dns<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()>
             Ok(out)
         })?,
     )?;
+    // Π2.6.d.d: async DNS via worker thread + eventfd + mio reactor.
+    ns.set(
+        "submitLookup",
+        Function::new(ctx.clone(), |host: String, port: f64| -> f64 {
+            crate::dns_async::async_dns::submit(host, port as u16) as f64
+        })?,
+    )?;
+    ns.set(
+        "drainLookups",
+        Function::new(ctx.clone(), || -> Vec<Vec<String>> {
+            crate::dns_async::async_dns::drain().into_iter()
+                .map(|(id, addrs, err)| vec![id.to_string(), addrs, err])
+                .collect()
+        })?,
+    )?;
+    #[cfg(unix)]
+    ns.set(
+        "eventFd",
+        Function::new(ctx.clone(), || -> i32 {
+            crate::dns_async::async_dns::raw_fd() as i32
+        })?,
+    )?;
     global.set("__dns", ns)?;
     Ok(())
 }
@@ -2736,22 +2759,102 @@ fn install_dns_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
 
             function decodeFamily(famStr) { return famStr === "4" ? 4 : 6; }
 
+            // Π2.6.d.d: async DNS dispatch.
+            //   - submitLookup spawns a worker thread + returns a request id
+            //   - drainLookups returns completed (id, addresses_csv, error) triples
+            //   - eventFd is the reactor wake source
+            // _dnsPending: id -> { resolve, reject }
+            // _dnsPump: __keepAlive entry that drains on each tick. Installed
+            //   on first request, kept registered until pending map empties.
+            globalThis.__dnsPending = globalThis.__dnsPending || new Map();
+            let _dnsPumpInstalled = false;
+            let _dnsToken = null;
+            function _ensureDnsPump() {
+                if (_dnsPumpInstalled) return;
+                _dnsPumpInstalled = true;
+                if (typeof dns.eventFd === "function" &&
+                    typeof globalThis.__reactor !== "undefined") {
+                    const fd = dns.eventFd();
+                    if (fd >= 0) {
+                        _dnsToken = 0x55000000 + (fd & 0xFFFFFF);
+                        try { globalThis.__reactor.registerFd(_dnsToken, fd); } catch (_) {}
+                    }
+                }
+                const pump = {
+                    __tick() {
+                        // Drain any completed lookups, then update
+                        // keep-alive membership based on remaining
+                        // pending count.
+                        const done = dns.drainLookups();
+                        let progressed = false;
+                        if (done && done.length > 0) {
+                            for (const r of done) {
+                                const id = parseInt(r[0], 10);
+                                const addrsCsv = r[1];
+                                const err = r[2];
+                                const entry = globalThis.__dnsPending.get(id);
+                                if (!entry) continue;
+                                globalThis.__dnsPending.delete(id);
+                                if (err) {
+                                    const e = new Error("ENOTFOUND " + (entry.host || ""));
+                                    e.code = "ENOTFOUND";
+                                    e.hostname = entry.host;
+                                    entry.reject(e);
+                                } else {
+                                    const addrs = addrsCsv ? addrsCsv.split(",") : [];
+                                    entry.resolve(addrs);
+                                }
+                            }
+                            progressed = true;
+                        }
+                        // Remove self from keep-alive when nothing pending.
+                        if (globalThis.__dnsPending.size === 0) {
+                            if (globalThis.__keepAlive) globalThis.__keepAlive.delete(pump);
+                            // Also deregister fd from reactor so it
+                            // doesn't keep reactor_alive flag set on
+                            // future polls. Will re-register on next
+                            // _ensureDnsPump call (gated by _dnsPumpInstalled
+                            // → reset).
+                            if (_dnsToken != null && typeof globalThis.__reactor !== "undefined" &&
+                                typeof dns.eventFd === "function") {
+                                try { globalThis.__reactor.deregisterFd(_dnsToken, dns.eventFd()); } catch (_) {}
+                            }
+                            _dnsPumpInstalled = false;
+                            _dnsToken = null;
+                        }
+                        return progressed;
+                    },
+                };
+                if (globalThis.__keepAlive) globalThis.__keepAlive.add(pump);
+                _dnsPump = pump;
+            }
+            let _dnsPump = null;
+            function _submitDnsAsync(hostname) {
+                _ensureDnsPump();
+                return new Promise(function(resolve, reject) {
+                    const id = dns.submitLookup(hostname, 0);
+                    globalThis.__dnsPending.set(id, { resolve, reject, host: hostname });
+                });
+            }
+
             // Bun.dns.lookup: returns array of {address, family} promises.
             // https://bun.sh/docs/api/dns
             globalThis.Bun = globalThis.Bun || {};
             globalThis.Bun.dns = globalThis.Bun.dns || {};
             globalThis.Bun.dns.lookup = async function(hostname, options) {
-                const all = dns.lookup_all_sync(hostname);
-                let filtered = all;
-                if (options && typeof options.family === "number") {
-                    const famStr = options.family === 6 ? "6" : "4";
-                    filtered = all.filter(pair => pair[1] === famStr);
-                }
-                return filtered.map(pair => ({
-                    address: pair[0],
-                    family: decodeFamily(pair[1]),
+                const addrs = await _submitDnsAsync(hostname);
+                // Note: async resolver returns address strings only; the
+                // family is inferred from the address shape.
+                let pairs = addrs.map(a => ({
+                    address: a,
+                    family: a.includes(":") ? 6 : 4,
                 }));
+                if (options && typeof options.family === "number") {
+                    pairs = pairs.filter(p => p.family === options.family);
+                }
+                return pairs;
             };
+            globalThis.Bun.dns._submitAsync = _submitDnsAsync;
 
             // node:dns shape. lookup is callback-style; resolve* return arrays.
             const nodeDns = {};
@@ -14167,13 +14270,11 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
                 consecutive_idle = 0;
                 continue;
             }
-            // Π2.6.d.b: when alive_count > 0 AND reactor_alive, the
-            // loop has both keep-alive work AND mio-watched fds —
-            // events may still arrive (e.g., child-process pipe
-            // becomes readable). Don't count this as idle; rely on
-            // the wallclock cap above for runaway safety. Sleep
-            // briefly so we don't busy-spin between mio polls.
-            if alive_count > 0 && reactor_alive {
+            // Π2.6.d.b/d.d: when alive_count > 0 OR reactor_alive,
+            // pending async work may still produce events. Don't
+            // count toward consecutive_idle — wallclock cap remains
+            // safety. Sleep briefly so we don't busy-spin.
+            if alive_count > 0 || reactor_alive {
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }

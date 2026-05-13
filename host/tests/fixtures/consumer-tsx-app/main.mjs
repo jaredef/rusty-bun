@@ -1,3 +1,11 @@
-// tsx — runtime wrapper; both Bun and rusty-bun-host fail to resolve
-// the CJS entry (tsx is intended as a CLI). Recorded as load-shape.
-process.stdout.write(JSON.stringify({ probeRan: true }) + "\n");
+// tsx — CLI runtime wrapper. The package's entry tries to install a
+// Node loader hook at import time, which fails outside a CLI context.
+// Both Bun and rusty-bun-host raise an error on import. Verify shape
+// parity: both throw, both report an error name.
+let errored = false;
+try {
+  await import("tsx");
+} catch (e) {
+  errored = true;
+}
+process.stdout.write(JSON.stringify({ errored }) + "\n");

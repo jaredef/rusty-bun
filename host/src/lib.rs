@@ -1015,7 +1015,11 @@ impl Loader for FsLoader {
         // bootRequire and synthesize a re-export ESM shim. Mirrors Bun's
         // automatic CJS↔ESM interop for the `import pkg from "cjs-lib"`
         // case. Named exports populated from Object.keys(module.exports).
-        if looks_like_cjs(&source) {
+        // .mjs files are always ESM by Node spec. .cjs files are always CJS.
+        // Otherwise fall through to heuristic detection.
+        let force_esm = name.ends_with(".mjs");
+        let force_cjs = name.ends_with(".cjs");
+        if !force_esm && (force_cjs || looks_like_cjs(&source)) {
             if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
                 eprintln!("[fsloader] CJS branch: {}", name);
             }

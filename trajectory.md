@@ -11,12 +11,14 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 - **M11** — External-reference sanity-check for hand-typed multi-byte cryptographic constants. >32 bytes of hand-typed standard constant requires a sanity-check against an independent implementation. Mode-5 typos in such constants are silent (F4/F5/F6 in this engagement); visual review is insufficient.
 - **Telos lens (seed §VII):** sub-criterion 5 is a *per-fixture differential* count. Fixtures in J.1.a are differentially verified; J.1.b are host-internal regressions with explicit re-open conditions, NOT sub-criterion-5 evidence.
 
-**Apparatus state (2026-05-13):** SUPERSEDES the Phase-2 persistence tracker below. Per Doc 714 sub-§4.e + Doc 715, apparatus state is now read through DAG-structural measurements rather than session-cadence cues alone:
-- **Fixture count:** 566 inner-loop + 16 slow-burst = 582 J.1.a fixtures
+**Apparatus state (2026-05-13 night):** SUPERSEDES the Phase-2 persistence tracker below. Per Doc 714 sub-§4.e + Doc 715, apparatus state is now read through DAG-structural measurements rather than session-cadence cues alone:
+- **Fixture count:** 638 inner-loop + 16 slow-burst = 654 J.1.a fixtures
 - **L2/L3 spec-derived coverage:** 418/418 = 100% parity with Bun (enumerator at host/tests/fixtures/api-surface-enumerator/main.mjs)
-- **Substrate widening retirement-fanout (empirical):** 50-200× per widening this slice, consistent with Doc 715 P1 heavy-tailed substrate in-degree.
+- **Parity-percentage headline metric (NEW 2026-05-13 night):** **88.2% (105/119)** byte-identical to Bun on curated top-N (host/tools/parity-measure.sh against host/tools/parity-top100.txt). Replaces qualitative per-package reports per Doc 715 §VII shift 2. Single-line getOwnPropertyNames substitution returned +16 packages — the highest substrate-fanout return measured in the engagement.
+- **Substrate widening retirement-fanout (empirical):** 50-200× per widening this slice, consistent with Doc 715 P1 heavy-tailed substrate in-degree. Confirmed at the import-binding node by the +16-from-one-line outcome above.
 - **L2M-saturation density signal:** new-substrate-edges-exercised per probe ≈ 0.3 (deep instance-fill regime; corpus-tier consolidation is the productive next surface per Doc 715 §VII operational shift 3).
-- **Alphabet stability (sub-§4.a):** ZERO new alphabet elements across last ~50 consumer probes. Empirical confirmation of the leaf-set-bounded claim (Doc 715 P2).
+- **Alphabet stability (sub-§4.a):** ZERO new alphabet elements across last ~50 consumer probes. K1/K2/K3 stub stratum holds at cardinality three (Doc 716). Tier-Ω engine work introduces a separate K5 engine-level-closure axis (see night-close note).
+- **Telos lens shift 2026-05-13 night:** parity-percentage residual (88.2% → 100%) is concentrated in import-binding synthesis at the engine layer; **QuickJS hand-roll folds into telos as Tier-Ω** (queued §II below). Above-engine substrate is empirically exhausted at the curated-119 scale.
 
 **Phase-2 persistence tracker** (seed §III.A8.10) — preserved as historical record:
 - **`N_persist` = 2** (Tier-G post-substrate Phase-2-traversal x2: async-listener-via-primitives → Bun.serve facade with listen()/tick()/serve(); F11 caught in-round; near-Bun-compat API achieved).
@@ -41,6 +43,13 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `3f9673ab` | **node:fs surface cleanup + Node v20 stubs for fs-extra parity** — internal helpers (readFileSyncUtf8, readFileSyncBytes, isFileSync, isDirectorySync, mkdirSyncRecursive, rmdirSyncRecursive, fileSizeSync, listDirectorySync) marked non-enumerable on globalThis.fs (Object.keys consumers skip; bootRequire still calls them); 47 unimplemented Node fs methods stubbed as throw-on-call (cp/cpSync, chmod/chown/fchmod/fchown/fstat/lchmod/lchown sync+async, glob/globSync, mkdtemp, opendir, symlink, etc.). Pattern note for hand-roll docket: Bun-parity on node:fs is a *namespace-shape* requirement — every method must be function-typed even when unimplemented; consumer wrappers (fs-extra) filter by `typeof === 'function'`. Parity 87.3% → 88.2% (104→105/119). |
+| 2026-05-13 | `3c11644e` | **node:path: toNamespacedPath + matchesGlob** — Node v20 additions. upath (path-normalizer that re-exports `Object.keys(require('path'))`) exposed these as undefined vs Bun's function. toNamespacedPath identity on POSIX; matchesGlob minimal regex translator (*, **, ?, escapes). Wired on path/path.posix/path.win32 + node:path ESM re-export list. Parity 86.5% → 87.3% (+1: upath). |
+| 2026-05-13 | `b77d7d9f` | **NodeResolver throws ResolveMessage for Bun-parity error shape** — wire_globals installs `globalThis.ResolveMessage` (Error subclass with name="ResolveMessage"); NodeResolver.resolve, on resolution failure, throws an instance via ctx.eval with absolute base path, format "Cannot find package 'X' from 'ABS_PATH'". Replaces rquickjs's default ReferenceError with relative path. Probes (and consumer error handling) discriminate by `e.constructor.name`; this single substrate move flips jotai+valtio. Parity 84.8% → 86.5% (+2). |
+| 2026-05-13 | `b49cd8fa` | **CJS→ESM bridge refinements: __esModule filter, reserved-key alias-export, intrinsic-conditional-on-__esModule** — three substrate moves: (a) `__esModule` itself no longer leaks as a named export; (b) when `__esModule:true`, function intrinsics (length/name/prototype) filtered from named exports (Bun's behavior — plain-CJS function exports like rfdc still get them); (c) reserved-word CJS keys (joi's .boolean, .function, .in) emit `export { local as keyword }` instead of being dropped. RESERVED trimmed of ES3-only words. 'default' guarded against duplicate-export. Parity 81.5% → 84.8% (+4: rxjs, ajv, joi, lodash). |
+| 2026-05-13 | `003e6e7b` | **CJS→ESM bridge: getOwnPropertyNames for parity with Bun** — single-line substrate fix. Bridge previously used `Object.keys(module.exports)` (enumerable only). Bun's import binding surfaces all own properties including non-enumerable (defineProperty'd keys, function intrinsics). Switched to `Object.getOwnPropertyNames`, filtering only `caller` and `arguments` (forbidden strict-mode binding names). Parity 68.0% → 81.5% (+16 packages from one line; the highest substrate-fanout return measured in the engagement). |
+| 2026-05-13 | `03c75499` | **Parity baseline locked: 68.0% (81/119)** — first full parity-percentage measurement against the curated top-N (host/tools/parity-top100.txt, 119 curated packages by domain). 38 failures decomposed: ~30 CJS↔ESM bridge named-export under-population, ~5 subpath-resolution divergences, ~3 real consumer-runtime divergences. Becomes the engagement's headline metric per Doc 715 §VII shift 2. |
+| 2026-05-13 | `2fc2240d` | **Parity-measurement tool built per Doc 715 §VII shift 2** — host/tools/parity-probe.mjs (dynamic-import + Object.keys + per-key typeof shape) + host/tools/parity-top100.txt (curated by domain) + host/tools/parity-measure.sh (orchestrator: install via `bun add` into per-package sandbox, run probe under both Bun and rusty-bun-host, byte-compare). Replaces the per-package qualitative reports with a single scalar (parity-percentage) and a fail-list. |
 | 2026-05-13 | `dfd0a6c9` | **fs/promises K1-IDENTITY closure pass per Doc 716 §X** — empirical test of the closure-class conjecture. Closures: rename / chmod / utimes / copyFile / appendFile / cp / mkdtemp / rmdir all moved from K1-throw or K2-no-op to [WIRED-full]. Zero substrate change, zero new alphabet kinds, ~30 LOC mechanical wrap (exactly as predicted). M7 fold-back: utimesSync Date→number coercion. consumer-fs-promises-app fixture. Conjecture validated empirically. |
 | 2026-05-13 | `21d8fb5` (corpus) | **Doc 716 §X amendment** — closure-class as fourth axis (IDENTITY / WIDENING / SUCCESSOR). K1/K2/K3 have different predictability profiles at substrate-derivation level. IDENTITY = pure cut-rung movement (zero substrate change). WIDENING = requires new substrate (heavy-tail rules apply). SUCCESSOR = engagement-unreachable depth. Six of nine possible (kind × closure-class) combinations observed in the engagement. Substrate-derivation becomes prospectively legible at the catalogue level. |
 | 2026-05-13 | `a179d3ce` | **Stub tracker built per Doc 716 §VI** — detector (host/tools/stub-list.sh) scans host + pilot crates for K1/K2/K3 syntactic signatures; catalogue (host/tools/stub-catalog.md) records per-stub (substrate node, cut rung, kind, in-degree, known consumers, re-open). First-run findings: ~22 K1, ~25 K2, ~7 K3. Stub-alphabet stability check passes (zero K4 candidates). |
@@ -511,6 +520,37 @@ The detailed sub-round records below remain as the engagement's history. Future 
 
 **Permanent out-of-scope** (unchanged): WASM, HTTP/2, transpiler internals, debugger protocol.
 
+---
+
+#### Status at 2026-05-13 night close (parity-percentage baseline + Tier-Ω fold-in)
+
+**Headline metric established.** First scalar parity measurement against curated top-N: **88.2% (105/119)** on `host/tools/parity-top100.txt`. Tool stack: parity-probe.mjs (dynamic-import + Object.keys + per-key typeof shape) → parity-measure.sh (per-package sandboxed `bun add`, dual-execute, byte-compare) → JSON results + headline pct. Replaces qualitative per-package reports with a single tracked number per Doc 715 §VII shift 2.
+
+**Five substrate moves landed this slice (68.0% → 88.2%, +24 packages):**
+1. `2fc2240d` parity tool built
+2. `003e6e7b` CJS→ESM bridge: `Object.keys` → `Object.getOwnPropertyNames` (filter caller/arguments only). +16 packages from a single substrate line — the highest substrate-fanout return measured in the engagement, confirming Doc 715 P1 heavy-tailed in-degree at the import-binding node.
+3. `b49cd8fa` CJS→ESM bridge refinements: __esModule filter, __esModule-conditional intrinsic filter, reserved-word alias-export (`export { local as keyword }`). +4 (rxjs, ajv, joi, lodash).
+4. `b77d7d9f` NodeResolver throws `globalThis.ResolveMessage` instead of rquickjs ReferenceError; absolute-path message format. +2 (jotai, valtio).
+5. `3c11644e` node:path: toNamespacedPath + matchesGlob. +1 (upath).
+6. `3f9673ab` node:fs internal helpers marked non-enumerable + 47 Node v20 method stubs (throw-on-call, function-typed). +1 (fs-extra).
+
+**Telos lens shift: QuickJS hand-roll folds into telos.** Across the cluster-by-cluster diagnosis (CJS-ESM bridge → error-shape → path additions → fs-extra), the remaining 14 failures decompose into a single dominant root cause: **Bun-specific import-binding synthesis at the engine layer that rquickjs cannot reproduce**. Five distinct synthesis behaviors observed:
+
+| Bun behavior | Affected packages | Reproducible above rquickjs? |
+|---|---|---|
+| ESM without `export default` → default = namespace | yup, io-ts, superstruct, neverthrow, jsonc-parser, fp-ts (+ cascades to yargs via y18n) | No — Module namespace is frozen per ESM spec; static rewrite breaks on `export { x } from './y'` re-exports |
+| ESM with `export default X` (object/function) → expose X's own props as named exports | dayjs (+ others) | No — symmetric obverse of above; requires post-default-init synthesis |
+| `export default function NAME` → also expose NAME as named export | node-fetch (and likely others) | Partial — could be done via static rewrite but interacts with case 1 |
+| String-literal export aliases (`export { x as 'm-search' }`) | superagent | No — ES2022 syntax, QuickJS parser doesn't accept |
+| Modern syntax beyond QuickJS's parser | ora ("expecting ';'"), elysia (E.60 SIGSEGV), hono ^4 class-field arrow-fn variant (E.12), parts of E.62 yargs | No — engine-level fix |
+
+The pattern that emerged across clusters A through D: **substrate exhaustion above the engine boundary, with all remaining failures attributable to a single class of engine-level work**. Per the keeper's directive (2026-05-13 19:53Z), this folds into telos. The hand-roll is no longer "outside telos" — it becomes the **Tier-Ω substrate** queued below.
+
+**Apparatus state implications.**
+- The parity-percentage metric now stands as the engagement's headline KPI. Future rounds report delta against this scalar.
+- The stub-tracker's K1/K2/K3 alphabet remains structurally stable (three classes, no K4 candidates). The Tier-Ω work introduces **K5 engine-level closures** as a new category — they are not stubs in the Doc 716 sense but engine-version-bumps; tracked separately on the QuickJS-version axis.
+- Cluster C diagnosis surfaces a generalizable pattern: **namespace-shape parity** (typeof for every documented method, even when unimplemented) is a load-bearing requirement. Consumer wrappers (fs-extra, upath) filter by typeof; missing-method-as-undefined cascades. The Doc 716 K1 stub class (throw-on-use) satisfies this requirement at the namespace surface without adding substrate.
+
 The 2026-05-11 → 2026-05-13 slice added ~50 fixtures, ~60 substrate widenings, 1 new apparatus discipline (§A8.19), 2 new sub-consequences on Doc 714 (§4.c, §4.d), 1 sub-amendment (§4.e), and 1 new primary corpus articulation (Doc 715). The basin is deep in the instance-fill regime per the K × log(L̄ × |A_i|) compression coefficient empirically operating at 50–200× per widening.
 
 ---
@@ -576,6 +616,47 @@ Interlude: **Π1.5.e (WebSocket __keepAlive auto-pump infrastructure)** ✅ DONE
 20. **WPT runner adapter** — `wpt run` against integrated runtime; per-surface pass-rate as operational comparison.
 
 **Self-update discipline.** After each Tier-Π round: update seed §VII.A percentages + check off completed items + adjust downstream estimates. Mirror changes here in the §I done log.
+
+### Tier-Ω — QuickJS hand-roll (folded into telos 2026-05-13)
+
+**Status: queued as the dominant remaining substrate.** Per the 2026-05-13 night-close diagnosis, the parity-percentage residual (88.2% → 100%) is concentrated almost entirely in import-binding synthesis behaviors that rquickjs cannot reproduce and that QuickJS's parser cannot accept. Tier-Ω is the substrate move that closes that residual.
+
+**Tier-Ω rationale.** The engagement deferred a hand-rolled engine through 2026-05-13 morning on the grounds that rquickjs + targeted JS-side polyfills could carry the load. The parity-baseline measurement falsified that assumption: 14 of 119 packages fail on a single coherent class of engine-level work, with no realistic above-engine workaround for the dominant cases. The keeper directive (19:53Z): "It becomes apparent that a hand roll quickjs is imperative. It is time to fold this into the telos and sharpen the resume vector trajectory accordingly."
+
+**Tier-Ω scope (five subordinate closures, derived from the night-close cluster diagnosis).**
+
+- **Ω.1 — Module-binding synthesis layer.** Implement Bun's CJS↔ESM import-binding behaviors at the engine's link-record stage, not above it:
+  - Ω.1.a — When an imported ESM module has no `export default`, synthesize `default = namespace`. Closes yup, io-ts, superstruct, neverthrow, jsonc-parser, fp-ts (+ cascades to yargs via y18n's missing default).
+  - Ω.1.b — When an ESM module's only export is `export default X` (object/function), synthesize named exports for X's own properties at the post-init lazy-binding stage. Closes dayjs and the cluster-B class.
+  - Ω.1.c — `export default function NAME(...)` → also expose NAME as named export per Bun behavior. Closes node-fetch.
+  - Ω.1.d — Verify our CJS-bridge getOwnPropertyNames-based path matches at parity once Ω.1.a/b/c lift the namespace-synthesis cases that currently mask it.
+  - **Estimated 3-4 rounds** after the engine is forked.
+
+- **Ω.2 — Parser modernization.** Bring the JS parser to ES2022+ on the surfaces that gate consumer code:
+  - Ω.2.a — String-literal export names (`export { x as 'm-search' }`). Closes superagent (cluster C).
+  - Ω.2.b — Reserved-method class fields (`get;` `set;` `delete;` as bare declarations + arrow-fn-init variants). Partial closure of E.12 hono ^4; full closure of basket E.62 yargs syntax form. Currently masked by the strip_reserved_class_field_decls preprocessor.
+  - Ω.2.c — Eliminate the parser SIGSEGV on minified 1987-LOC ESM (E.60 elysia). Stress-test against the basket E.60 corpus.
+  - Ω.2.d — ora "expecting ';'" diagnostic and closure.
+  - **Estimated 2-3 rounds** after the engine is forked.
+
+- **Ω.3 — Engine selection + fork strategy.** The hand-roll target is open: fork QuickJS-NG, build atop Boa (Rust-native), or hand-roll from scratch per pilot. Decision criteria per Doc 581 — apparatus cost, derivation-vector legibility, substrate reuse with rusty-bun's existing pilots. **First Ω round produces the decision artifact + a primary corpus articulation.**
+
+- **Ω.4 — Substrate migration.** All of rusty-bun-host's existing JS-side wirings (~250 globals + 47 fs stubs + ResolveMessage + getOwnPropertyNames bridge + ESM source preprocessors + Argon2id + TLS handshake + etc.) must transit to the new engine. The K1/K2/K3 stub catalogue (Doc 716 §VI) becomes the migration checklist. **Estimated 4-6 rounds** depending on Ω.3's outcome.
+
+- **Ω.5 — Parity-percentage re-baseline.** Re-run the parity tool against the curated 119 + extend the basket toward 1000 packages. Lock the new headline metric. The K5-engine-level closure class (per night-close note) gets its own catalogue axis distinct from the K1/K2/K3 stub stratum.
+
+**Tier-Ω prerequisites met (2026-05-13 night close):**
+- Parity-measurement tool operational (host/tools/parity-measure.sh) — provides the regression-detection metric for the migration
+- Stub-catalogue per Doc 716 — provides the migration checklist
+- Substrate-rank tool — confirms no above-engine substrate residual
+- Bridge refinements landed against rquickjs — establishes the parity ceiling above which only engine work matters (88.2%)
+
+**Tier-Ω anti-prerequisite (work to NOT do before Ω.3):**
+- Further per-package targeted closures within rquickjs. Diminishing returns past 88.2% on the curated 119; each additional package now requires either engine work or basket churn.
+
+**Ω.3 expected first-round output:** decision document selecting engine target, with derivation-vector traceable per Doc 581. Likely corpus articulation as a new primary doc.
+
+---
 
 ### Tier-A — substrate pilots (unblock other queued items)
 

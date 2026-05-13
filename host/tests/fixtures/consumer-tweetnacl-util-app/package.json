@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "tweetnacl-util": "^0.15.1"
+  }
+}

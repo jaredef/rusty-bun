@@ -7947,6 +7947,11 @@ consumer_test!(consumer_undici_real_app_byte_identical_to_bun, "consumer-undici-
 consumer_test!(consumer_stream_json_app_byte_identical_to_bun, "consumer-stream-json-app");
 consumer_test!(consumer_body_parser_app_byte_identical_to_bun, "consumer-body-parser-app");
 consumer_test!(consumer_inquirer_app_byte_identical_to_bun, "consumer-inquirer-app");
+consumer_test!(consumer_nodemailer_app_byte_identical_to_bun, "consumer-nodemailer-app");
+consumer_test!(consumer_qrcode_app_byte_identical_to_bun, "consumer-qrcode-app");
+consumer_test!(consumer_minimist_app_byte_identical_to_bun, "consumer-minimist-app");
+consumer_test!(consumer_validator_pkg_app_byte_identical_to_bun, "consumer-validator-pkg-app");
+consumer_test!(consumer_tweetnacl_util_app_byte_identical_to_bun, "consumer-tweetnacl-util-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

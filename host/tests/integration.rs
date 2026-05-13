@@ -8661,3 +8661,9 @@ consumer_test!(consumer_unified_app_byte_identical_to_bun, "consumer-unified-app
 consumer_test!(consumer_moment_tz_app_byte_identical_to_bun, "consumer-moment-tz-app");
 consumer_test!(consumer_dayjs_tz_app_byte_identical_to_bun, "consumer-dayjs-tz-app");
 consumer_test!(consumer_tar_app_byte_identical_to_bun, "consumer-tar-app");
+consumer_test!(consumer_split2_app_byte_identical_to_bun, "consumer-split2-app");
+consumer_test!(consumer_ndjson_app_byte_identical_to_bun, "consumer-ndjson-app");
+consumer_test!(consumer_pump_app_byte_identical_to_bun, "consumer-pump-app");
+consumer_test!(consumer_readable_stream_app_byte_identical_to_bun, "consumer-readable-stream-app");
+consumer_test!(consumer_csv_parser_app_byte_identical_to_bun, "consumer-csv-parser-app");
+consumer_test!(consumer_jsonstream_app_byte_identical_to_bun, "consumer-jsonstream-app");

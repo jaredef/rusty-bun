@@ -10628,9 +10628,21 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 this._writableQueue = [];
                 this._writing = false;
                 this.writable = true;
+                // Π2.6.stream-substrate: decodeStrings + objectMode flags.
+                // decodeStrings=true (default per Node) coerces string
+                // chunks to Buffer before _write. objectMode disables the
+                // coercion and lets non-string non-Buffer values through.
+                this._writableObjectMode = !!(options.objectMode || options.writableObjectMode);
+                this._writableDecodeStrings = options.decodeStrings !== false;
                 if (typeof options.write === "function") this._write = options.write;
                 if (typeof options.final === "function") this._final = options.final;
                 if (typeof options.destroy === "function") this._destroy = options.destroy;
+                this._writableState = {
+                    objectMode: this._writableObjectMode,
+                    highWaterMark: this._writableHighWaterMark,
+                    decodeStrings: this._writableDecodeStrings,
+                    defaultEncoding: options.defaultEncoding || "utf8",
+                };
             }
             Writable.prototype = Object.create(EE.prototype);
             Writable.prototype.constructor = Writable;
@@ -10734,6 +10746,15 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             // Override _write to route through _transform.
             Transform.prototype._write = function _write(chunk, enc, cb) {
                 const self = this;
+                // Π2.6.stream-substrate: coerce string→Buffer here (only
+                // for OUR Transform — not for pipe-through to third-party
+                // writables like readable-stream's, which would double-
+                // coerce or reject). Consumer streams like split2 expect
+                // Buffer for StringDecoder.write.
+                if (!self._writableObjectMode && self._writableDecodeStrings &&
+                    typeof chunk === "string" && typeof Buffer !== "undefined") {
+                    chunk = Buffer.from(chunk, enc);
+                }
                 self._transform(chunk, enc, (err, transformed) => {
                     if (err) { cb(err); return; }
                     if (transformed !== undefined && transformed !== null) self.push(transformed);

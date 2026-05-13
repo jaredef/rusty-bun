@@ -56,6 +56,18 @@ pub struct Compiler {
     constants: ConstantsPool,
     locals: Vec<LocalDescriptor>,
     source_map: Vec<(usize, Span)>,
+    /// Stack of loop frames. Each frame collects patch sites for break
+    /// jumps and the bytecode offset of the loop's continue target.
+    /// Push on loop entry, pop on loop exit.
+    loop_stack: Vec<LoopFrame>,
+}
+
+#[derive(Debug)]
+struct LoopFrame {
+    /// Bytecode offset where `continue` should jump to (loop test or update).
+    continue_target: usize,
+    /// Operand-byte offsets of unresolved `break` jumps. Patched on loop exit.
+    break_patches: Vec<usize>,
 }
 
 impl Compiler {
@@ -65,6 +77,7 @@ impl Compiler {
             constants: ConstantsPool::new(),
             locals: Vec::new(),
             source_map: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -108,21 +121,24 @@ impl Compiler {
                 for s in body { self.compile_stmt(s)?; }
             }
             Stmt::Variable(v) => {
-                // v1: treat all variable declarations as global stores. Real
-                // scope resolution lands in round 3.c.c.
                 for d in &v.declarators {
                     if d.names.len() != 1 {
-                        return Err(self.err(d.span, "destructure declarators not yet supported in compiler v1"));
+                        return Err(self.err(d.span, "destructure declarators not yet supported"));
                     }
                     let name = &d.names[0];
+                    // Allocate a local slot for the binding.
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: name.name.clone(),
+                        kind: v.kind,
+                        depth: 0,
+                    });
                     if let Some(init) = &d.init {
                         self.compile_expr(init)?;
                     } else {
                         encode_op(&mut self.bytecode, Op::PushUndef);
                     }
-                    let idx = self.constants.intern(Constant::String(name.name.clone()));
-                    encode_op(&mut self.bytecode, Op::StoreGlobal);
-                    encode_u16(&mut self.bytecode, idx);
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, slot);
                 }
             }
             Stmt::Throw { argument, .. } => {
@@ -132,13 +148,157 @@ impl Compiler {
             Stmt::Debugger { .. } => {
                 encode_op(&mut self.bytecode, Op::Debugger);
             }
+            Stmt::If { test, consequent, alternate, .. } => {
+                self.compile_expr(test)?;
+                let jump_if_false = self.emit_jump(Op::JumpIfFalse);
+                self.compile_stmt(consequent)?;
+                if let Some(alt) = alternate {
+                    let jump_end = self.emit_jump(Op::Jump);
+                    self.patch_jump(jump_if_false);
+                    self.compile_stmt(alt)?;
+                    self.patch_jump(jump_end);
+                } else {
+                    self.patch_jump(jump_if_false);
+                }
+            }
+            Stmt::While { test, body, .. } => {
+                let loop_start = self.bytecode.len();
+                self.loop_stack.push(LoopFrame { continue_target: loop_start, break_patches: Vec::new() });
+                self.compile_expr(test)?;
+                let jump_if_false = self.emit_jump(Op::JumpIfFalse);
+                self.compile_stmt(body)?;
+                self.emit_back_jump(loop_start);
+                self.patch_jump(jump_if_false);
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
+            Stmt::DoWhile { body, test, .. } => {
+                let loop_start = self.bytecode.len();
+                // Continue target is the test position; we'll record it after body.
+                self.loop_stack.push(LoopFrame { continue_target: 0, break_patches: Vec::new() });
+                self.compile_stmt(body)?;
+                let test_pos = self.bytecode.len();
+                // Now set the continue target retroactively on the current frame.
+                self.loop_stack.last_mut().unwrap().continue_target = test_pos;
+                self.compile_expr(test)?;
+                let jump_back = self.emit_jump(Op::JumpIfTrue);
+                self.patch_jump_to(jump_back, loop_start);
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
+            Stmt::For { init, test, update, body, .. } => {
+                // Init runs once, in the surrounding scope.
+                if let Some(init) = init {
+                    match init {
+                        ForInit::Variable(v) => self.compile_stmt(&Stmt::Variable(v.clone()))?,
+                        ForInit::Expression(e) => {
+                            self.compile_expr(e)?;
+                            encode_op(&mut self.bytecode, Op::Pop);
+                        }
+                    }
+                }
+                let test_pos = self.bytecode.len();
+                // continue jumps to update; if no update, continue jumps to test.
+                let cont_target = test_pos;
+                self.loop_stack.push(LoopFrame { continue_target: cont_target, break_patches: Vec::new() });
+                let jump_if_false = if let Some(t) = test {
+                    self.compile_expr(t)?;
+                    Some(self.emit_jump(Op::JumpIfFalse))
+                } else { None };
+                self.compile_stmt(body)?;
+                let update_pos = self.bytecode.len();
+                self.loop_stack.last_mut().unwrap().continue_target = update_pos;
+                if let Some(u) = update {
+                    self.compile_expr(u)?;
+                    encode_op(&mut self.bytecode, Op::Pop);
+                }
+                self.emit_back_jump(test_pos);
+                if let Some(j) = jump_if_false { self.patch_jump(j); }
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
+            Stmt::Break { label, .. } => {
+                if label.is_some() {
+                    return Err(self.err(span, "labelled break not yet supported"));
+                }
+                if let Some(frame) = self.loop_stack.last_mut() {
+                    let patch_site = encode_op(&mut self.bytecode, Op::Jump);
+                    encode_i32(&mut self.bytecode, 0);
+                    frame.break_patches.push(patch_site);
+                } else {
+                    return Err(self.err(span, "break outside of loop"));
+                }
+            }
+            Stmt::Continue { label, .. } => {
+                if label.is_some() {
+                    return Err(self.err(span, "labelled continue not yet supported"));
+                }
+                if let Some(frame) = self.loop_stack.last() {
+                    let target = frame.continue_target;
+                    self.emit_back_jump(target);
+                } else {
+                    return Err(self.err(span, "continue outside of loop"));
+                }
+            }
             _ => {
-                // Not yet supported in v1 (round 3.c.b). Round 3.c.c lands
-                // If/For/While/Switch/Try/etc.
                 return Err(self.err(span, "statement form not yet supported in compiler v1"));
             }
         }
         Ok(())
+    }
+
+    /// Emit a forward jump with placeholder operand; return the operand
+    /// offset for later patching via `patch_jump`.
+    fn emit_jump(&mut self, op: Op) -> usize {
+        encode_op(&mut self.bytecode, op);
+        let operand_off = self.bytecode.len();
+        encode_i32(&mut self.bytecode, 0);
+        operand_off
+    }
+
+    /// Patch a forward-jump's operand so the jump targets the current
+    /// bytecode offset (i.e., the place where emission has currently
+    /// advanced to).
+    fn patch_jump(&mut self, operand_off: usize) {
+        let here = self.bytecode.len() as i32;
+        let from = (operand_off + 4) as i32;
+        let disp = here - from;
+        self.bytecode[operand_off..operand_off + 4].copy_from_slice(&disp.to_le_bytes());
+    }
+
+    fn patch_jump_at(&mut self, operand_off: usize) {
+        self.patch_jump(operand_off);
+    }
+
+    /// Patch a forward-jump to a specific absolute target offset.
+    fn patch_jump_to(&mut self, operand_off: usize, target: usize) {
+        let from = (operand_off + 4) as i32;
+        let disp = target as i32 - from;
+        self.bytecode[operand_off..operand_off + 4].copy_from_slice(&disp.to_le_bytes());
+    }
+
+    /// Emit an unconditional backward Jump to the given absolute offset.
+    fn emit_back_jump(&mut self, target: usize) {
+        encode_op(&mut self.bytecode, Op::Jump);
+        let from = (self.bytecode.len() + 4) as i32;
+        let disp = target as i32 - from;
+        encode_i32(&mut self.bytecode, disp);
+    }
+
+    /// Allocate a local-slot for a binding. Returns the slot index.
+    fn alloc_local(&mut self, desc: LocalDescriptor) -> u16 {
+        let idx = self.locals.len();
+        assert!(idx < u16::MAX as usize, "too many locals");
+        self.locals.push(desc);
+        idx as u16
+    }
+
+    /// Resolve an identifier to a local-slot index, if any.
+    fn resolve_local(&self, name: &str) -> Option<u16> {
+        for (i, l) in self.locals.iter().enumerate().rev() {
+            if l.name == name { return Some(i as u16); }
+        }
+        None
     }
 
     fn compile_expr(&mut self, e: &Expr) -> Result<(), CompileError> {
@@ -171,11 +331,14 @@ impl Compiler {
                 encode_u16(&mut self.bytecode, idx);
             }
             Expr::Identifier { name, .. } => {
-                // v1: every identifier load is global; round 3.c.c resolves
-                // locals + upvalues.
-                let name_idx = self.constants.intern(Constant::String(name.clone()));
-                encode_op(&mut self.bytecode, Op::LoadGlobal);
-                encode_u16(&mut self.bytecode, name_idx);
+                if let Some(slot) = self.resolve_local(name) {
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, slot);
+                } else {
+                    let name_idx = self.constants.intern(Constant::String(name.clone()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, name_idx);
+                }
             }
             Expr::Unary { operator, argument, .. } => {
                 self.compile_expr(argument)?;
@@ -192,30 +355,96 @@ impl Compiler {
                 encode_op(&mut self.bytecode, op);
             }
             Expr::Binary { operator, left, right, .. } => {
-                self.compile_expr(left)?;
-                self.compile_expr(right)?;
-                let op = match operator {
-                    BinaryOp::Add => Op::Add, BinaryOp::Sub => Op::Sub,
-                    BinaryOp::Mul => Op::Mul, BinaryOp::Div => Op::Div,
-                    BinaryOp::Mod => Op::Mod, BinaryOp::Pow => Op::Pow,
-                    BinaryOp::Shl => Op::Shl, BinaryOp::Shr => Op::Shr, BinaryOp::UShr => Op::UShr,
-                    BinaryOp::Lt => Op::Lt, BinaryOp::Gt => Op::Gt,
-                    BinaryOp::Le => Op::Le, BinaryOp::Ge => Op::Ge,
-                    BinaryOp::Eq => Op::Eq, BinaryOp::Ne => Op::Ne,
-                    BinaryOp::StrictEq => Op::StrictEq, BinaryOp::StrictNe => Op::StrictNe,
-                    BinaryOp::Instanceof => Op::Instanceof, BinaryOp::In => Op::In,
-                    BinaryOp::BitAnd => Op::BitAnd, BinaryOp::BitOr => Op::BitOr,
-                    BinaryOp::BitXor => Op::BitXor,
-                    BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalesce => {
-                        // Short-circuit operators compile to conditional
-                        // jumps. They're treated as binary ops in AST but
-                        // need control-flow encoding — round 3.c.c work.
-                        return Err(self.err(e.span(), "short-circuit logical operators not yet supported"));
+                match operator {
+                    BinaryOp::LogicalAnd => {
+                        // emit left; JumpIfFalseKeep end; Pop; emit right; end:
+                        self.compile_expr(left)?;
+                        let j = self.emit_jump(Op::JumpIfFalseKeep);
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        self.compile_expr(right)?;
+                        self.patch_jump(j);
                     }
-                };
-                encode_op(&mut self.bytecode, op);
+                    BinaryOp::LogicalOr => {
+                        self.compile_expr(left)?;
+                        let j = self.emit_jump(Op::JumpIfTrueKeep);
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        self.compile_expr(right)?;
+                        self.patch_jump(j);
+                    }
+                    BinaryOp::NullishCoalesce => {
+                        // Push LHS. Dup. JumpIfNullish to fallback (pops the
+                        // top copy; the remaining LHS is the result). Else
+                        // fall-through: same — Pop the dup, then we want LHS
+                        // as result. Use the cleaner form:
+                        //   emit LHS                            [a]
+                        //   Dup                                 [a, a]
+                        //   JumpIfNullish fb (pops top)          [a]   (jumps if nullish)
+                        //   Jump end                            [a]
+                        //   fb: Pop                              []
+                        //       emit RHS                         [b]
+                        //   end:                                 [result]
+                        self.compile_expr(left)?;
+                        encode_op(&mut self.bytecode, Op::Dup);
+                        let j_fb = self.emit_jump(Op::JumpIfNullish);
+                        let j_end = self.emit_jump(Op::Jump);
+                        self.patch_jump(j_fb);
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        self.compile_expr(right)?;
+                        self.patch_jump(j_end);
+                    }
+                    _ => {
+                        self.compile_expr(left)?;
+                        self.compile_expr(right)?;
+                        let op = match operator {
+                            BinaryOp::Add => Op::Add, BinaryOp::Sub => Op::Sub,
+                            BinaryOp::Mul => Op::Mul, BinaryOp::Div => Op::Div,
+                            BinaryOp::Mod => Op::Mod, BinaryOp::Pow => Op::Pow,
+                            BinaryOp::Shl => Op::Shl, BinaryOp::Shr => Op::Shr,
+                            BinaryOp::UShr => Op::UShr,
+                            BinaryOp::Lt => Op::Lt, BinaryOp::Gt => Op::Gt,
+                            BinaryOp::Le => Op::Le, BinaryOp::Ge => Op::Ge,
+                            BinaryOp::Eq => Op::Eq, BinaryOp::Ne => Op::Ne,
+                            BinaryOp::StrictEq => Op::StrictEq, BinaryOp::StrictNe => Op::StrictNe,
+                            BinaryOp::Instanceof => Op::Instanceof, BinaryOp::In => Op::In,
+                            BinaryOp::BitAnd => Op::BitAnd, BinaryOp::BitOr => Op::BitOr,
+                            BinaryOp::BitXor => Op::BitXor,
+                            _ => unreachable!(),
+                        };
+                        encode_op(&mut self.bytecode, op);
+                    }
+                }
             }
             Expr::Parenthesized { expr, .. } => self.compile_expr(expr)?,
+            Expr::Conditional { test, consequent, alternate, .. } => {
+                self.compile_expr(test)?;
+                let j_else = self.emit_jump(Op::JumpIfFalse);
+                self.compile_expr(consequent)?;
+                let j_end = self.emit_jump(Op::Jump);
+                self.patch_jump(j_else);
+                self.compile_expr(alternate)?;
+                self.patch_jump(j_end);
+            }
+            Expr::Assign { operator, target, value, .. } => {
+                if !matches!(operator, AssignOp::Assign) {
+                    return Err(self.err(e.span(), "compound assignment not yet supported"));
+                }
+                self.compile_expr(value)?;
+                // The value remains on the stack as the assignment's result.
+                encode_op(&mut self.bytecode, Op::Dup);
+                match target.as_ref() {
+                    Expr::Identifier { name, .. } => {
+                        if let Some(slot) = self.resolve_local(name) {
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, slot);
+                        } else {
+                            let idx = self.constants.intern(Constant::String(name.clone()));
+                            encode_op(&mut self.bytecode, Op::StoreGlobal);
+                            encode_u16(&mut self.bytecode, idx);
+                        }
+                    }
+                    _ => return Err(self.err(e.span(), "complex assignment target not yet supported")),
+                }
+            }
             Expr::This { .. } => {
                 // v1: emit a global "this" reference. Round 3.c.d (functions)
                 // wires real this-binding.

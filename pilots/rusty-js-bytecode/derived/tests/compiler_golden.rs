@@ -126,25 +126,127 @@ fn identifier_loads_global() {
 }
 
 #[test]
-fn variable_declaration_stores_global() {
+fn variable_declaration_stores_local() {
     let d = disasm("let x = 1;");
     assert!(d.contains("PushI32 1"));
-    assert!(d.contains("StoreGlobal"));
-    assert!(d.contains("\"x\""));
+    assert!(d.contains("StoreLocal"));
 }
 
 #[test]
 fn variable_without_initializer() {
     let d = disasm("let x;");
     assert!(d.contains("PushUndef"));
-    assert!(d.contains("StoreGlobal"));
+    assert!(d.contains("StoreLocal"));
 }
 
 #[test]
 fn multiple_declarators() {
     let d = disasm("const a = 1, b = 2;");
-    let count = d.matches("StoreGlobal").count();
+    let count = d.matches("StoreLocal").count();
     assert_eq!(count, 2);
+}
+
+#[test]
+fn local_identifier_resolves_to_local_slot() {
+    let d = disasm("let x = 1; x;");
+    assert!(d.contains("LoadLocal"));
+}
+
+#[test]
+fn undeclared_identifier_falls_to_global() {
+    let d = disasm("y;");
+    assert!(d.contains("LoadGlobal"));
+}
+
+// ─────────── Control flow ───────────
+
+#[test]
+fn if_statement_emits_conditional_jump() {
+    let d = disasm("if (x) { y; }");
+    assert!(d.contains("JumpIfFalse"));
+}
+
+#[test]
+fn if_else_emits_both_jumps() {
+    let d = disasm("if (x) a; else b;");
+    assert!(d.contains("JumpIfFalse"));
+    assert!(d.contains("Jump "));
+}
+
+#[test]
+fn while_loop_emits_back_jump() {
+    let d = disasm("while (x) { y; }");
+    assert!(d.contains("JumpIfFalse"));
+    // backward Jump to loop-start
+    assert!(d.contains("Jump "));
+}
+
+#[test]
+fn for_c_style_emits_init_test_body_update() {
+    let d = disasm("for (let i = 0; i < 10; i = i + 1) { i; }");
+    // Test should emit the comparison
+    assert!(d.contains("Lt"));
+    assert!(d.contains("JumpIfFalse"));
+}
+
+#[test]
+fn do_while_emits_jump_if_true_back() {
+    let d = disasm("do { x; } while (cond);");
+    assert!(d.contains("JumpIfTrue"));
+}
+
+#[test]
+fn break_in_while_loop() {
+    let d = disasm("while (x) { break; }");
+    // A break inside the loop should compile (no error)
+    assert!(d.contains("Jump"));
+}
+
+#[test]
+fn continue_in_while_loop() {
+    let d = disasm("while (x) { continue; }");
+    assert!(d.contains("Jump"));
+}
+
+// ─────────── Short-circuit + conditional ───────────
+
+#[test]
+fn logical_and_short_circuits() {
+    let d = disasm("a && b;");
+    assert!(d.contains("JumpIfFalseKeep"));
+}
+
+#[test]
+fn logical_or_short_circuits() {
+    let d = disasm("a || b;");
+    assert!(d.contains("JumpIfTrueKeep"));
+}
+
+#[test]
+fn nullish_coalesce() {
+    let d = disasm("a ?? b;");
+    assert!(d.contains("JumpIfNullish"));
+}
+
+#[test]
+fn conditional_expression_emits_jumps() {
+    let d = disasm("a ? b : c;");
+    assert!(d.contains("JumpIfFalse"));
+}
+
+#[test]
+fn assignment_to_local() {
+    let d = disasm("let x = 0; x = 1;");
+    // After the let, x is a local. The assignment should emit StoreLocal.
+    let stores = d.matches("StoreLocal").count();
+    assert!(stores >= 2);
+}
+
+#[test]
+fn assignment_to_global() {
+    // x is undeclared; assignment goes to global.
+    let d = disasm("x = 1;");
+    assert!(d.contains("StoreGlobal"));
 }
 
 // ─────────── Statements ───────────

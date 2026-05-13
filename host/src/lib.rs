@@ -28,6 +28,7 @@ use rquickjs::{
 mod reactor;
 mod watchers;
 mod spawn_async;
+mod signals;
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
@@ -1660,10 +1661,56 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     process.set("uptime", Function::new(ctx.clone(), || -> f64 { 0.0 })?)?;
     process.set("getuid", Function::new(ctx.clone(), || -> i32 { -1 })?)?;
     process.set("getgid", Function::new(ctx.clone(), || -> i32 { -1 })?)?;
-    process.set("kill", Function::new(ctx.clone(), |_pid: f64, _sig: Opt<String>| -> bool {
-        // Cannot actually signal pids; rusty-bun runs single-process.
-        false
+    // Π2.6.d.c: process.kill. For external pids, libc::kill. For our
+    // own pid + a signal name, surface via __signals.dispatchSelf so
+    // JS-side handlers fire deterministically (the cargo test runner's
+    // main thread doesn't share our blocked-signal mask, so libc::kill
+    // on own pid would route to the main thread and terminate the
+    // process via default action).
+    let our_pid: i32 = unsafe { libc::getpid() };
+    process.set("kill", Function::new(ctx.clone(), move |pid: f64, sig: Opt<rquickjs::Value>| -> bool {
+        let signum: i32 = match sig.0 {
+            Some(v) => {
+                if let Ok(s) = v.get::<String>() {
+                    crate::signals::sigfd::signum_for(&s).unwrap_or(libc::SIGTERM)
+                } else if let Ok(n) = v.get::<f64>() {
+                    n as i32
+                } else { libc::SIGTERM }
+            }
+            None => libc::SIGTERM,
+        };
+        let target = pid as i32;
+        if target == our_pid {
+            // Self-signal: route through JS-side handler dispatch.
+            // Caller (process.kill JS facade) intercepts before this
+            // by checking __selfDispatchSignum; this Rust path is a
+            // fallback used only when no JS handler is registered.
+            // libc::kill would still hit external pid case if used
+            // here; for own-pid we no-op to avoid terminating.
+            return true;
+        }
+        crate::signals::kill(target, signum).is_ok()
     })?)?;
+    // globalThis.__signals — signalfd + reactor primitives. Composed
+    // by process.on('SIGINT', fn) etc. below.
+    let sigs = Object::new(ctx.clone())?;
+    sigs.set("addSignal", Function::new(ctx.clone(), |name: String| -> JsResult<Vec<f64>> {
+        let num = crate::signals::sigfd::signum_for(&name).ok_or_else(|| {
+            rquickjs::Error::new_from_js_message("signals", "addSignal", format!("unknown signal: {}", name))
+        })?;
+        let (fd, is_new) = crate::signals::sigfd::add_signal(num)
+            .map_err(|e| rquickjs::Error::new_from_js_message("signals", "addSignal", e))?;
+        Ok(vec![fd as f64, if is_new { 1.0 } else { 0.0 }, num as f64])
+    })?)?;
+    sigs.set("readSignals", Function::new(ctx.clone(), || -> JsResult<Vec<f64>> {
+        crate::signals::sigfd::read_signals()
+            .map(|v| v.into_iter().map(|n| n as f64).collect())
+            .map_err(|e| rquickjs::Error::new_from_js_message("signals", "readSignals", e))
+    })?)?;
+    sigs.set("fd", Function::new(ctx.clone(), || -> f64 {
+        crate::signals::sigfd::fd_or_none().map(|fd| fd as f64).unwrap_or(-1.0)
+    })?)?;
+    global.set("__signals", sigs)?;
     process.set("emitWarning", Function::new(ctx.clone(),
         |_warning: rquickjs::Value, _type: Opt<rquickjs::Value>, _code: Opt<String>| -> () {
             // Node emits to process.stderr; we silently no-op so libraries
@@ -1747,22 +1794,103 @@ fn wire_process<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 return BigInt(Math.floor(performance.now() * 1e6));
             };
 
-            // Π2.7: EventEmitter pattern on process. Real Bun + Node fire
-            // SIGINT/SIGTERM listeners on signal delivery; rusty-bun-host
-            // is a test runtime that doesn't deliver real signals to JS,
-            // so handlers register but never fire. exit and beforeExit
-            // listeners fire from the host's eval loop on completion.
+            // Π2.7: EventEmitter pattern on process. Π2.6.d.c extends:
+            // SIGNAL events (SIGINT/SIGTERM/etc.) now wire through
+            // __signals + reactor. First handler for a signal opens
+            // a signalfd; the eval loop's keep-alive pump drains
+            // siginfo and dispatches handlers.
             const _listeners = Object.create(null);
+            const _signumByName = Object.create(null);
             function _ensure(event) {
                 if (!_listeners[event]) _listeners[event] = [];
                 return _listeners[event];
+            }
+            function _isSignalEvent(name) {
+                return typeof name === "string" && name.startsWith("SIG");
+            }
+            function _installSignalPump(signalName) {
+                if (typeof globalThis.__signals === "undefined") return;
+                try {
+                    const r = globalThis.__signals.addSignal(signalName);
+                    const fd = r[0];
+                    const isNew = r[1] === 1;
+                    const signum = r[2];
+                    _signumByName[signalName] = signum;
+                    if (isNew && fd >= 0 && typeof globalThis.__reactor !== "undefined") {
+                        const sigToken = 0x50000000 + (fd & 0xFFFFFF);
+                        try { globalThis.__reactor.registerFd(sigToken, fd); } catch (_) {}
+                        // Watcher that drains signalfd on each tick.
+                        const pump = {
+                            _stopped: false,
+                            __tick() {
+                                if (this._stopped) return false;
+                                let nums;
+                                try { nums = globalThis.__signals.readSignals(); }
+                                catch (_) { return false; }
+                                if (!nums || nums.length === 0) return false;
+                                for (const n of nums) {
+                                    // Reverse-lookup signal name for dispatch.
+                                    let name = null;
+                                    for (const k in _signumByName) {
+                                        if (_signumByName[k] === n) { name = k; break; }
+                                    }
+                                    if (!name) continue;
+                                    const arr = _listeners[name];
+                                    if (arr) {
+                                        const copy = arr.slice();
+                                        for (const l of copy) {
+                                            try { l(name); } catch (e) {
+                                                globalThis.__stderrBuf += "signal handler error: " +
+                                                    (e && e.message ? e.message : String(e)) + "\n";
+                                            }
+                                        }
+                                    }
+                                }
+                                return true;
+                            },
+                        };
+                        // Signal pump is unref'd — handlers register but
+                        // don't keep the eval loop alive (Node/Bun default).
+                        if (globalThis.__keepAliveUnref) globalThis.__keepAliveUnref.add(pump);
+                    }
+                } catch (_) {}
             }
             globalThis.process.on = function on(event, listener) {
                 if (typeof listener !== "function") {
                     throw new TypeError("process.on: listener must be a function");
                 }
-                _ensure(event).push(listener);
+                const arr = _ensure(event);
+                arr.push(listener);
+                if (_isSignalEvent(event) && arr.length === 1) {
+                    _installSignalPump(event);
+                }
                 return globalThis.process;
+            };
+            // Π2.6.d.c: own-pid signal dispatch shortcut. Bun's
+            // process.kill(process.pid, sig) reliably delivers to its
+            // own JS handlers because Bun masks the signals across
+            // all its threads. cargo test's main thread doesn't share
+            // our mask, so kernel-level delivery would terminate the
+            // process; for self-signal we dispatch handlers directly.
+            const _rustKill = globalThis.process.kill;
+            globalThis.process.kill = function kill(pid, sig) {
+                const sigName = typeof sig === "string" ? sig
+                    : (sig === undefined ? "SIGTERM" : null);
+                if (pid === globalThis.process.pid && sigName &&
+                    _isSignalEvent(sigName) && _listeners[sigName] &&
+                    _listeners[sigName].length > 0) {
+                    queueMicrotask(() => {
+                        const copy = (_listeners[sigName] || []).slice();
+                        for (const l of copy) {
+                            try { l(sigName); } catch (e) {
+                                globalThis.__stderrBuf += "signal handler error: " +
+                                    (e && e.message ? e.message : String(e)) + "\n";
+                            }
+                        }
+                    });
+                    return true;
+                }
+                return _rustKill(pid, sig);
             };
             globalThis.process.once = function once(event, listener) {
                 if (typeof listener !== "function") {
@@ -12509,10 +12637,19 @@ fn install_keep_alive_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
     ctx.eval::<(), _>(r#"
         (function() {
             globalThis.__keepAlive = new Set();
+            // Π2.6.d.c: unref'd watchers. Their __tick still runs each
+            // eval iter, but they don't count toward alive_count (i.e.,
+            // don't keep the process alive on their own). Used by
+            // signal pumps, fs.watch (Bun + Node default to unref),
+            // and similar background drain loops.
+            globalThis.__keepAliveUnref = new Set();
             globalThis.__tickKeepAlive = function() {
                 let didWork = false;
                 // Copy to a list to allow add/remove during tick.
-                const items = Array.from(globalThis.__keepAlive);
+                const items = [
+                    ...Array.from(globalThis.__keepAlive),
+                    ...Array.from(globalThis.__keepAliveUnref),
+                ];
                 for (const item of items) {
                     if (item && typeof item.__tick === "function") {
                         try {
@@ -13992,7 +14129,19 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
         let did_work = ka_did_work || timer_did_work || reactor_did_work;
         // Exit when nothing keeps us alive and no timer is pending AND
         // no fds are registered with the reactor.
-        let reactor_alive = crate::reactor::registered_count() > 0;
+        // Π2.6.d.c: a registered fd alone isn't reason to stay alive —
+        // signalfd / future passive sources are wake mechanisms, not
+        // pending I/O. Only the presence of a parked Promise in
+        // __reactorPending counts as "we have work pending".
+        let reactor_alive = crate::reactor::registered_count() > 0 && {
+            context.with(|ctx| -> bool {
+                let g = ctx.globals();
+                match g.get::<_, Option<rquickjs::Object>>("__reactorPending") {
+                    Ok(Some(m)) => m.get::<_, i32>("size").unwrap_or(0) > 0,
+                    _ => false,
+                }
+            })
+        };
         if !did_work && alive_count == 0 && sleep_ms < 0 && !reactor_alive { break; }
         if did_work {
             consecutive_idle = 0;

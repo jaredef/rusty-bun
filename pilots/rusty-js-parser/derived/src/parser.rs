@@ -319,10 +319,9 @@ impl<'src> Parser<'src> {
             return self.parse_default_class();
         }
         // export default <AssignmentExpression> ;
-        let start = self.lookahead.span.start;
-        let end = self.skip_expression()?;
+        let expr = self.parse_assignment_expression()?;
         self.consume_semicolon();
-        Ok(DefaultExportBody::Expression { expr_span: Span::new(start, end) })
+        Ok(DefaultExportBody::Expression { expr })
     }
 
     fn parse_default_function(&mut self, is_async: bool) -> Result<DefaultExportBody, ParseError> {
@@ -810,30 +809,30 @@ impl<'src> Parser<'src> {
         matches!(self.lookahead.kind, TokenKind::Eof)
     }
 
-    fn last_span_end(&self) -> usize {
+    pub(crate) fn last_span_end(&self) -> usize {
         // The lookahead's start is the last consumed token's end.
         self.lookahead.span.start
     }
 
-    fn is_punct(&self, p: Punct) -> bool {
+    pub(crate) fn is_punct(&self, p: Punct) -> bool {
         matches!(self.lookahead.kind, TokenKind::Punct(q) if q == p)
     }
 
-    fn is_ident(&self, name: &str) -> bool {
+    pub(crate) fn is_ident(&self, name: &str) -> bool {
         matches!(&self.lookahead.kind, TokenKind::Ident(n) if n == name)
     }
 
-    fn expect_punct(&mut self, p: Punct) -> Result<(), ParseError> {
+    pub(crate) fn expect_punct(&mut self, p: Punct) -> Result<(), ParseError> {
         if self.is_punct(p) { self.bump_regexp()?; Ok(()) }
         else { Err(self.err_here(format!("expected `{:?}`", p))) }
     }
 
-    fn expect_keyword(&mut self, kw: &str) -> Result<(), ParseError> {
+    pub(crate) fn expect_keyword(&mut self, kw: &str) -> Result<(), ParseError> {
         if self.is_ident(kw) { self.bump_regexp()?; Ok(()) }
         else { Err(self.err_here(format!("expected `{}`", kw))) }
     }
 
-    fn expect_ident(&mut self, name: &str) -> Result<(), ParseError> {
+    pub(crate) fn expect_ident(&mut self, name: &str) -> Result<(), ParseError> {
         if self.is_ident(name) { self.bump_regexp()?; Ok(()) }
         else { Err(self.err_here(format!("expected `{}`", name))) }
     }
@@ -846,7 +845,31 @@ impl<'src> Parser<'src> {
         // terminator-before-next-keyword check handles it.
     }
 
-    fn err_here(&self, message: String) -> ParseError {
+    // ─── Crate-visible accessors used by the expression-grammar module ───
+
+    pub(crate) fn current_kind(&self) -> &TokenKind {
+        &self.lookahead.kind
+    }
+    pub(crate) fn lookahead_span(&self) -> Span {
+        self.lookahead.span
+    }
+    pub(crate) fn lookahead_preceded_by_lt(&self) -> bool {
+        self.lookahead.preceded_by_line_terminator
+    }
+    pub(crate) fn source(&self) -> &str {
+        self.src
+    }
+    pub(crate) fn at_eof_internal(&self) -> bool {
+        self.at_eof()
+    }
+    pub(crate) fn bump(&mut self) -> Result<Token, ParseError> {
+        self.bump_regexp()
+    }
+    pub(crate) fn skip_balanced_public(&mut self, open: Punct, close: Punct) -> Result<(), ParseError> {
+        self.skip_balanced(open, close)
+    }
+
+    pub(crate) fn err_here(&self, message: String) -> ParseError {
         ParseError { span: self.lookahead.span, message }
     }
 

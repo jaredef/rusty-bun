@@ -7,6 +7,7 @@
 pub mod token;
 pub mod lexer;
 pub mod parser;
+pub mod expr;
 
 pub use token::{Token, TokenKind, Punct, NumberKind, TemplatePart, Span};
 pub use lexer::{Lexer, LexError, LexErrorKind, LexerGoal};

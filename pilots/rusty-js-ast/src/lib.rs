@@ -19,6 +19,125 @@ impl Span {
     pub fn new(start: usize, end: usize) -> Self { Self { start, end } }
 }
 
+// ─────────── Expression nodes (Tier-Ω.3.b round 3a subset) ───────────
+//
+// v1 subset: literals + identifier + member + call + new + unary + update +
+// binary + conditional + assignment + sequence + array + object + parenthesized.
+// FunctionExpression, ClassExpression, ArrowFunction, TemplateLiteral with
+// substitutions in expression position fall back via Expr::Opaque until a
+// follow-on sub-round lands typed nodes for them.
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    NullLiteral { span: Span },
+    BoolLiteral { value: bool, span: Span },
+    NumberLiteral { value: f64, span: Span },
+    BigIntLiteral { digits: String, span: Span },
+    StringLiteral { value: String, span: Span },
+    Identifier { name: String, span: Span },
+    This { span: Span },
+    Super { span: Span },
+    MetaProperty { meta: String, property: String, span: Span },
+    Array { elements: Vec<ArrayElement>, span: Span },
+    Object { properties: Vec<ObjectProperty>, span: Span },
+    Parenthesized { expr: Box<Expr>, span: Span },
+    Member { object: Box<Expr>, property: Box<MemberProperty>, optional: bool, span: Span },
+    Call { callee: Box<Expr>, arguments: Vec<Argument>, optional: bool, span: Span },
+    New { callee: Box<Expr>, arguments: Vec<Argument>, span: Span },
+    Update { operator: UpdateOp, argument: Box<Expr>, prefix: bool, span: Span },
+    Unary { operator: UnaryOp, argument: Box<Expr>, span: Span },
+    Binary { operator: BinaryOp, left: Box<Expr>, right: Box<Expr>, span: Span },
+    Conditional { test: Box<Expr>, consequent: Box<Expr>, alternate: Box<Expr>, span: Span },
+    Assign { operator: AssignOp, target: Box<Expr>, value: Box<Expr>, span: Span },
+    Sequence { expressions: Vec<Expr>, span: Span },
+    /// Opaque byte-span placeholder for forms the v1 typed parser doesn't
+    /// yet cover (FunctionExpression / ClassExpression / ArrowFunction /
+    /// TemplateLiteral-with-substitutions). Retired by a follow-on sub-round.
+    Opaque { span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MemberProperty {
+    Identifier { name: String, span: Span },
+    Computed { expr: Expr, span: Span },
+    Private { name: String, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Argument {
+    Expr(Expr),
+    Spread { expr: Expr, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    Elision { span: Span },
+    Expr(Expr),
+    Spread { expr: Expr, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectProperty {
+    Property { key: ObjectKey, value: Expr, shorthand: bool, span: Span },
+    Spread { expr: Expr, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectKey {
+    Identifier { name: String, span: Span },
+    String { value: String, span: Span },
+    Number { value: f64, span: Span },
+    Computed { expr: Expr, span: Span },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOp { Inc, Dec }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Plus, Minus, BitNot, LogicalNot,
+    Typeof, Void, Delete,
+    Await,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add, Sub, Mul, Div, Mod, Pow,
+    Shl, Shr, UShr,
+    Lt, Gt, Le, Ge,
+    Eq, Ne, StrictEq, StrictNe,
+    Instanceof, In,
+    BitAnd, BitOr, BitXor,
+    LogicalAnd, LogicalOr, NullishCoalesce,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignOp {
+    Assign,
+    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, PowAssign,
+    ShlAssign, ShrAssign, UShrAssign,
+    BitAndAssign, BitOrAssign, BitXorAssign,
+    LogicalAndAssign, LogicalOrAssign, NullishAssign,
+}
+
+impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::NullLiteral { span } | Expr::BoolLiteral { span, .. } |
+            Expr::NumberLiteral { span, .. } | Expr::BigIntLiteral { span, .. } |
+            Expr::StringLiteral { span, .. } | Expr::Identifier { span, .. } |
+            Expr::This { span } | Expr::Super { span } |
+            Expr::MetaProperty { span, .. } | Expr::Array { span, .. } |
+            Expr::Object { span, .. } | Expr::Parenthesized { span, .. } |
+            Expr::Member { span, .. } | Expr::Call { span, .. } |
+            Expr::New { span, .. } | Expr::Update { span, .. } |
+            Expr::Unary { span, .. } | Expr::Binary { span, .. } |
+            Expr::Conditional { span, .. } | Expr::Assign { span, .. } |
+            Expr::Sequence { span, .. } | Expr::Opaque { span } => *span,
+        }
+    }
+}
+
 // ─────────── Module Record (per ECMA-262 §16.2.1.6) ───────────
 
 /// A parsed module. The body retains the original ModuleItem order for
@@ -126,8 +245,9 @@ pub enum DefaultExportBody {
     HoistableFunction { name: Option<BindingIdentifier>, body_span: Span, is_async: bool, is_generator: bool },
     /// `export default class NAME? { ... }` — same Tuple-B applicability when NAME present.
     Class { name: Option<BindingIdentifier>, body_span: Span },
-    /// `export default <AssignmentExpression>;` — opaque span until expressions land.
-    Expression { expr_span: Span },
+    /// `export default <AssignmentExpression>;` — typed Expr (v1 subset);
+    /// expressions outside the typed subset use Expr::Opaque.
+    Expression { expr: Expr },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -42,6 +42,14 @@ thread_local! {
 pub fn register_fd(sid: u64, fd: std::os::unix::io::RawFd) -> Result<(), String> {
     use mio::unix::SourceFd;
     REACTOR.with(|r| {
+        // Idempotent — if already registered, no-op. The drain path
+        // intentionally does not deregister (consumers — listener,
+        // stream — decide their own deregistration cadence). This lets
+        // the same waitReadable pattern work for both one-shot (fetch
+        // connection-fd) and long-lived (listener-fd) registrations.
+        if r.registered.borrow().contains(&sid) {
+            return Ok(());
+        }
         let poll = r.poll.borrow();
         let mut src = SourceFd(&fd);
         poll.registry()
@@ -114,6 +122,13 @@ pub fn take_ready() -> Vec<u64> {
 
 pub fn registered_count() -> usize {
     REACTOR.with(|r| r.registered.borrow().len())
+}
+
+/// Idempotent removal from the registered-set when the underlying fd
+/// is already gone (e.g., close() ran). Best-effort mio deregister was
+/// already attempted; this just keeps our tracking consistent.
+pub fn forget_sid(sid: u64) -> bool {
+    REACTOR.with(|r| r.registered.borrow_mut().remove(&sid))
 }
 
 #[cfg(all(test, unix))]

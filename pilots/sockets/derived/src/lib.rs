@@ -310,6 +310,62 @@ pub fn stream_raw_fd(_id: u64) -> Result<i32, SocketError> {
     Err(SocketError::WrongKind)
 }
 
+/// Π2.6.c.c: listener_raw_fd — mirror of stream_raw_fd for listeners.
+/// Returns the fd of the TcpListener stored in the registry under id.
+#[cfg(unix)]
+pub fn listener_raw_fd(id: u64) -> Result<std::os::unix::io::RawFd, SocketError> {
+    use std::os::unix::io::AsRawFd;
+    let r = registry().lock().expect("sockets: registry poisoned");
+    let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+    match h {
+        Handle::Listener(l) => Ok(l.as_raw_fd()),
+        _ => Err(SocketError::WrongKind),
+    }
+}
+
+#[cfg(not(unix))]
+pub fn listener_raw_fd(_id: u64) -> Result<i32, SocketError> {
+    Err(SocketError::WrongKind)
+}
+
+/// Π2.6.c.c: nonblocking accept against a listener id. Returns
+/// Ok(Some((stream_id, peer))) on a fresh connection,
+/// Ok(None) on WouldBlock, Err otherwise. Caller's reactor signals
+/// readiness; this consumes it.
+pub fn listener_set_nonblocking(id: u64, on: bool) -> Result<(), SocketError> {
+    let r = registry().lock().expect("sockets: registry poisoned");
+    let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+    match h {
+        Handle::Listener(l) => l.set_nonblocking(on)
+            .map_err(|e| SocketError::Bind(e.to_string())),
+        _ => Err(SocketError::WrongKind),
+    }
+}
+
+pub fn listener_try_accept(id: u64) -> Result<Option<(u64, String)>, SocketError> {
+    let listener_clone = {
+        let r = registry().lock().expect("sockets: registry poisoned");
+        let h = r.handles.get(&id).ok_or(SocketError::NotFound)?;
+        match h {
+            Handle::Listener(l) => l.try_clone().map_err(|e| SocketError::Accept(e.to_string()))?,
+            _ => return Err(SocketError::WrongKind),
+        }
+    };
+    match listener_clone.accept() {
+        Ok((stream, peer)) => {
+            // Newly-accepted streams inherit nonblocking from listener
+            // on some platforms but not others; force blocking here so
+            // existing stream_read paths behave consistently (callers
+            // that want nonblocking call stream_set_nonblocking).
+            let _ = stream.set_nonblocking(false);
+            let stream_id = put(Handle::Stream(stream));
+            Ok(Some((stream_id, peer.to_string())))
+        }
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(SocketError::Accept(e.to_string())),
+    }
+}
+
 /// Close a handle (listener or stream) by removing it from the registry.
 /// Drop runs the OS close.
 pub fn handle_close(id: u64) -> Result<(), SocketError> {

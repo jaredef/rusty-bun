@@ -2825,6 +2825,27 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     )?;
     // Async listener primitives (engagement option A; std-only equivalent of
     // Bun's WorkPool + concurrent_tasks + Waker pattern).
+    // Π2.6.c.c: nonblocking accept + listener nonblocking toggle.
+    // Composed by Bun.serve's autoServe path to replace the
+    // thread-per-listener + mpsc model with reactor-driven accept.
+    ns.set(
+        "listenerSetNonblocking",
+        Function::new(ctx.clone(), |id: f64, on: bool| -> JsResult<()> {
+            rusty_sockets::listener_set_nonblocking(id as u64, on)
+                .map_err(|e| rquickjs::Error::new_from_js_message("sockets", "listenerSetNonblocking", e.to_string()))
+        })?,
+    )?;
+    ns.set(
+        "listenerTryAcceptJson",
+        Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+            match rusty_sockets::listener_try_accept(id as u64) {
+                Ok(Some((stream_id, peer))) =>
+                    Ok(format!("{{\"streamId\":{},\"peer\":{}}}", stream_id, json_str(&peer))),
+                Ok(None) => Ok("null".to_string()),
+                Err(e) => Err(rquickjs::Error::new_from_js_message("sockets", "listenerTryAccept", e.to_string())),
+            }
+        })?,
+    )?;
     ns.set(
         "listenerBindAsyncJson",
         Function::new(ctx.clone(), |addr: String| -> JsResult<String> {
@@ -2875,16 +2896,21 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
     // Π2.6.c.a: mio reactor primitives. Single-process readiness
     // multiplexer; takes ownership of nothing — fd lifetime stays with
     // the sockets pilot's registry. JS layer (added below) exposes a
-    // globalThis.__reactor namespace. No consumer migration this
-    // round; the existing tryRead/idleSpin path stays operational.
+    // globalThis.__reactor namespace.
+    // Π2.6.c.c: register/deregister now polymorphic — try stream first
+    // (Π2.6.c.b path), fall back to listener (Π2.6.c.c). The sids share
+    // a single namespace in the sockets pilot, so the lookup distinguishes.
     let reactor_ns = Object::new(ctx.clone())?;
     reactor_ns.set(
         "register",
         Function::new(ctx.clone(), |sid: f64| -> JsResult<()> {
             let id = sid as u64;
-            let fd = rusty_sockets::stream_raw_fd(id).map_err(|e| {
-                rquickjs::Error::new_from_js_message("reactor", "register-fd-lookup", e.to_string())
-            })?;
+            let fd = match rusty_sockets::stream_raw_fd(id) {
+                Ok(fd) => fd,
+                Err(_) => rusty_sockets::listener_raw_fd(id).map_err(|e| {
+                    rquickjs::Error::new_from_js_message("reactor", "register-fd-lookup", e.to_string())
+                })?,
+            };
             crate::reactor::register_fd(id, fd)
                 .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "register", e))
         })?,
@@ -2893,11 +2919,20 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
         "deregister",
         Function::new(ctx.clone(), |sid: f64| -> JsResult<()> {
             let id = sid as u64;
-            let fd = rusty_sockets::stream_raw_fd(id).map_err(|e| {
-                rquickjs::Error::new_from_js_message("reactor", "deregister-fd-lookup", e.to_string())
-            })?;
-            crate::reactor::deregister_fd(id, fd)
-                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "deregister", e))
+            // Idempotent: if the sockets-pilot handle is already gone
+            // (close was called), there's nothing to deregister at the
+            // mio level either. Return Ok and move on.
+            let fd_opt: Option<std::os::unix::io::RawFd> =
+                rusty_sockets::stream_raw_fd(id).ok()
+                    .or_else(|| rusty_sockets::listener_raw_fd(id).ok());
+            if let Some(fd) = fd_opt {
+                crate::reactor::deregister_fd(id, fd)
+                    .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "deregister", e))?;
+            } else {
+                // Handle already closed; just clear our own tracking set.
+                let _ = crate::reactor::forget_sid(id);
+            }
+            Ok(())
         })?,
     )?;
     reactor_ns.set(
@@ -2954,13 +2989,25 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 writeAll(id, data) { raw.streamWriteAll(id, toByteArray(data)); },
                 peerAddr(id) { return raw.streamPeerAddr(id); },
                 localAddr(id) { return raw.streamLocalAddr(id); },
-                close(id) { raw.handleClose(id); },
+                close(id) {
+                    // Π2.6.c.c: deregister from reactor before close so
+                    // mio doesn't continue firing events on the stale fd.
+                    try { globalThis.__reactor.deregister(id); } catch (_) {}
+                    raw.handleClose(id);
+                },
                 kind(id) { return raw.handleKind(id); },
                 // Async-listener primitives (option A; see seed §V Tier-G).
                 bindAsync(addr) { return JSON.parse(raw.listenerBindAsyncJson(addr)); },
                 poll(id, maxWaitMs) {
                     const r = JSON.parse(raw.listenerPollJson(id, maxWaitMs));
                     return r;  // null | {type:"connection",streamId,peer} | {type:"closed"} | {type:"error",message}
+                },
+                // Π2.6.c.c: reactor-driven listener primitives.
+                listenerSetNonblocking(id, on) { raw.listenerSetNonblocking(id, !!on); },
+                tryAccept(id) {
+                    const j = raw.listenerTryAcceptJson(id);
+                    if (j === "null") return null;
+                    return JSON.parse(j);  // {streamId, peer}
                 },
                 stopAsync(id) { raw.listenerStopAsync(id); },
                 asyncListenerAddr(id) { return raw.asyncListenerAddr(id); },
@@ -2991,7 +3038,10 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                     const arr = globalThis.__reactorPending.get(sid);
                     if (arr && arr.length) {
                         globalThis.__reactorPending.delete(sid);
-                        globalThis.__reactor.deregister(sid);
+                        // Π2.6.c.c: drain no longer deregisters — that
+                        // would force re-register on every waitReadable
+                        // call. Listeners stay registered for life;
+                        // streams stay registered until close().
                         for (const fn of arr) { try { fn(); } catch (_) {} }
                         n += arr.length;
                     }
@@ -6648,7 +6698,9 @@ const BUN_SERVE_JS: &str = r#"
             stop() {
                 this._stopped = true;
                 if (this._tcpListenerId != null && typeof globalThis.TCP !== "undefined") {
-                    try { globalThis.TCP.stopAsync(this._tcpListenerId); } catch (_) {}
+                    // Π2.6.c.c: deregister listener from reactor, then close.
+                    try { globalThis.__reactor.deregister(this._tcpListenerId); } catch (_) {}
+                    try { globalThis.TCP.close(this._tcpListenerId); } catch (_) {}
                     this._tcpListenerId = null;
                 }
                 // Π2.6: deregister from keep-alive registry.
@@ -6664,8 +6716,14 @@ const BUN_SERVE_JS: &str = r#"
             __tick(_unused) {
                 if (this._stopped) return false;
                 if (this._tcpListenerId == null) return false;
-                const ev = globalThis.TCP.poll(this._tcpListenerId, 0);
-                if (!ev || ev.type !== "connection") return false;
+                // Π2.6.c.c: reactor-driven accept. The listener fd is
+                // registered in the reactor at listen() time; mio
+                // signals readability when a connection arrives, and
+                // the eval loop's drain triggers this __tick. We then
+                // drain as many pending connections as possible
+                // (nonblocking accept until WouldBlock).
+                const ev = globalThis.TCP.tryAccept(this._tcpListenerId);
+                if (!ev) return false;
                 // Fire-and-forget the async handler; microtask drain
                 // between ticks completes it.
                 (async () => {
@@ -6732,10 +6790,16 @@ const BUN_SERVE_JS: &str = r#"
                     typeof globalThis.HTTP === "undefined") {
                     throw new Error("Bun.serve.listen: globalThis.TCP + HTTP required");
                 }
-                const result = globalThis.TCP.bindAsync(
+                // Π2.6.c.c: bind synchronously via std TcpListener (no
+                // listener thread + mpsc), set nonblocking, register
+                // with the reactor. Accept happens nonblocking in
+                // __tick when mio signals readability.
+                const result = globalThis.TCP.bind(
                     this._hostname + ":" + (this._port || 0));
                 this._tcpListenerId = result.id;
                 this._port = parseInt(result.addr.split(":").pop(), 10);
+                globalThis.TCP.listenerSetNonblocking(this._tcpListenerId, true);
+                globalThis.__reactor.register(this._tcpListenerId);
                 return this;
             },
             // tick(maxWaitMs): process at most one accepted connection.
@@ -6745,8 +6809,22 @@ const BUN_SERVE_JS: &str = r#"
                 if (this._tcpListenerId == null) {
                     throw new Error("Bun.serve.tick: not listening (call await server.listen() first)");
                 }
-                const ev = globalThis.TCP.poll(this._tcpListenerId, maxWaitMs);
-                if (!ev || ev.type !== "connection") return false;
+                // Π2.6.c.c: tryAccept against the nonblocking listener.
+                // If no pending connection, optionally park on reactor
+                // readiness for the listener fd up to maxWaitMs. Since
+                // the listener is already registered with __reactor at
+                // listen() time, waitReadable just adds a resolver.
+                let ev = globalThis.TCP.tryAccept(this._tcpListenerId);
+                if (!ev && maxWaitMs > 0) {
+                    // Race waitReadable against a maxWaitMs deadline.
+                    const deadline = Date.now() + maxWaitMs;
+                    while (!ev && Date.now() < deadline) {
+                        await globalThis.TCP.waitReadable(this._tcpListenerId);
+                        ev = globalThis.TCP.tryAccept(this._tcpListenerId);
+                    }
+                }
+                if (!ev) return false;
+                ev = { type: "connection", streamId: ev.streamId, peer: ev.peer };
                 const streamId = ev.streamId;
                 try {
                     const bytes = globalThis.TCP.read(streamId, 65536);

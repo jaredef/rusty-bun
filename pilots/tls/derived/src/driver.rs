@@ -34,11 +34,31 @@ impl TlsTransport for TcpTlsTransport {
     fn read_some(&mut self, buf: &mut Vec<u8>) -> Result<usize, TlsError> {
         use std::io::Read;
         let mut tmp = [0u8; 8192];
-        let n = self.stream.read(&mut tmp)
-            .map_err(|e| TlsError::SignatureFail(format!("tcp read: {}", e)))?;
+        let n = match self.stream.read(&mut tmp) {
+            Ok(n) => n,
+            // Π2.6.c.d: surface WouldBlock distinct from other errors so
+            // try_receive_application_data can map it to Ok(None).
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return Err(TlsError::WouldBlock),
+            Err(e) => return Err(TlsError::SignatureFail(format!("tcp read: {}", e))),
+        };
         if n == 0 { return Err(TlsError::UnexpectedEnd); }
         buf.extend_from_slice(&tmp[..n]);
         Ok(n)
+    }
+}
+
+impl TcpTlsTransport {
+    /// Π2.6.c.d: toggle nonblocking on the underlying TcpStream so
+    /// read_some surfaces WouldBlock instead of blocking the thread.
+    pub fn set_nonblocking(&self, on: bool) -> Result<(), TlsError> {
+        self.stream.set_nonblocking(on)
+            .map_err(|e| TlsError::SignatureFail(format!("tls set_nonblocking: {}", e)))
+    }
+    /// Expose the underlying fd for reactor registration.
+    #[cfg(unix)]
+    pub fn raw_fd(&self) -> std::os::unix::io::RawFd {
+        use std::os::unix::io::AsRawFd;
+        self.stream.as_raw_fd()
     }
 }
 
@@ -271,6 +291,45 @@ impl<T: TlsTransport> TlsSession<T> {
             fragment: ct,
         };
         self.transport.write_all(&encode_record(&record)?)
+    }
+
+    /// Π2.6.c.d: nonblocking variant. Returns Ok(Some(plaintext)) when
+    /// a complete record decrypts; Ok(None) when transport returns
+    /// WouldBlock and no complete record is yet available; Err on
+    /// orderly close (UnexpectedEnd), alert, or unrecoverable I/O.
+    /// Caller should set the transport nonblocking + park on reactor
+    /// readiness when None.
+    pub fn try_receive_application_data(&mut self, accumulator: &mut Vec<u8>) -> Result<Option<Vec<u8>>, TlsError> {
+        loop {
+            if let Ok((rec, n)) = decode_record(accumulator) {
+                accumulator.drain(..n);
+                if rec.content_type != ContentType::ApplicationData {
+                    if rec.content_type == ContentType::ChangeCipherSpec { continue; }
+                    return Err(TlsError::SignatureFail("unexpected plaintext record post-handshake".into()));
+                }
+                let (inner_ct, plaintext) = aead_decrypt_record(
+                    &self.server_app_keys, self.server_app_seq, &rec.fragment)?;
+                self.server_app_seq += 1;
+                match inner_ct {
+                    23 => return Ok(Some(plaintext)),
+                    21 => return Err(TlsError::SignatureFail(
+                        format!("TLS alert during app data: {:?}", plaintext))),
+                    22 => continue,
+                    _ => return Err(TlsError::SignatureFail(
+                        format!("unknown inner content type {}", inner_ct))),
+                }
+            } else {
+                match self.transport.read_some(accumulator) {
+                    Ok(_) => {
+                        if accumulator.len() > MAX_CIPHERTEXT_LEN + 5 + 16 && decode_record(accumulator).is_err() {
+                            return Err(TlsError::SignatureFail("record buffer overflow without progress".into()));
+                        }
+                    }
+                    Err(TlsError::WouldBlock) => return Ok(None),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
     }
 
     /// Receive application data, decrypting one record at a time.

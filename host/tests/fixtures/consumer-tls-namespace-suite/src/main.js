@@ -60,7 +60,8 @@ async function selfTest() {
 
     // Namespace shape stability: same set of properties exposed.
     const keys = Object.keys(tls).sort();
-    const expected = ["close", "connect", "read", "write"];
+    // Pi2.6.c.d: tryRead + setNonblocking + rawFd added for reactor integration.
+    const expected = ["close", "connect", "rawFd", "read", "setNonblocking", "tryRead", "write"];
     results.push(["tls-namespace-shape-stable",
         keys.length === expected.length &&
         keys.every((k, i) => k === expected[i])]);

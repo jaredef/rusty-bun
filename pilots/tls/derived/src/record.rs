@@ -75,6 +75,10 @@ pub enum TlsError {
     SelfSignedNotInTrust,
     StoreLoad(String),
     X509(X509Error),
+    /// Π2.6.c.d: transport returned WouldBlock; caller should park on
+    /// readiness and retry. Distinct from UnexpectedEnd (orderly close)
+    /// and SignatureFail (real I/O error).
+    WouldBlock,
 }
 
 use rusty_x509::X509Error;
@@ -97,6 +101,7 @@ impl std::fmt::Display for TlsError {
                 "self-signed certificate not present in trust store"),
             TlsError::StoreLoad(s) => write!(f, "trust store load failed: {}", s),
             TlsError::X509(e) => write!(f, "X.509: {}", e),
+            TlsError::WouldBlock => write!(f, "transport would block"),
         }
     }
 }

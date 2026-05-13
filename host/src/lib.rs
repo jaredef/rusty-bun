@@ -2423,6 +2423,52 @@ fn wire_tls<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()>
                     "tls", "read", e.to_string()))
         })?)?;
 
+    // Π2.6.c.d: nonblocking read variant. Returns Vec<i32>:
+    //   - [-1]            → WouldBlock (sentinel; mirrors stream_try_read)
+    //   - []              → orderly close (server hung up)
+    //   - [b0, b1, ...]   → plaintext bytes
+    ns.set("tryRead", Function::new(ctx.clone(),
+        |sid: u32| -> JsResult<Vec<i32>> {
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = g.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "tryRead", "no sessions"))?;
+            let st = map.get_mut(&sid).ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "tryRead", "invalid session id"))?;
+            let s = st.session.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "tryRead", "session closed"))?;
+            match s.try_receive_application_data(&mut st.accumulator) {
+                Ok(Some(buf)) => Ok(buf.iter().map(|&b| b as i32).collect()),
+                Ok(None) => Ok(vec![-1]),
+                Err(rusty_tls::TlsError::UnexpectedEnd) => Ok(vec![]),
+                Err(e) => Err(rquickjs::Error::new_from_js_message(
+                    "tls", "tryRead", e.to_string())),
+            }
+        })?)?;
+    ns.set("setNonblocking", Function::new(ctx.clone(),
+        |sid: u32, on: bool| -> JsResult<()> {
+            let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = g.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "setNonblocking", "no sessions"))?;
+            let st = map.get_mut(&sid).ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "setNonblocking", "invalid session id"))?;
+            let s = st.session.as_mut().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "setNonblocking", "session closed"))?;
+            s.transport.set_nonblocking(on).map_err(|e| rquickjs::Error::new_from_js_message(
+                "tls", "setNonblocking", e.to_string()))
+        })?)?;
+    #[cfg(unix)]
+    ns.set("rawFd", Function::new(ctx.clone(),
+        |sid: u32| -> JsResult<i32> {
+            let g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = g.as_ref().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "rawFd", "no sessions"))?;
+            let st = map.get(&sid).ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "rawFd", "invalid session id"))?;
+            let s = st.session.as_ref().ok_or_else(|| rquickjs::Error::new_from_js_message(
+                "tls", "rawFd", "session closed"))?;
+            Ok(s.transport.raw_fd() as i32)
+        })?)?;
+
     ns.set("close", Function::new(ctx.clone(),
         |sid: u32| -> JsResult<()> {
             let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
@@ -2953,6 +2999,26 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
         "registeredCount",
         Function::new(ctx.clone(), || -> JsResult<f64> {
             Ok(crate::reactor::registered_count() as f64)
+        })?,
+    )?;
+    // Π2.6.c.d: raw-token + raw-fd registration. Bypasses the sockets-
+    // pilot lookup so consumers in different sid namespaces (TLS
+    // sessions, future file-watcher sources) can participate. Caller
+    // supplies a non-colliding token.
+    #[cfg(unix)]
+    reactor_ns.set(
+        "registerFd",
+        Function::new(ctx.clone(), |token: f64, fd: i32| -> JsResult<()> {
+            crate::reactor::register_fd(token as u64, fd as std::os::unix::io::RawFd)
+                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "registerFd", e))
+        })?,
+    )?;
+    #[cfg(unix)]
+    reactor_ns.set(
+        "deregisterFd",
+        Function::new(ctx.clone(), |token: f64, fd: i32| -> JsResult<()> {
+            crate::reactor::deregister_fd(token as u64, fd as std::os::unix::io::RawFd)
+                .map_err(|e| rquickjs::Error::new_from_js_message("reactor", "deregisterFd", e))
         })?,
     )?;
     global.set("__reactor", reactor_ns)?;
@@ -6339,18 +6405,54 @@ if (typeof globalThis.fetch === "undefined" ||
             // (lets the server run) + microtask yield + retry.
             const chunks = [];
             let total = 0;
+            // Π2.6.c.d: TLS path now also uses nonblocking reads via
+            // __tls.tryRead. The underlying TcpStream fd is registered
+            // with the reactor under a distinct token (high bit set to
+            // avoid collision with sockets-pilot sids).
+            let tlsToken = null;
+            let tlsFd = null;
             if (!useTls) {
                 globalThis.TCP.setNonblocking(sid, true);
+            } else {
+                try {
+                    globalThis.__tls.setNonblocking(sid, true);
+                    tlsFd = globalThis.__tls.rawFd(sid);
+                    tlsToken = 0x40000000 + sid;  // TLS Token namespace
+                    globalThis.__reactor.registerFd(tlsToken, tlsFd);
+                } catch (_) { /* fall back to blocking semantics */ tlsToken = null; }
             }
             let idleSpins = 0;
             const maxIdleSpins = 200000; // ~bounded retry budget (no real timer)
             while (true) {
                 let chunk;
                 if (useTls) {
-                    try {
-                        chunk = globalThis.__tls.read(sid);
-                    } catch (_) {
-                        break;
+                    if (tlsToken == null) {
+                        // Fallback path — blocking read (e.g., older
+                        // platforms or if registration failed).
+                        try { chunk = globalThis.__tls.read(sid); }
+                        catch (_) { break; }
+                    } else {
+                        const arr = globalThis.__tls.tryRead(sid);
+                        if (arr.length === 1 && arr[0] === -1) {
+                            // WouldBlock — park on reactor readiness for the
+                            // underlying fd.
+                            await new Promise(function(resolve) {
+                                let pendArr = globalThis.__reactorPending.get(tlsToken);
+                                if (!pendArr) {
+                                    pendArr = [];
+                                    globalThis.__reactorPending.set(tlsToken, pendArr);
+                                }
+                                pendArr.push(resolve);
+                            });
+                            idleSpins++;
+                            if (idleSpins > maxIdleSpins) {
+                                throw new Error("rusty-bun-host fetch (TLS): read stalled (no data, no progress)");
+                            }
+                            continue;
+                        }
+                        idleSpins = 0;
+                        if (arr.length === 0) break;  // orderly close
+                        chunk = new Uint8Array(arr);
                     }
                 } else {
                     chunk = globalThis.TCP.tryRead(sid, 65536);
@@ -6411,6 +6513,12 @@ if (typeof globalThis.fetch === "undefined" ||
                         }
                     }
                 }
+            }
+            // Π2.6.c.d: deregister the TLS reactor token now that reads
+            // are done. The underlying fd stays alive (it's owned by
+            // the TLS session); only the mio registration is dropped.
+            if (tlsToken != null && tlsFd != null) {
+                try { globalThis.__reactor.deregisterFd(tlsToken, tlsFd); } catch (_) {}
             }
             // Concatenate.
             const full = new Uint8Array(total);

@@ -345,20 +345,12 @@ impl<'src> Parser<'src> {
         let name = if matches!(self.lookahead.kind, TokenKind::Ident(ref s) if s != "extends" && s != "{") && !self.is_punct(Punct::LBrace) {
             Some(self.parse_binding_identifier()?)
         } else { None };
-        // optional extends <expr>
-        if self.is_ident("extends") {
+        let super_class = if self.is_ident("extends") {
             self.bump_regexp()?;
-            // Skip the extends expression up to `{`.
-            while !self.is_punct(Punct::LBrace) && !self.at_eof() {
-                self.bump_regexp()?;
-            }
-        }
-        let body_start = self.lookahead.span.start;
-        self.skip_balanced(Punct::LBrace, Punct::RBrace)?;
-        Ok(DefaultExportBody::Class {
-            name,
-            body_span: Span::new(body_start, self.last_span_end()),
-        })
+            Some(self.parse_left_hand_side_expression()?)
+        } else { None };
+        let members = self.parse_class_body()?;
+        Ok(DefaultExportBody::Class { name, super_class, members })
     }
 
     // ───────────────────────────── Names + specifiers ─────────────────────────────

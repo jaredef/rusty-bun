@@ -338,22 +338,64 @@ fn parenthesized_sequence() {
     } else { panic!("expected parenthesized sequence"); }
 }
 
-// ─────────── Opaque fallback ───────────
+// ─────────── Function / Class / Arrow (now typed in round 3e) ───────────
 
 #[test]
-fn function_expression_falls_back_opaque() {
-    // FunctionExpression in expression position falls back to Opaque.
-    // `export default function () {}` would route to HoistableFunction in
-    // parse_default_export_body; the parenthesized form hits the expression
-    // path proper.
+fn function_expression_typed() {
     if let Expr::Parenthesized { expr, .. } = expr_of("(function () {})") {
-        assert!(matches!(*expr, Expr::Opaque { .. }));
-    } else { panic!("expected parenthesized opaque"); }
+        assert!(matches!(*expr, Expr::Function { .. }));
+    } else { panic!("expected parenthesized function"); }
 }
 
 #[test]
-fn arrow_function_falls_back_opaque() {
-    if let Expr::Opaque { .. } = expr_of("x => x") {
-        // ok — ArrowFunction deferred
-    } else { panic!("expected opaque"); }
+fn function_expression_named() {
+    if let Expr::Parenthesized { expr, .. } = expr_of("(function fetch(url) { return url; })") {
+        if let Expr::Function { name, params, body, .. } = *expr {
+            assert_eq!(name.unwrap().name, "fetch");
+            assert_eq!(params.len(), 1);
+            assert_eq!(body.len(), 1);
+        } else { panic!("expected function expr"); }
+    } else { panic!("expected paren"); }
+}
+
+#[test]
+fn arrow_function_single_param() {
+    if let Expr::Arrow { params, body, is_async, .. } = expr_of("x => x + 1") {
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].names[0].name, "x");
+        assert!(matches!(body, ArrowBody::Expression(_)));
+        assert!(!is_async);
+    } else { panic!("expected arrow"); }
+}
+
+#[test]
+fn arrow_function_paren_params() {
+    if let Expr::Arrow { params, body, .. } = expr_of("(a, b) => a + b") {
+        assert_eq!(params.len(), 2);
+        assert!(matches!(body, ArrowBody::Expression(_)));
+    } else { panic!("expected arrow"); }
+}
+
+#[test]
+fn arrow_function_block_body() {
+    if let Expr::Arrow { body, .. } = expr_of("(x) => { return x * 2; }") {
+        assert!(matches!(body, ArrowBody::Block(_)));
+    } else { panic!("expected arrow"); }
+}
+
+#[test]
+fn arrow_function_async() {
+    if let Expr::Arrow { is_async, .. } = expr_of("async (x) => x") {
+        assert!(is_async);
+    } else { panic!("expected async arrow"); }
+}
+
+#[test]
+fn class_expression_typed() {
+    if let Expr::Parenthesized { expr, .. } = expr_of("(class Foo { bar() { return 1; } })") {
+        if let Expr::Class { name, members, .. } = *expr {
+            assert_eq!(name.unwrap().name, "Foo");
+            assert_eq!(members.len(), 1);
+        } else { panic!("expected class expr"); }
+    } else { panic!("expected paren"); }
 }

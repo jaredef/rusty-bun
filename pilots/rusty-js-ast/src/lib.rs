@@ -50,10 +50,80 @@ pub enum Expr {
     Conditional { test: Box<Expr>, consequent: Box<Expr>, alternate: Box<Expr>, span: Span },
     Assign { operator: AssignOp, target: Box<Expr>, value: Box<Expr>, span: Span },
     Sequence { expressions: Vec<Expr>, span: Span },
-    /// Opaque byte-span placeholder for forms the v1 typed parser doesn't
-    /// yet cover (FunctionExpression / ClassExpression / ArrowFunction /
-    /// TemplateLiteral-with-substitutions). Retired by a follow-on sub-round.
+    /// `function NAME?(params) { body }` in expression position.
+    Function {
+        name: Option<BindingIdentifier>,
+        is_async: bool,
+        is_generator: bool,
+        params: Vec<Parameter>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    /// `class NAME? extends? { members }` in expression position.
+    Class {
+        name: Option<BindingIdentifier>,
+        super_class: Option<Box<Expr>>,
+        members: Vec<ClassMember>,
+        span: Span,
+    },
+    /// `(params) => body` or `Identifier => body`.
+    Arrow {
+        is_async: bool,
+        params: Vec<Parameter>,
+        body: ArrowBody,
+        span: Span,
+    },
+    /// Opaque byte-span placeholder for forms still pending
+    /// (TemplateLiteral-with-substitutions, RegExp-typed-node,
+    /// dynamic-import-call). Other forms have moved off this fallback.
     Opaque { span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrowBody {
+    /// Concise: `x => x + 1`
+    Expression(Box<Expr>),
+    /// Block: `x => { return x + 1; }`
+    Block(Vec<Stmt>),
+}
+
+// ─────────── Class members ───────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember {
+    /// `[static] [async] [*] method(params) { body }` — Method / Constructor /
+    /// Getter / Setter — kind distinguishes.
+    Method {
+        name: ClassMemberName,
+        kind: MethodKind,
+        is_static: bool,
+        is_async: bool,
+        is_generator: bool,
+        params: Vec<Parameter>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    /// `[static] name [= init];` — field definition.
+    Field {
+        name: ClassMemberName,
+        is_static: bool,
+        init: Option<Expr>,
+        span: Span,
+    },
+    /// `static { body }` — static initializer block (ES2022).
+    StaticBlock { body: Vec<Stmt>, span: Span },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodKind { Method, Constructor, Getter, Setter }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMemberName {
+    Identifier { name: String, span: Span },
+    String { value: String, span: Span },
+    Number { value: f64, span: Span },
+    Computed { expr: Expr, span: Span },
+    Private { name: String, span: Span },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,7 +203,9 @@ impl Expr {
             Expr::New { span, .. } | Expr::Update { span, .. } |
             Expr::Unary { span, .. } | Expr::Binary { span, .. } |
             Expr::Conditional { span, .. } | Expr::Assign { span, .. } |
-            Expr::Sequence { span, .. } | Expr::Opaque { span } => *span,
+            Expr::Sequence { span, .. } | Expr::Function { span, .. } |
+            Expr::Class { span, .. } | Expr::Arrow { span, .. } |
+            Expr::Opaque { span } => *span,
         }
     }
 }
@@ -180,8 +252,13 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
-    /// `class NAME { ... }` — body span; full member AST lands in round 3e.
-    ClassDecl { name: Option<BindingIdentifier>, body_span: Span, span: Span },
+    /// `class NAME [extends Super] { members }`
+    ClassDecl {
+        name: Option<BindingIdentifier>,
+        super_class: Option<Expr>,
+        members: Vec<ClassMember>,
+        span: Span,
+    },
     /// `if (test) consequent [else alternate]`
     If { test: Expr, consequent: Box<Stmt>, alternate: Option<Box<Stmt>>, span: Span },
     /// `for (init; test; update) body` — C-style.
@@ -379,8 +456,12 @@ pub enum DefaultExportBody {
         is_async: bool,
         is_generator: bool,
     },
-    /// `export default class NAME? { ... }` — same Tuple-B applicability when NAME present.
-    Class { name: Option<BindingIdentifier>, body_span: Span },
+    /// `export default class NAME? { ... }` — Tuple-B applicability when NAME present.
+    Class {
+        name: Option<BindingIdentifier>,
+        super_class: Option<Expr>,
+        members: Vec<ClassMember>,
+    },
     /// `export default <AssignmentExpression>;` — typed Expr (v1 subset);
     /// expressions outside the typed subset use Expr::Opaque.
     Expression { expr: Expr },

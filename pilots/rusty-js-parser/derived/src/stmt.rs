@@ -235,22 +235,144 @@ impl<'src> Parser<'src> {
                 Some(BindingIdentifier { name: n, span })
             } else { None }
         } else { None };
-        // Optional `extends <expr>` — skip until `{`.
-        if self.is_ident("extends") {
+        let super_class = if self.is_ident("extends") {
             self.bump()?;
-            while !matches!(self.current_kind(), TokenKind::Punct(Punct::LBrace)) && !self.at_eof_internal() {
-                self.bump()?;
-            }
-        }
-        let body_start = self.lookahead_span().start;
-        self.skip_balanced_public(Punct::LBrace, Punct::RBrace)?;
+            Some(self.parse_left_hand_side_expression()?)
+        } else { None };
+        let members = self.parse_class_body()?;
         let end = self.last_span_end();
         Ok(Stmt::ClassDecl {
-            name,
-            body_span: Span::new(body_start, end),
+            name, super_class, members,
             span: Span::new(start, end),
         })
     }
+
+    /// `{ ClassElement* }` — parses class member definitions per spec
+    /// section 15.7. Method shorthand, getter / setter, static, generator
+    /// (`*`), async, private (`#name`), computed (`[expr]`), field with
+    /// optional initializer, ES2022 static-block.
+    pub(crate) fn parse_class_body(&mut self) -> Result<Vec<rusty_js_ast::ClassMember>, ParseError> {
+        use rusty_js_ast::{ClassMember, ClassMemberName, MethodKind};
+        self.expect_punct(Punct::LBrace)?;
+        let mut out = Vec::new();
+        while !matches!(self.current_kind(), TokenKind::Punct(Punct::RBrace)) && !self.at_eof_internal() {
+            // Allow stray semicolons.
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Semicolon)) {
+                self.bump()?;
+                continue;
+            }
+            let m_start = self.lookahead_span().start;
+            let is_static = if self.is_ident("static") {
+                // Disambiguate `static { ... }` (static-block) from
+                // `static method/field` by peek.
+                let pos = self.lookahead_span().end;
+                let bytes = self.source().as_bytes();
+                let mut p = pos;
+                while p < bytes.len() && bytes[p].is_ascii_whitespace() { p += 1; }
+                if bytes.get(p) == Some(&b'{') {
+                    self.bump()?; // `static`
+                    let body = self.parse_function_body()?;
+                    let end = self.last_span_end();
+                    out.push(ClassMember::StaticBlock { body, span: Span::new(m_start, end) });
+                    continue;
+                }
+                self.bump()?;
+                true
+            } else { false };
+
+            // Detect getter / setter / async / generator modifiers.
+            let mut kind = MethodKind::Method;
+            let mut is_async = false;
+            let mut is_generator = false;
+
+            if self.is_ident("get") {
+                // `get` could be a method name OR the getter modifier.
+                if !self.next_is_method_open_or_field_terminator() {
+                    self.bump()?;
+                    kind = MethodKind::Getter;
+                }
+            } else if self.is_ident("set") {
+                if !self.next_is_method_open_or_field_terminator() {
+                    self.bump()?;
+                    kind = MethodKind::Setter;
+                }
+            } else if self.is_ident("async") {
+                if !self.next_is_method_open_or_field_terminator() {
+                    self.bump()?;
+                    is_async = true;
+                }
+            }
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Star)) {
+                is_generator = true;
+                self.bump()?;
+            }
+
+            // PropertyName / PrivateIdentifier.
+            let name = self.parse_class_member_name()?;
+
+            // Field or method?
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
+                let params = self.parse_function_parameters()?;
+                let body = self.parse_function_body()?;
+                let end = self.last_span_end();
+                // Constructor detection (only when not static and name is `constructor`).
+                let method_kind = if !is_static && kind == MethodKind::Method {
+                    match &name {
+                        ClassMemberName::Identifier { name: n, .. } if n == "constructor" => MethodKind::Constructor,
+                        _ => MethodKind::Method,
+                    }
+                } else { kind };
+                out.push(ClassMember::Method {
+                    name, kind: method_kind, is_static, is_async, is_generator,
+                    params, body, span: Span::new(m_start, end),
+                });
+                continue;
+            }
+            // Field definition (with optional `= init` and `;`).
+            let init = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                self.bump()?;
+                Some(self.parse_assignment_expression()?)
+            } else { None };
+            self.consume_semicolon_pub();
+            let end = self.last_span_end();
+            out.push(ClassMember::Field {
+                name, is_static, init, span: Span::new(m_start, end),
+            });
+        }
+        self.expect_punct(Punct::RBrace)?;
+        Ok(out)
+    }
+
+    fn parse_class_member_name(&mut self) -> Result<rusty_js_ast::ClassMemberName, ParseError> {
+        use rusty_js_ast::ClassMemberName;
+        let span = self.lookahead_span();
+        match self.current_kind().clone() {
+            TokenKind::Ident(name) => { self.bump()?; Ok(ClassMemberName::Identifier { name, span }) }
+            TokenKind::PrivateIdent(name) => { self.bump()?; Ok(ClassMemberName::Private { name, span }) }
+            TokenKind::String(value) => { self.bump()?; Ok(ClassMemberName::String { value, span }) }
+            TokenKind::Number(value, _) => { self.bump()?; Ok(ClassMemberName::Number { value, span }) }
+            TokenKind::Punct(Punct::LBracket) => {
+                self.bump()?;
+                let expr = self.parse_assignment_expression()?;
+                self.expect_punct(Punct::RBracket)?;
+                Ok(ClassMemberName::Computed { expr, span: Span::new(span.start, self.last_span_end()) })
+            }
+            _ => Err(self.err_here("expected class member name".into())),
+        }
+    }
+
+    /// Peek: does the byte immediately after this token look like the start
+    /// of a method (`(`) or a field-terminator (`=`, `;`, line-break)? If so,
+    /// the current `get` / `set` / `async` is actually a *name*, not a
+    /// modifier.
+    fn next_is_method_open_or_field_terminator(&self) -> bool {
+        let pos = self.lookahead_span().end;
+        let bytes = self.source().as_bytes();
+        let mut p = pos;
+        while p < bytes.len() && (bytes[p] == b' ' || bytes[p] == b'\t') { p += 1; }
+        matches!(bytes.get(p), Some(&b'(') | Some(&b'=') | Some(&b';') | Some(&b'\n') | Some(&b'\r') | Some(&b'}'))
+    }
+
 
     fn parse_block_statement(&mut self) -> Result<Stmt, ParseError> {
         let start = self.lookahead_span().start;

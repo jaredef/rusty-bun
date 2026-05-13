@@ -13,7 +13,7 @@
 use crate::parser::{ParseError, Parser};
 use crate::token::{Punct, TokenKind};
 use rusty_js_ast::{
-    Argument, ArrayElement, AssignOp, BinaryOp, Expr, MemberProperty,
+    Argument, ArrayElement, ArrowBody, AssignOp, BinaryOp, Expr, MemberProperty,
     ObjectKey, ObjectProperty, Span, UnaryOp, UpdateOp,
 };
 
@@ -22,26 +22,57 @@ impl<'src> Parser<'src> {
 
     /// Parse a single AssignmentExpression (per ECMA-262 §13.15).
     pub fn parse_assignment_expression(&mut self) -> Result<Expr, ParseError> {
-        // Note: ArrowFunction is recognized at this level in spec; v1 detects
-        // an obvious arrow head (`(... )` followed by `=>`, or `Identifier =>`)
-        // and falls back to Opaque for now.
-        if self.looks_like_arrow_function_head() {
-            return self.opaque_until_top_terminator();
-        }
-        // FunctionExpression / ClassExpression / async-FunctionExpression at the
-        // start of an expression also fall back to Opaque.
-        if self.is_ident("function") || self.is_ident("class") {
-            return self.opaque_until_top_terminator();
-        }
+        // `async` disambiguation MUST come before the generic arrow-head
+        // probe — otherwise `async (x) => x` matches the Identifier-=>-x
+        // arrow shape with `async` as the parameter name.
         if self.is_ident("async") {
-            // Heuristic peek-2: "async function" or "async (...)" arrow.
             let pos = self.lookahead_span().end;
             let bytes = self.source().as_bytes();
             let mut p = pos;
             while p < bytes.len() && bytes[p].is_ascii_whitespace() { p += 1; }
-            if bytes[p..].starts_with(b"function") || bytes[p..].starts_with(b"(") {
-                return self.opaque_until_top_terminator();
+            if bytes[p..].starts_with(b"function") {
+                self.bump()?; // consume `async`
+                return self.parse_function_expression(true);
             }
+            let starts_paren = bytes.get(p) == Some(&b'(');
+            let starts_ident = p < bytes.len() &&
+                (bytes[p].is_ascii_alphabetic() || bytes[p] == b'_' || bytes[p] == b'$');
+            // Only treat as async-arrow if the next token after the
+            // `(...)` / Identifier head is `=>` — avoids capturing the
+            // bare `async()` call expression.
+            if starts_paren || starts_ident {
+                let mut q = p;
+                if bytes.get(q) == Some(&b'(') {
+                    let mut depth = 1i32;
+                    q += 1;
+                    while q < bytes.len() && depth > 0 {
+                        match bytes[q] {
+                            b'(' => depth += 1,
+                            b')' => depth -= 1,
+                            _ => {}
+                        }
+                        q += 1;
+                    }
+                } else {
+                    while q < bytes.len() && (bytes[q].is_ascii_alphanumeric() || bytes[q] == b'_' || bytes[q] == b'$') { q += 1; }
+                }
+                while q < bytes.len() && (bytes[q] == b' ' || bytes[q] == b'\t') { q += 1; }
+                if bytes.get(q) == Some(&b'=') && bytes.get(q + 1) == Some(&b'>') {
+                    self.bump()?; // consume `async`
+                    return self.parse_arrow_function(true);
+                }
+            }
+        }
+        // ArrowFunction is recognized at this precedence level per spec.
+        if self.looks_like_arrow_function_head() {
+            return self.parse_arrow_function(false);
+        }
+        // FunctionExpression / ClassExpression.
+        if self.is_ident("function") {
+            return self.parse_function_expression(false);
+        }
+        if self.is_ident("class") {
+            return self.parse_class_expression();
         }
 
         let left = self.parse_conditional_expression()?;
@@ -256,7 +287,7 @@ impl<'src> Parser<'src> {
 
     // ───────────────── LeftHandSideExpression: member + call + new ─────────────────
 
-    fn parse_left_hand_side_expression(&mut self) -> Result<Expr, ParseError> {
+    pub(crate) fn parse_left_hand_side_expression(&mut self) -> Result<Expr, ParseError> {
         let mut expr = if self.is_ident("new") {
             self.parse_new_expression()?
         } else {
@@ -667,8 +698,6 @@ impl<'src> Parser<'src> {
 
     fn opaque_until_top_terminator_within_braces(&mut self) -> Result<Expr, ParseError> {
         let start = self.lookahead_span().start;
-        // Used inside object literals for method shorthand etc. Skip a balanced
-        // (...) ( {} | ; ) pair.
         if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
             self.skip_balanced_public(Punct::LParen, Punct::RParen)?;
         }
@@ -677,6 +706,79 @@ impl<'src> Parser<'src> {
         }
         let end = self.last_span_end();
         Ok(Expr::Opaque { span: Span::new(start, end) })
+    }
+
+    // ───────────────── FunctionExpression / ClassExpression / ArrowFunction ─────────────────
+
+    fn parse_function_expression(&mut self, is_async: bool) -> Result<Expr, ParseError> {
+        let start = self.lookahead_span().start;
+        self.expect_keyword("function")?;
+        let is_generator = if matches!(self.current_kind(), TokenKind::Punct(Punct::Star)) {
+            self.bump()?; true
+        } else { false };
+        let name = if let TokenKind::Ident(n) = self.current_kind().clone() {
+            if !matches!(n.as_str(), "(") {
+                let span = self.lookahead_span();
+                self.bump()?;
+                Some(rusty_js_ast::BindingIdentifier { name: n, span })
+            } else { None }
+        } else { None };
+        let params = self.parse_function_parameters()?;
+        let body = self.parse_function_body()?;
+        let end = self.last_span_end();
+        Ok(Expr::Function {
+            name, is_async, is_generator, params, body,
+            span: Span::new(start, end),
+        })
+    }
+
+    fn parse_class_expression(&mut self) -> Result<Expr, ParseError> {
+        let start = self.lookahead_span().start;
+        self.expect_keyword("class")?;
+        let name = if let TokenKind::Ident(n) = self.current_kind().clone() {
+            if n != "extends" {
+                let span = self.lookahead_span();
+                self.bump()?;
+                Some(rusty_js_ast::BindingIdentifier { name: n, span })
+            } else { None }
+        } else { None };
+        let super_class = if self.is_ident("extends") {
+            self.bump()?;
+            Some(Box::new(self.parse_left_hand_side_expression()?))
+        } else { None };
+        let members = self.parse_class_body()?;
+        let end = self.last_span_end();
+        Ok(Expr::Class {
+            name, super_class, members,
+            span: Span::new(start, end),
+        })
+    }
+
+    fn parse_arrow_function(&mut self, is_async: bool) -> Result<Expr, ParseError> {
+        let start = self.lookahead_span().start;
+        // Two head forms: bare Identifier or parenthesized parameter list.
+        let params: Vec<rusty_js_ast::Parameter> =
+            if let TokenKind::Ident(n) = self.current_kind().clone() {
+                // `Identifier =>` — single-parameter arrow.
+                let span = self.lookahead_span();
+                self.bump()?;
+                vec![rusty_js_ast::Parameter {
+                    names: vec![rusty_js_ast::BindingIdentifier { name: n, span }],
+                    default: None, rest: false, span,
+                }]
+            } else if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
+                self.parse_function_parameters()?
+            } else {
+                return Err(self.err_here("expected arrow head".into()));
+            };
+        self.expect_punct(Punct::Arrow)?;
+        let body = if matches!(self.current_kind(), TokenKind::Punct(Punct::LBrace)) {
+            ArrowBody::Block(self.parse_function_body()?)
+        } else {
+            ArrowBody::Expression(Box::new(self.parse_assignment_expression()?))
+        };
+        let end = self.last_span_end();
+        Ok(Expr::Arrow { is_async, params, body, span: Span::new(start, end) })
     }
 }
 

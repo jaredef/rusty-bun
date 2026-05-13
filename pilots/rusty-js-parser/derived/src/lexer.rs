@@ -64,6 +64,16 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    /// Reposition the lexer. Used by the parser for goal-symbol re-lexing
+    /// (template-tail re-fetch when leaving a substitution).
+    pub fn set_pos(&mut self, pos: usize) {
+        self.pos = pos;
+        self.saw_line_terminator = false;
+        self.at_start = false;
+    }
+
+    pub fn pos(&self) -> usize { self.pos }
+
     /// Lex one token under the given goal. Consumers re-pick the goal at
     /// each call site based on parser context.
     pub fn next_token(&mut self, goal: LexerGoal) -> Result<Token, LexError> {

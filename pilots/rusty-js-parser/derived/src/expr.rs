@@ -478,14 +478,17 @@ impl<'src> Parser<'src> {
             TokenKind::Number(value, _) => { self.bump()?; Ok(Expr::NumberLiteral { value, span }) }
             TokenKind::BigInt(digits, _) => { self.bump()?; Ok(Expr::BigIntLiteral { digits, span }) }
             TokenKind::String(value) => { self.bump()?; Ok(Expr::StringLiteral { value, span }) }
-            TokenKind::Template { cooked, .. } => {
-                // Templates with substitutions are deferred to opaque; a
-                // NoSubstitution template can be represented as a string.
-                if let Some(c) = cooked {
-                    self.bump()?;
-                    Ok(Expr::StringLiteral { value: c, span })
-                } else {
-                    self.opaque_until_top_terminator()
+            TokenKind::Template { cooked, part, .. } => {
+                use crate::token::TemplatePart;
+                match part {
+                    TemplatePart::NoSubstitution => {
+                        let value = cooked.unwrap_or_default();
+                        self.bump()?;
+                        Ok(Expr::StringLiteral { value, span })
+                    }
+                    TemplatePart::Head => self.parse_template_with_substitutions(span.start),
+                    TemplatePart::Middle | TemplatePart::Tail =>
+                        Err(self.err_here("unexpected template middle/tail in expression position".into())),
                 }
             }
             TokenKind::Regex { .. } => {
@@ -623,31 +626,61 @@ impl<'src> Parser<'src> {
     // ───────────────── Helpers ─────────────────
 
     fn looks_like_arrow_function_head(&self) -> bool {
-        // Identifier followed by `=>` or `(...)` followed by `=>`.
-        // v1 heuristic: if current is Identifier and the byte-source has `=>`
-        // before the next `;` at the same paren-depth, treat as arrow.
+        // Tight detection per the AssignmentExpression-arrow grammar:
+        //   - `Identifier =>` (single-parameter arrow)
+        //   - `(...) =>` where `(...)` is a balanced paren group, then `=>`
+        // Neither form scans past the close of its head. This avoids
+        // capturing `a ? b : () => c` as an arrow starting at `b`.
+        let src = self.source().as_bytes();
+        let start = self.lookahead_span().start;
         match self.current_kind() {
-            TokenKind::Ident(_) | TokenKind::Punct(Punct::LParen) => {
-                // Crude byte-scan over source from lookahead.start; bail if too long.
-                let src = self.source().as_bytes();
-                let mut i = self.lookahead_span().start;
-                let end = (i + 200).min(src.len());
-                let mut paren = 0i32;
-                let mut brace = 0i32;
-                while i < end {
-                    match src[i] {
-                        b'(' => paren += 1,
-                        b')' => paren -= 1,
-                        b'{' => brace += 1,
-                        b'}' => brace -= 1,
-                        b';' if paren <= 0 && brace == 0 => return false,
-                        b'\n' if paren <= 0 && brace == 0 => return false,
-                        b'=' if i + 1 < end && src[i + 1] == b'>' => return paren <= 0,
+            TokenKind::Ident(name) => {
+                // Reject obvious non-arrow-head reserved words.
+                if matches!(name.as_str(),
+                    "typeof" | "void" | "delete" | "await" | "yield" | "new"
+                    | "function" | "class" | "this" | "super" | "null"
+                    | "true" | "false" | "return" | "throw" | "if" | "else"
+                    | "for" | "while" | "do" | "switch" | "case" | "default"
+                    | "break" | "continue" | "try" | "catch" | "finally"
+                    | "var" | "let" | "const" | "import" | "export") {
+                    return false;
+                }
+                // Skip past the identifier's bytes.
+                let mut j = start;
+                while j < src.len() && (src[j].is_ascii_alphanumeric() || src[j] == b'_' || src[j] == b'$') { j += 1; }
+                // Then whitespace.
+                while j < src.len() && (src[j] == b' ' || src[j] == b'\t') { j += 1; }
+                src.get(j) == Some(&b'=') && src.get(j + 1) == Some(&b'>')
+            }
+            TokenKind::Punct(Punct::LParen) => {
+                // Scan to the matching `)` then look for `=>` immediately after.
+                let mut j = start + 1;
+                let mut depth = 1i32;
+                while j < src.len() && depth > 0 {
+                    match src[j] {
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        b'\'' | b'"' => {
+                            // Walk past a string literal.
+                            let q = src[j];
+                            j += 1;
+                            while j < src.len() && src[j] != q {
+                                if src[j] == b'\\' && j + 1 < src.len() { j += 2; continue; }
+                                j += 1;
+                            }
+                        }
+                        b'`' => {
+                            // Walk past a template literal (no substitutions handled).
+                            j += 1;
+                            while j < src.len() && src[j] != b'`' { j += 1; }
+                        }
                         _ => {}
                     }
-                    i += 1;
+                    j += 1;
                 }
-                false
+                // After matching `)`, skip whitespace, then check `=>`.
+                while j < src.len() && (src[j] == b' ' || src[j] == b'\t') { j += 1; }
+                src.get(j) == Some(&b'=') && src.get(j + 1) == Some(&b'>')
             }
             _ => false,
         }
@@ -752,6 +785,37 @@ impl<'src> Parser<'src> {
             name, super_class, members,
             span: Span::new(start, end),
         })
+    }
+
+    /// Walks a `\`head${expr}middle${expr}tail\`` template-literal token
+    /// stream. v1 stores the result as Expr::Opaque covering the full
+    /// span; a typed TemplateLiteral AST node lands when the engine's
+    /// substitution-evaluation runtime arrives.
+    fn parse_template_with_substitutions(&mut self, start: usize) -> Result<Expr, ParseError> {
+        use crate::token::TemplatePart;
+        self.bump()?; // consume Head
+        loop {
+            // Parse the substitution expression.
+            let _ = self.parse_expression()?;
+            // After the substitution, the lookahead is `}` (under Div goal
+            // since the substitution completes an expression). Re-lex
+            // starting at that `}` with TemplateTail goal to emit a
+            // Middle/Tail token.
+            self.refetch_lookahead_with_goal(crate::lexer::LexerGoal::TemplateTail)?;
+            match self.current_kind().clone() {
+                TokenKind::Template { part: TemplatePart::Middle, .. } => {
+                    self.bump()?;
+                    continue;
+                }
+                TokenKind::Template { part: TemplatePart::Tail, .. } => {
+                    self.bump()?;
+                    break;
+                }
+                _ => return Err(self.err_here("expected template middle/tail after substitution".into())),
+            }
+        }
+        let end = self.last_span_end();
+        Ok(Expr::Opaque { span: Span::new(start, end) })
     }
 
     fn parse_arrow_function(&mut self, is_async: bool) -> Result<Expr, ParseError> {

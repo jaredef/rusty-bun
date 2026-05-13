@@ -711,9 +711,19 @@ impl<'src> Parser<'src> {
     // ───────────────────────────── Token plumbing ─────────────────────────────
 
     fn bump_regexp(&mut self) -> Result<Token, ParseError> {
+        // The token about to become `cur` is the current lookahead, which
+        // will be the predecessor of the NEXT lookahead in the stream. Its
+        // expression-completion status drives the goal-symbol selection for
+        // the next fetch: after a completing token, `/` lexes as
+        // DivPunctuator; otherwise it opens a RegularExpressionLiteral.
+        let goal = if token_completes_expression(&self.lookahead.kind) {
+            LexerGoal::Div
+        } else {
+            LexerGoal::RegExp
+        };
         let cur = std::mem::replace(
             &mut self.lookahead,
-            self.lx.next_token(LexerGoal::RegExp).map_err(lex_to_parse)?,
+            self.lx.next_token(goal).map_err(lex_to_parse)?,
         );
         Ok(cur)
     }
@@ -781,6 +791,17 @@ impl<'src> Parser<'src> {
     pub(crate) fn skip_balanced_public(&mut self, open: Punct, close: Punct) -> Result<(), ParseError> {
         self.skip_balanced(open, close)
     }
+
+    /// Re-fetch the lookahead token starting at the current lookahead's
+    /// byte offset using a different goal symbol. Used by the template-
+    /// literal parser to obtain a TemplateMiddle/Tail token at the close
+    /// of a substitution where the lexer would otherwise emit a RBrace.
+    pub(crate) fn refetch_lookahead_with_goal(&mut self, goal: LexerGoal) -> Result<(), ParseError> {
+        let pos = self.lookahead.span.start;
+        self.lx.set_pos(pos);
+        self.lookahead = self.lx.next_token(goal).map_err(lex_to_parse)?;
+        Ok(())
+    }
     pub(crate) fn consume_semicolon_pub(&mut self) { self.consume_semicolon() }
     pub(crate) fn extract_obj_destructure_names_pub(&mut self, out: &mut Vec<rusty_js_ast::BindingIdentifier>) -> Result<(), ParseError> {
         self.extract_destructure_names_object(out)
@@ -795,6 +816,33 @@ impl<'src> Parser<'src> {
 
     fn err_at(&self, span: Span, message: String) -> ParseError {
         ParseError { span, message }
+    }
+}
+
+/// Heuristic per the ECMA-262 goal-symbol grammar: did the token just consumed
+/// complete an expression context such that the next `/` should lex as
+/// DivPunctuator (not RegularExpressionLiteral)?
+fn token_completes_expression(t: &TokenKind) -> bool {
+    match t {
+        TokenKind::Ident(s) => matches!(s.as_str(),
+            "this" | "super" | "null" | "true" | "false"
+        ) || !matches!(s.as_str(),
+            "return" | "throw" | "new" | "delete" | "typeof" | "void" | "await"
+            | "yield" | "if" | "else" | "for" | "while" | "do" | "switch"
+            | "case" | "default" | "break" | "continue" | "try" | "catch"
+            | "finally" | "class" | "function" | "var" | "let" | "const"
+            | "in" | "of" | "instanceof" | "import" | "export" | "extends"
+            | "static" | "async" | "from" | "as" | "with" | "debugger"
+            | "get" | "set"
+        ),
+        TokenKind::Number(..) | TokenKind::String(..) | TokenKind::BigInt(..) => true,
+        TokenKind::Template { .. } | TokenKind::Regex { .. } => true,
+        TokenKind::PrivateIdent(_) => true,
+        TokenKind::Punct(p) => matches!(p,
+            Punct::RParen | Punct::RBracket | Punct::RBrace
+            | Punct::Inc | Punct::Dec
+        ),
+        _ => false,
     }
 }
 

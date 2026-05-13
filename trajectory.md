@@ -41,6 +41,8 @@ The living vector of the rusty-bun engagement. Per [Doc 581 (the Resume Vector)]
 
 | Date | Commit | What landed |
 |---|---|---|
+| 2026-05-13 | `c6bad4dc` | **.mjs-always-ESM force in FsLoader** — file extension takes precedence over heuristic per Node spec; tsx shape-parity fixture lands (both Bun and rusty-bun throw on import, tsx is CLI runtime wrapper). The fix is load-bearing for minified-ESM .mjs files whose first line begins with `var`/`let`/`const`/`!function` rather than `import` — previously these fell through the import-line-start scan into the CJS branch and parse-errored on embedded `import` statements. Predicted cascade per Doc 715 D1: an unenumerated set of bundler-output .mjs entries previously gated on parse classification. |
+| 2026-05-13 | `efdeac2f` | **High-fanout probe** — node-fetch + ioredis + eslint shape-parity; cooperative-loop and minified-ESM gates surfaced as the remaining structural gates |
 | 2026-05-13 | `0a404be4` | **E.19 megastack retired** — node:http METHODS + STATUS_CODES + globalAgent + Agent class; express + 6 middleware stack byte-identical |
 | 2026-05-13 | `d66084f8` | **E.18 polka retired** — cooperative-loop 8-microtask-burst yield in fetch WouldBlock path |
 | 2026-05-13 | `c3409275` | RUSTY_BUN_WALLCLOCK_SECS env override; all 16 ignored slow-burst tests pass (580s on Pi) |
@@ -258,7 +260,7 @@ The detailed sub-round records below remain as the engagement's history. Future 
 
 #### Status at 2026-05-13 session close
 
-**Fixture count: 566 inner-loop + 16 slow-burst = 582 J.1.a fixtures.** Inner-loop suite 26s on Pi. Slow-burst (EC family + WebSocket-live) ~580s via `RUSTY_BUN_WALLCLOCK_SECS=600 cargo test ... -- --ignored`.
+**Fixture count: 577 inner-loop + 16 slow-burst = 593 J.1.a fixtures.** Inner-loop suite 28s on Pi. Slow-burst (EC family + WebSocket-live) ~580s via `RUSTY_BUN_WALLCLOCK_SECS=600 cargo test ... -- --ignored`.
 
 **L2/L3 enumerator coverage: 418/418 = 100% parity with Bun.** Spec-derived enumerator walks the documented Node + Bun + Web-platform surface and asserts presence + typeof + arity + proto-shape. Cascade-prevention tool per Doc 714 sub-§4.c.
 
@@ -301,6 +303,7 @@ The detailed sub-round records below remain as the engagement's history. Future 
 - Wallclock cap env-configurable (RUSTY_BUN_WALLCLOCK_SECS)
 - Static-method shorthand class-body rename (static() → _static())
 - Class-field arrow-init rename (set= / get= / delete= → _set= etc.)
+- **FsLoader file-extension-decides-module-type gate** — .mjs forces ESM, .cjs forces CJS, other extensions fall through to the import/CJS heuristic. Closes the minified-one-line-ESM hole exposed by tsx; expected to fan out across bundler-output .mjs entries (esbuild/rollup/terser default emission)
 
 **Apparatus tier additions this slice:**
 - Seed §A8.19 instituted: post-widening cascade sweep + L2/L3 spec-derived enumerator (per Doc 714 sub-§4.c)
@@ -324,6 +327,10 @@ The detailed sub-round records below remain as the engagement's history. Future 
 - **node:stream Transform objectMode + multi-phase parser composition** — E.29-bis fast-csv to full functionality; 1-2 rounds; medium-cascade
 
 **Opportunistic basket expansion** — npm package coverage continues to grow; ~10-30 fixtures per substrate widening at current density coefficient. No telos blocker; open-ended productivity.
+
+**Live cascade prediction (Doc 715 D1, posted 2026-05-13).** The .mjs-always-ESM gate just landed predicts retirement-fanout across bundler-output .mjs entries that previously parse-errored on the looks_like_cjs first-line scan. Empirical anchor: tsx surfaced the gap; sweeping minified-ESM-shaped packages in the queue should retire a non-trivial subset without further substrate work. If the prediction holds (≥5 packages retire on the next sweep), it corroborates Doc 715 P1 once more in the substrate-classifier layer (distinct from prior corroborations in the API-surface layer). If it doesn't, the parse-classification gate isn't load-bearing in the wild and the fix is local-only.
+
+**Telos-anchored framing of current state.** Sub-criterion 5 (per-fixture differential) at 593 J.1.a fixtures, all byte-identical to Bun 1.3.11. Sub-criterion 2 (surface-API completeness): L2/L3 spec-derived enumerator at 100% parity (418/418), L4+ instance-fill regime in operation. The seed §VII "~40% against full parity" estimate is now stale on the curated-corpus axis; the remaining distance to full plug-and-play parity is dominated by (a) real-OSS basket expansion against canonical third-party packages already partially covered in the J.1.a basket, (b) the cooperative-loop reactor question (8-yield holds for canonical frameworks, unknown for deeper async), and (c) eval-ESM (prettier-class). The substrate-introduction phase appears effectively complete; the remaining work is consolidation under the joint-MI-DAG lens.
 
 **Strong external validation** — WPT runner adapter remains queued; would yield a published WPT pass-rate per surface comparable to browser engines and Bun.
 

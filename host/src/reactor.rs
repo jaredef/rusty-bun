@@ -14,57 +14,58 @@
 
 use mio::{Events, Interest, Poll, Token};
 use std::collections::HashSet;
-use std::sync::Mutex;
 use std::time::Duration;
 
+// Per-thread Reactor. Each Rust thread (typically one per test runner
+// thread or one per `eval_esm_module` call) gets its own Poll +
+// ready-queue. This isolates parallel tests that all share the
+// process: fds registered in thread A only appear in A's poll, never
+// in B's. The singleton-shared design tried first contaminated
+// across parallel test threads because mio readiness events from
+// thread B's sockets surfaced in thread A's take_ready(), where
+// thread A's __reactorPending had no matching entry.
 pub struct Reactor {
-    poll: Mutex<Poll>,
-    ready: Mutex<Vec<u64>>,
-    registered: Mutex<HashSet<u64>>,
+    poll: std::cell::RefCell<Poll>,
+    ready: std::cell::RefCell<Vec<u64>>,
+    registered: std::cell::RefCell<HashSet<u64>>,
 }
 
-static REACTOR: std::sync::OnceLock<Reactor> = std::sync::OnceLock::new();
-
-fn reactor() -> &'static Reactor {
-    REACTOR.get_or_init(|| Reactor {
-        poll: Mutex::new(Poll::new().expect("mio Poll::new")),
-        ready: Mutex::new(Vec::new()),
-        registered: Mutex::new(HashSet::new()),
-    })
+thread_local! {
+    static REACTOR: Reactor = Reactor {
+        poll: std::cell::RefCell::new(Poll::new().expect("mio Poll::new")),
+        ready: std::cell::RefCell::new(Vec::new()),
+        registered: std::cell::RefCell::new(HashSet::new()),
+    };
 }
 
 #[cfg(unix)]
 pub fn register_fd(sid: u64, fd: std::os::unix::io::RawFd) -> Result<(), String> {
     use mio::unix::SourceFd;
-    let r = reactor();
-    let poll = r.poll.lock().map_err(|e| e.to_string())?;
-    let mut src = SourceFd(&fd);
-    poll.registry()
-        .register(&mut src, Token(sid as usize), Interest::READABLE)
-        .map_err(|e| e.to_string())?;
-    drop(poll);
-    r.registered
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(sid);
-    Ok(())
+    REACTOR.with(|r| {
+        let poll = r.poll.borrow();
+        let mut src = SourceFd(&fd);
+        poll.registry()
+            .register(&mut src, Token(sid as usize), Interest::READABLE)
+            .map_err(|e| e.to_string())?;
+        drop(poll);
+        r.registered.borrow_mut().insert(sid);
+        Ok(())
+    })
 }
 
 #[cfg(unix)]
 pub fn deregister_fd(sid: u64, fd: std::os::unix::io::RawFd) -> Result<(), String> {
     use mio::unix::SourceFd;
-    let r = reactor();
-    let poll = r.poll.lock().map_err(|e| e.to_string())?;
-    let mut src = SourceFd(&fd);
-    // Ignore errors — fd may already have been closed by the sockets
-    // pilot; deregister is best-effort.
-    let _ = poll.registry().deregister(&mut src);
-    drop(poll);
-    r.registered
-        .lock()
-        .map_err(|e| e.to_string())?
-        .remove(&sid);
-    Ok(())
+    REACTOR.with(|r| {
+        let poll = r.poll.borrow();
+        let mut src = SourceFd(&fd);
+        // Ignore errors — fd may already have been closed by the sockets
+        // pilot; deregister is best-effort.
+        let _ = poll.registry().deregister(&mut src);
+        drop(poll);
+        r.registered.borrow_mut().remove(&sid);
+        Ok(())
+    })
 }
 
 #[cfg(not(unix))]
@@ -85,41 +86,34 @@ pub fn deregister_fd(_sid: u64, _fd: i32) -> Result<(), String> {
 /// timeout_ms == 0 → non-blocking poll.
 /// timeout_ms > 0 → wait up to that many ms.
 pub fn poll_once(timeout_ms: i64) -> Result<usize, String> {
-    let r = reactor();
-    let mut poll = r.poll.lock().map_err(|e| e.to_string())?;
-    let timeout = if timeout_ms < 0 {
-        None
-    } else {
-        Some(Duration::from_millis(timeout_ms as u64))
-    };
-    let mut events = Events::with_capacity(128);
-    poll.poll(&mut events, timeout).map_err(|e| e.to_string())?;
-    drop(poll);
-    let mut ready = r.ready.lock().map_err(|e| e.to_string())?;
-    let mut count = 0;
-    for ev in events.iter() {
-        if ev.is_readable() {
-            ready.push(ev.token().0 as u64);
-            count += 1;
+    REACTOR.with(|r| {
+        let mut poll = r.poll.borrow_mut();
+        let timeout = if timeout_ms < 0 {
+            None
+        } else {
+            Some(Duration::from_millis(timeout_ms as u64))
+        };
+        let mut events = Events::with_capacity(128);
+        poll.poll(&mut events, timeout).map_err(|e| e.to_string())?;
+        drop(poll);
+        let mut ready = r.ready.borrow_mut();
+        let mut count = 0;
+        for ev in events.iter() {
+            if ev.is_readable() {
+                ready.push(ev.token().0 as u64);
+                count += 1;
+            }
         }
-    }
-    Ok(count)
+        Ok(count)
+    })
 }
 
 pub fn take_ready() -> Vec<u64> {
-    if let Ok(mut ready) = reactor().ready.lock() {
-        std::mem::take(&mut *ready)
-    } else {
-        Vec::new()
-    }
+    REACTOR.with(|r| std::mem::take(&mut *r.ready.borrow_mut()))
 }
 
 pub fn registered_count() -> usize {
-    reactor()
-        .registered
-        .lock()
-        .map(|r| r.len())
-        .unwrap_or(0)
+    REACTOR.with(|r| r.registered.borrow().len())
 }
 
 #[cfg(all(test, unix))]

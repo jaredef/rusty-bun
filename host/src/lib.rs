@@ -2964,6 +2964,39 @@ fn wire_sockets<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult
                 },
                 stopAsync(id) { raw.listenerStopAsync(id); },
                 asyncListenerAddr(id) { return raw.asyncListenerAddr(id); },
+                // Π2.6.c.b: wait for readability via mio. Registers the
+                // sid with __reactor, returns a Promise that resolves
+                // when the eval loop's reactor-poll signals sid is
+                // readable. The eval loop drains via __reactorDrain.
+                // Multiple awaiters on the same sid coalesce.
+                waitReadable(sid) {
+                    return new Promise(function(resolve) {
+                        let arr = globalThis.__reactorPending.get(sid);
+                        if (!arr) {
+                            arr = [];
+                            globalThis.__reactorPending.set(sid, arr);
+                            globalThis.__reactor.register(sid);
+                        }
+                        arr.push(resolve);
+                    });
+                },
+            };
+            // Π2.6.c.b: pending-readable Promise registry. Eval loop
+            // calls __reactorDrain after reactor.poll returns.
+            globalThis.__reactorPending = new Map();
+            globalThis.__reactorDrain = function() {
+                const ready = globalThis.__reactor.takeReady();
+                let n = 0;
+                for (const sid of ready) {
+                    const arr = globalThis.__reactorPending.get(sid);
+                    if (arr && arr.length) {
+                        globalThis.__reactorPending.delete(sid);
+                        globalThis.__reactor.deregister(sid);
+                        for (const fn of arr) { try { fn(); } catch (_) {} }
+                        n += arr.length;
+                    }
+                }
+                return n;
             };
         })();
     "#)?;
@@ -6272,25 +6305,16 @@ if (typeof globalThis.fetch === "undefined" ||
                 } else {
                     chunk = globalThis.TCP.tryRead(sid, 65536);
                     if (chunk === null) {
-                        // WouldBlock — pump keep-alive (so in-process server's
-                        // __tick can accept + dispatch + write) then yield
-                        // multiple microtask boundaries to give a long handler
-                        // chain (express + middleware + body-parser + N
-                        // middlewares) room to drain its awaits. E.19
-                        // megastack class motivated bumping single-yield to
-                        // a configurable burst.
-                        if (globalThis.__tickKeepAlive) globalThis.__tickKeepAlive();
-                        // Multiple microtask yields per spin — drains chained
-                        // async handlers. 8 boundaries empirically retires
-                        // express + 5-7-middleware stacks.
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
-                        await Promise.resolve();
+                        // Π2.6.c.b: replaced the 8-microtask-burst busy-spin
+                        // with a reactor-await. waitReadable(sid) registers
+                        // the fd with mio and parks on a Promise; the eval
+                        // loop's __reactorDrain resolves us when the fd
+                        // becomes readable. The in-process server's __tick
+                        // continues to run between eval-loop iterations
+                        // because reactor.poll's timeout in the eval loop is
+                        // capped short (Π2.6.c.c will lift the cap once the
+                        // listener also becomes mio-driven).
+                        await globalThis.TCP.waitReadable(sid);
                         idleSpins++;
                         if (idleSpins > maxIdleSpins) {
                             throw new Error("rusty-bun-host fetch: read stalled (no data, no progress)");
@@ -13433,15 +13457,42 @@ pub fn eval_esm_module(entry_path: &str) -> Result<String, String> {
             } else { -1 };
             (alive_count, ka_did, timer_did, sleep_ms)
         });
-        let did_work = ka_did_work || timer_did_work;
-        // Exit when nothing keeps us alive and no timer is pending.
-        if !did_work && alive_count == 0 && sleep_ms < 0 { break; }
+        // Π2.6.c.b: fourth idle source — mio reactor. When microtasks
+        // are empty AND keep-alive + timers didn't fire, if any fds are
+        // registered with the reactor, poll mio with a short cap so the
+        // in-process server's __tickKeepAlive (still thread-per-listener
+        // until Π2.6.c.c) keeps running between polls. Drain resolves
+        // pending TCP.waitReadable promises.
+        let reactor_did_work = if !ka_did_work && !timer_did_work {
+            let count = crate::reactor::registered_count();
+            if count > 0 {
+                let cap_ms: i64 = if sleep_ms > 0 { sleep_ms.min(5) } else { 5 };
+                let _ = crate::reactor::poll_once(cap_ms);
+                let drained: f64 = context.with(|ctx| -> f64 {
+                    let g = ctx.globals();
+                    match g.get::<_, Option<rquickjs::Function>>("__reactorDrain") {
+                        Ok(Some(f)) => f.call::<_, f64>(()).unwrap_or(0.0),
+                        _ => 0.0,
+                    }
+                });
+                drained > 0.0
+            } else { false }
+        } else { false };
+        let did_work = ka_did_work || timer_did_work || reactor_did_work;
+        // Exit when nothing keeps us alive and no timer is pending AND
+        // no fds are registered with the reactor.
+        let reactor_alive = crate::reactor::registered_count() > 0;
+        if !did_work && alive_count == 0 && sleep_ms < 0 && !reactor_alive { break; }
         if did_work {
             consecutive_idle = 0;
             // Track ticks where the only work was timer ticks (no
             // keep-alive ticks). If timers fire but produce no
             // microtask work, count as idle for runaway-interval cap.
-            if timer_did_work && !ka_did_work {
+            // Π2.6.c.b: if the reactor has fds registered, an in-flight
+            // fetch is parked on readiness — don't fire the timer-only
+            // bail-out (a recurring middleware timer firing while fetch
+            // waits is not "the test is done").
+            if timer_did_work && !ka_did_work && !reactor_did_work && !reactor_alive {
                 timer_only_idle += 1;
                 if timer_only_idle > max_timer_only_idle { break; }
             } else {
@@ -13512,29 +13563,62 @@ pub fn eval_string_async(source: &str) -> Result<String, String> {
             Ok(false) => {}
             Err(_) => break,
         }
-        // Microtask queue empty: tick wall-clock timers.
-        let (timer_fired, sleep_ms) = context.with(|ctx| -> (bool, i64) {
+        // Microtask queue empty: tick keep-alive + timers + reactor.
+        // Π2.6.c.b: mirror the eval_esm_module loop's full set of
+        // idle sources here so eval_string_async can also host
+        // autoServe + same-process fetch round-trips (the
+        // autoserve_self_fetch_round_trips test runs this path).
+        let (ka_did, timer_fired, sleep_ms) = context.with(|ctx| -> (bool, bool, i64) {
             let g = ctx.globals();
+            let alive_count = g
+                .get::<_, Option<rquickjs::Object>>("__keepAlive")
+                .ok().flatten()
+                .and_then(|s| s.get::<_, i32>("size").ok())
+                .unwrap_or(0);
+            let ka_did = if alive_count > 0 {
+                match g.get::<_, Option<rquickjs::Function>>("__tickKeepAlive") {
+                    Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
+                    _ => false,
+                }
+            } else { false };
             let fired = match g.get::<_, Option<rquickjs::Function>>("__tickTimers") {
                 Ok(Some(f)) => f.call::<_, bool>(()).unwrap_or(false),
                 _ => false,
             };
-            let sleep_ms = if !fired {
+            let sleep_ms = if !fired && !ka_did {
                 match g.get::<_, Option<rquickjs::Function>>("__nextTimerDelay") {
                     Ok(Some(f)) => f.call::<_, i64>(()).unwrap_or(-1),
                     _ => -1,
                 }
             } else { -1 };
-            (fired, sleep_ms)
+            (ka_did, fired, sleep_ms)
         });
-        if timer_fired { consecutive_idle = 0; continue; }
+        if ka_did || timer_fired { consecutive_idle = 0; continue; }
+        // Reactor poll for parked TCP.waitReadable promises.
+        let reactor_did = if crate::reactor::registered_count() > 0 {
+            let cap_ms: i64 = if sleep_ms > 0 { sleep_ms.min(5) } else { 5 };
+            let _ = crate::reactor::poll_once(cap_ms);
+            let drained: f64 = context.with(|ctx| -> f64 {
+                let g = ctx.globals();
+                match g.get::<_, Option<rquickjs::Function>>("__reactorDrain") {
+                    Ok(Some(f)) => f.call::<_, f64>(()).unwrap_or(0.0),
+                    _ => 0.0,
+                }
+            });
+            drained > 0.0
+        } else { false };
+        if reactor_did { consecutive_idle = 0; continue; }
         if sleep_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(sleep_ms.min(50) as u64));
             continue;
         }
-        // No microtask, no timer pending: settled (or stuck).
+        // No microtask, no keep-alive, no timer, no reactor activity:
+        // settled (or stuck). Allow one extra grace iteration if any
+        // fds remain registered, since the next reactor poll might
+        // produce a delayed wake.
         consecutive_idle += 1;
-        if consecutive_idle > 2 { break; }
+        let stuck_cap = if crate::reactor::registered_count() > 0 { 200 } else { 2 };
+        if consecutive_idle > stuck_cap { break; }
     }
     if std::env::var("RUSTY_BUN_HOST_DEBUG").is_ok() {
         eprintln!("[host] pump iters={} executed={}", iters, executed);

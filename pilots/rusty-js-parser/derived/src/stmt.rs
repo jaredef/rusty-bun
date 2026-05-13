@@ -538,7 +538,6 @@ impl<'src> Parser<'src> {
             self.bump()?;
         }
         let mut init_expr: Option<Expr> = None;
-        let mut went_inof = false;
         if !head_is_empty && !matches!(self.current_kind(), TokenKind::Punct(Punct::Semicolon)) {
             let e = self.parse_expression()?;
             // Check for `in`/`of` after a LeftHandSideExpression head.
@@ -559,7 +558,6 @@ impl<'src> Parser<'src> {
                         ForBinding::Identifier(BindingIdentifier { name: String::new(), span })
                     }
                 };
-                went_inof = true;
                 return if is_of {
                     Ok(Stmt::ForOf { left, right, body: Box::new(body), await_: await_form, span: Span::new(start, end) })
                 } else {
@@ -568,7 +566,6 @@ impl<'src> Parser<'src> {
             }
             init_expr = Some(e);
         }
-        let _ = went_inof;
         if !head_is_empty {
             self.expect_punct(Punct::Semicolon)?;
         }

@@ -30,26 +30,13 @@ pub struct Parser<'src> {
     lx: Lexer<'src>,
     /// One-token lookahead, replenished by `bump`.
     lookahead: Token,
-    /// Watchdog. The current v1 parser captures statement bodies as opaque
-    /// byte-spans via balanced-brace skip; pathological inputs without
-    /// expression-grammar handling can over-read. Cap at a generous bound
-    /// proportional to source size so the parser never unboundedly allocates.
-    /// The expression-grammar sub-round retires this watchdog.
-    advance_count: usize,
-    advance_cap: usize,
 }
 
 impl<'src> Parser<'src> {
     pub fn new(src: &'src str) -> Result<Self, ParseError> {
         let mut lx = Lexer::new(src);
         let lookahead = lx.next_token(LexerGoal::RegExp).map_err(lex_to_parse)?;
-        // Watchdog: cap advances at 16x source bytes. Well-formed source
-        // uses at most ~1 token per ~3 bytes; this is a 48x margin and
-        // catches the v1 opaque-span-skip's pathological cases without
-        // affecting any well-formed parse. Retired by the expression-
-        // grammar sub-round once declaration bodies become typed.
-        let advance_cap = (src.len() * 16).max(2048);
-        Ok(Self { src, lx, lookahead, advance_count: 0, advance_cap })
+        Ok(Self { src, lx, lookahead })
     }
 
     pub fn parse_module(&mut self) -> Result<Module, ParseError> {
@@ -593,63 +580,6 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    fn skip_until_top_comma_or_terminator(&mut self) -> Result<(), ParseError> {
-        let mut depth_brace = 0i32;
-        let mut depth_paren = 0i32;
-        let mut depth_bracket = 0i32;
-        while !self.at_eof() {
-            match self.lookahead.kind {
-                TokenKind::Punct(Punct::LBrace) => depth_brace += 1,
-                TokenKind::Punct(Punct::RBrace) => depth_brace -= 1,
-                TokenKind::Punct(Punct::LParen) => depth_paren += 1,
-                TokenKind::Punct(Punct::RParen) => depth_paren -= 1,
-                TokenKind::Punct(Punct::LBracket) => depth_bracket += 1,
-                TokenKind::Punct(Punct::RBracket) => depth_bracket -= 1,
-                TokenKind::Punct(Punct::Comma) | TokenKind::Punct(Punct::Semicolon) => {
-                    if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0 { return Ok(()); }
-                }
-                _ => {}
-            }
-            self.bump_regexp()?;
-        }
-        Ok(())
-    }
-
-    fn skip_expression(&mut self) -> Result<usize, ParseError> {
-        // Stops at top-level `;` (or ASI-equivalent) — used for the
-        // `export default <AssignmentExpression>` form's body span capture.
-        let mut depth_brace = 0i32;
-        let mut depth_paren = 0i32;
-        let mut depth_bracket = 0i32;
-        let mut last_end = self.lookahead.span.start;
-        while !self.at_eof() {
-            match self.lookahead.kind {
-                TokenKind::Punct(Punct::LBrace) => depth_brace += 1,
-                TokenKind::Punct(Punct::RBrace) => depth_brace -= 1,
-                TokenKind::Punct(Punct::LParen) => depth_paren += 1,
-                TokenKind::Punct(Punct::RParen) => depth_paren -= 1,
-                TokenKind::Punct(Punct::LBracket) => depth_bracket += 1,
-                TokenKind::Punct(Punct::RBracket) => depth_bracket -= 1,
-                TokenKind::Punct(Punct::Semicolon) => {
-                    if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0 {
-                        last_end = self.lookahead.span.end;
-                        // Don't consume the semicolon here; caller handles ASI.
-                        return Ok(last_end);
-                    }
-                }
-                _ => {}
-            }
-            if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0
-                && self.lookahead.preceded_by_line_terminator
-                && last_end != self.lookahead.span.start
-            {
-                return Ok(last_end);
-            }
-            last_end = self.lookahead.span.end;
-            self.bump_regexp()?;
-        }
-        Ok(last_end)
-    }
 
     fn skip_balanced(&mut self, open: Punct, close: Punct) -> Result<(), ParseError> {
         if !self.is_punct(open) {
@@ -781,10 +711,6 @@ impl<'src> Parser<'src> {
     // ───────────────────────────── Token plumbing ─────────────────────────────
 
     fn bump_regexp(&mut self) -> Result<Token, ParseError> {
-        self.advance_count += 1;
-        if self.advance_count > self.advance_cap {
-            return Err(self.err_here("parser watchdog tripped (expression grammar pending)".into()));
-        }
         let cur = std::mem::replace(
             &mut self.lookahead,
             self.lx.next_token(LexerGoal::RegExp).map_err(lex_to_parse)?,

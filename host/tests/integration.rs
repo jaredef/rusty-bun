@@ -7976,6 +7976,27 @@ consumer_test!(consumer_spawn_async_app_byte_identical_to_bun, "consumer-spawn-a
 consumer_test!(consumer_signal_handler_app_byte_identical_to_bun, "consumer-signal-handler-app");
 consumer_test!(consumer_dns_async_app_byte_identical_to_bun, "consumer-dns-async-app");
 consumer_test!(consumer_eval_esm_data_app_byte_identical_to_bun, "consumer-eval-esm-data-app");
+consumer_test!(consumer_drizzle_orm_app_byte_identical_to_bun, "consumer-drizzle-orm-app");
+// redis (E.61 deferred): consumer-redis-app fixture in tree, but CJS chain
+// through @redis/{client,bloom,json,search,time-series} surfaces a load
+// error. Recorded; re-open requires diagnosing the specific failing
+// transitive. See basin record in trajectory.
+// consumer_test!(consumer_redis_app_byte_identical_to_bun, "consumer-redis-app");
+consumer_test!(consumer_axios_app_byte_identical_to_bun, "consumer-axios-app");
+consumer_test!(consumer_ky_app_byte_identical_to_bun, "consumer-ky-app");
+consumer_test!(consumer_p_queue_app_byte_identical_to_bun, "consumer-p-queue-app");
+consumer_test!(consumer_p_map_app_byte_identical_to_bun, "consumer-p-map-app");
+consumer_test!(consumer_p_retry_app_byte_identical_to_bun, "consumer-p-retry-app");
+consumer_test!(consumer_kysely_app_byte_identical_to_bun, "consumer-kysely-app");
+consumer_test!(consumer_ramda_app_byte_identical_to_bun, "consumer-ramda-app");
+consumer_test!(consumer_preact_app_byte_identical_to_bun, "consumer-preact-app");
+consumer_test!(consumer_nanostores_app_byte_identical_to_bun, "consumer-nanostores-app");
+// Elysia (E.60 basin boundary): SIGSEGV in QuickJS parser on the
+// 1987-line minified ESM bundle. Each transitive dependency loads
+// individually without issue. Process-level failure, can't be caught
+// by JS try/catch. Re-open condition: adversarial-async-graph
+// successor engagement (hand-roll QuickJS).
+// consumer_test!(consumer_elysia_app_byte_identical_to_bun, "consumer-elysia-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

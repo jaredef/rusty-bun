@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "runtypes": "*",
+      },
+    },
+  },
+  "packages": {
+    "runtypes": ["runtypes@7.0.4", "", {}, "sha512-fWEOLUpOlbl7zhmjDrPymCFWZIA+b+EeOFQlAbbQRYQvqcI0ys7Y/O5A09Z5IIvTf3x/DrgTN6396aXLfDRxUA=="],
+  }
+}

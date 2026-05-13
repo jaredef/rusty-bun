@@ -8679,3 +8679,11 @@ consumer_test!(consumer_dompurify_app_byte_identical_to_bun, "consumer-dompurify
 consumer_test!(consumer_upath_app_byte_identical_to_bun, "consumer-upath-app");
 consumer_test!(consumer_cron_app_byte_identical_to_bun, "consumer-cron-app");
 consumer_test!(consumer_fs_promises_app_byte_identical_to_bun, "consumer-fs-promises-app");
+consumer_test!(consumer_arktype_app_byte_identical_to_bun, "consumer-arktype-app");
+consumer_test!(consumer_fp_ts_app_byte_identical_to_bun, "consumer-fp-ts-app");
+consumer_test!(consumer_markdown_it_app_byte_identical_to_bun, "consumer-markdown-it-app");
+consumer_test!(consumer_runtypes_app_byte_identical_to_bun, "consumer-runtypes-app");
+consumer_test!(consumer_jsonc_parser_app_byte_identical_to_bun, "consumer-jsonc-parser-app");
+consumer_test!(consumer_enquirer_app_byte_identical_to_bun, "consumer-enquirer-app");
+consumer_test!(consumer_io_ts_app_byte_identical_to_bun, "consumer-io-ts-app");
+consumer_test!(consumer_neverthrow_app_byte_identical_to_bun, "consumer-neverthrow-app");

@@ -908,10 +908,7 @@ fn strip_reserved_class_field_decls(source: &str) -> String {
             out.push_str(&body[indent_end.len() + rest.len()..]);
             out.push_str(nl);
         } else if !indent_end.is_empty() && rest.starts_with("static(") {
-            // Method named `static` in shorthand class body — QuickJS rejects
-            // `static` as a method name (reserved keyword in class bodies).
-            // prettier's bundled fast-glob walker has `dynamic()` + `static()`
-            // method pair. Rename to `_static`.
+            // Method named `static` in shorthand class body.
             out.push_str(indent_end);
             out.push_str("_static");
             out.push_str(&rest[6..]);
@@ -4897,6 +4894,57 @@ const FINALIZATION_REGISTRY_STUB_JS: &str = r#"
         }
         globalThis.MessageChannel = MessageChannel;
     }
+    if (typeof globalThis.EventTarget !== "function") {
+        class EventTarget {
+            constructor() { this.__listeners = new Map(); }
+            addEventListener(type, cb, opts) {
+                if (typeof cb !== "function" && !(cb && typeof cb.handleEvent === "function")) return;
+                if (!this.__listeners.has(type)) this.__listeners.set(type, []);
+                this.__listeners.get(type).push({ cb, once: !!(opts && opts.once) });
+            }
+            removeEventListener(type, cb) {
+                const arr = this.__listeners.get(type);
+                if (!arr) return;
+                this.__listeners.set(type, arr.filter(l => l.cb !== cb));
+            }
+            dispatchEvent(event) {
+                const arr = this.__listeners.get(event.type);
+                if (!arr) return true;
+                const snapshot = arr.slice();
+                this.__listeners.set(event.type, arr.filter(l => !l.once));
+                for (const l of snapshot) {
+                    try {
+                        if (typeof l.cb === "function") l.cb.call(this, event);
+                        else if (l.cb && typeof l.cb.handleEvent === "function") l.cb.handleEvent(event);
+                    } catch (_) {}
+                }
+                return !event.defaultPrevented;
+            }
+        }
+        globalThis.EventTarget = EventTarget;
+    }
+    if (typeof globalThis.Event !== "function") {
+        class Event {
+            constructor(type, init) {
+                this.type = String(type);
+                init = init || {};
+                this.bubbles = !!init.bubbles;
+                this.cancelable = !!init.cancelable;
+                this.defaultPrevented = false;
+                this.target = null;
+                this.currentTarget = null;
+                this.timeStamp = Date.now();
+            }
+            preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+            stopPropagation() {}
+            stopImmediatePropagation() {}
+        }
+        globalThis.Event = Event;
+        class CustomEvent extends Event {
+            constructor(type, init) { super(type, init); this.detail = (init && init.detail); }
+        }
+        globalThis.CustomEvent = CustomEvent;
+    }
     if (typeof globalThis.BroadcastChannel !== "function") {
         class BroadcastChannel {
             constructor(name) { this.name = name; this._listeners = new Map(); }
@@ -7989,9 +8037,7 @@ const COMMONJS_LOADER_JS: &str = r#"
                 lines[i] = line.substring(0, p) + "_" + rest;
                 continue;
             }
-            // Method-name shorthand in class body: `static(args) {`. The
-            // reserved word `static` can only appear as a modifier in
-            // class bodies; the shorthand-method form needs renaming.
+            // Method-name shorthand in class body: `static(args) {`.
             if (rest.startsWith("static(")) {
                 lines[i] = line.substring(0, p) + "_" + rest;
                 continue;

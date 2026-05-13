@@ -7959,6 +7959,9 @@ consumer_test!(consumer_shelljs_app_byte_identical_to_bun, "consumer-shelljs-app
 consumer_test!(consumer_fastdeepequal_app_byte_identical_to_bun, "consumer-fastdeepequal-app");
 consumer_test!(consumer_polka_app_byte_identical_to_bun, "consumer-polka-app");
 consumer_test!(consumer_megastack_app_byte_identical_to_bun, "consumer-megastack-app");
+consumer_test!(consumer_mongoose_app_byte_identical_to_bun, "consumer-mongoose-app");
+consumer_test!(consumer_vitest_app_byte_identical_to_bun, "consumer-vitest-app");
+consumer_test!(consumer_knex_app_byte_identical_to_bun, "consumer-knex-app");
 consumer_test!(consumer_css_tree_app_byte_identical_to_bun, "consumer-css-tree-app");
 consumer_test!(consumer_ignore_app_byte_identical_to_bun, "consumer-ignore-app");
 consumer_test!(consumer_mime_types_app_byte_identical_to_bun, "consumer-mime-types-app");

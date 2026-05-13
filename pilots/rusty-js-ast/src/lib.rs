@@ -167,23 +167,95 @@ pub enum ModuleItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    /// `let | const | var X[=init][, ...];`
     Variable(VariableStatement),
-    /// `<Expr>;`
     Expression { expr: Expr, span: Span },
-    /// `{ <stmts> }`
     Block { body: Vec<Stmt>, span: Span },
-    /// `;`
     Empty { span: Span },
     /// `function NAME(...) { ... }` — body span; full parameter/body AST
     /// lands in a follow-on sub-round.
     FunctionDecl { name: Option<BindingIdentifier>, is_async: bool, is_generator: bool, body_span: Span, span: Span },
     /// `class NAME { ... }` — body span; full member AST lands later.
     ClassDecl { name: Option<BindingIdentifier>, body_span: Span, span: Span },
-    /// Statement forms not yet typed (If, For, While, Switch, Try, Return,
-    /// Throw, Break, Continue, Labelled, With, Debugger). Captured opaquely
-    /// via balanced-brace skip until follow-on sub-rounds.
+    /// `if (test) consequent [else alternate]`
+    If { test: Expr, consequent: Box<Stmt>, alternate: Option<Box<Stmt>>, span: Span },
+    /// `for (init; test; update) body` — C-style.
+    For { init: Option<ForInit>, test: Option<Expr>, update: Option<Expr>, body: Box<Stmt>, span: Span },
+    /// `for (left in right) body`
+    ForIn { left: ForBinding, right: Expr, body: Box<Stmt>, span: Span },
+    /// `for [await] (left of right) body`
+    ForOf { left: ForBinding, right: Expr, body: Box<Stmt>, await_: bool, span: Span },
+    /// `while (test) body`
+    While { test: Expr, body: Box<Stmt>, span: Span },
+    /// `do body while (test);`
+    DoWhile { body: Box<Stmt>, test: Expr, span: Span },
+    /// `switch (discr) { cases... }`
+    Switch { discriminant: Expr, cases: Vec<SwitchCase>, span: Span },
+    /// `try { ... } [catch (e) { ... }] [finally { ... }]`
+    Try { block: Box<Stmt>, handler: Option<CatchClause>, finalizer: Option<Box<Stmt>>, span: Span },
+    /// `return [argument];`
+    Return { argument: Option<Expr>, span: Span },
+    /// `throw argument;`
+    Throw { argument: Expr, span: Span },
+    /// `break [label];`
+    Break { label: Option<BindingIdentifier>, span: Span },
+    /// `continue [label];`
+    Continue { label: Option<BindingIdentifier>, span: Span },
+    /// `debugger;`
+    Debugger { span: Span },
+    /// `LABEL: body`
+    Labelled { label: BindingIdentifier, body: Box<Stmt>, span: Span },
+    /// Statement forms still unhandled. The 3c sub-round retired
+    /// If/For/While/DoWhile/Switch/Try/Return/Throw/Break/Continue/
+    /// Debugger/Labelled. `with` remains opaque (forbidden in modules anyway).
     Opaque { span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForInit {
+    Variable(VariableStatement),
+    Expression(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForBinding {
+    /// `var X` / `let X` / `const X` head
+    Decl { kind: VariableKind, name: BindingIdentifier, span: Span },
+    /// Pre-existing binding: `for (x of arr)` where x was declared earlier.
+    Identifier(BindingIdentifier),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    /// `None` = default clause
+    pub test: Option<Expr>,
+    pub consequent: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatchClause {
+    /// `Some(...)` for `catch (e)`; `None` for the ES2019 optional-catch-binding `catch { ... }`.
+    pub param: Option<BindingIdentifier>,
+    pub body: Box<Stmt>,
+    pub span: Span,
+}
+
+impl Stmt {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Variable(v) => v.span,
+            Stmt::Expression { span, .. } | Stmt::Block { span, .. } | Stmt::Empty { span }
+            | Stmt::FunctionDecl { span, .. } | Stmt::ClassDecl { span, .. }
+            | Stmt::If { span, .. } | Stmt::For { span, .. }
+            | Stmt::ForIn { span, .. } | Stmt::ForOf { span, .. }
+            | Stmt::While { span, .. } | Stmt::DoWhile { span, .. }
+            | Stmt::Switch { span, .. } | Stmt::Try { span, .. }
+            | Stmt::Return { span, .. } | Stmt::Throw { span, .. }
+            | Stmt::Break { span, .. } | Stmt::Continue { span, .. }
+            | Stmt::Debugger { span } | Stmt::Labelled { span, .. }
+            | Stmt::Opaque { span } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

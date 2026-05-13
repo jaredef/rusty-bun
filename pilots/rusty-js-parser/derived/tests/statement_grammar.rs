@@ -160,26 +160,149 @@ fn class_with_extends() {
     } else { panic!(); }
 }
 
-// ─────────── Opaque (control-flow fallback) ───────────
+// ─────────── Control-flow (now typed in round 3c) ───────────
 
 #[test]
-fn if_statement_falls_back_opaque() {
-    assert!(matches!(first_stmt("if (x) { y(); }"), Stmt::Opaque { .. }));
+fn if_statement_typed() {
+    if let Stmt::If { test, consequent, alternate, .. } = first_stmt("if (x) { y(); }") {
+        assert!(matches!(test, Expr::Identifier { .. }));
+        assert!(matches!(*consequent, Stmt::Block { .. }));
+        assert!(alternate.is_none());
+    } else { panic!("expected if"); }
 }
 
 #[test]
-fn for_statement_falls_back_opaque() {
-    assert!(matches!(first_stmt("for (let i = 0; i < 10; i++) {}"), Stmt::Opaque { .. }));
+fn if_else_statement() {
+    if let Stmt::If { alternate, .. } = first_stmt("if (x) a(); else b();") {
+        assert!(alternate.is_some());
+    } else { panic!("expected if-else"); }
 }
 
 #[test]
-fn return_statement_falls_back_opaque() {
-    assert!(matches!(first_stmt("return 42;"), Stmt::Opaque { .. }));
+fn for_c_style() {
+    if let Stmt::For { init, test, update, body, .. } = first_stmt("for (let i = 0; i < 10; i++) {}") {
+        assert!(init.is_some());
+        assert!(test.is_some());
+        assert!(update.is_some());
+        assert!(matches!(*body, Stmt::Block { .. }));
+    } else { panic!("expected for"); }
 }
 
 #[test]
-fn try_statement_falls_back_opaque() {
-    assert!(matches!(first_stmt("try { f(); } catch (e) {}"), Stmt::Opaque { .. }));
+fn for_in() {
+    if let Stmt::ForIn { left, .. } = first_stmt("for (const k in obj) f(k);") {
+        if let ForBinding::Decl { name, .. } = left {
+            assert_eq!(name.name, "k");
+        } else { panic!("expected decl binding"); }
+    } else { panic!("expected for-in"); }
+}
+
+#[test]
+fn for_of() {
+    if let Stmt::ForOf { left, await_, .. } = first_stmt("for (const x of arr) f(x);") {
+        if let ForBinding::Decl { name, .. } = left {
+            assert_eq!(name.name, "x");
+        } else { panic!("expected decl binding"); }
+        assert!(!await_);
+    } else { panic!("expected for-of"); }
+}
+
+#[test]
+fn for_await_of() {
+    if let Stmt::ForOf { await_, .. } = first_stmt("for await (const x of asyncIter) f(x);") {
+        assert!(await_);
+    } else { panic!("expected for-await-of"); }
+}
+
+#[test]
+fn while_statement() {
+    if let Stmt::While { test, body, .. } = first_stmt("while (x) f();") {
+        assert!(matches!(test, Expr::Identifier { .. }));
+        assert!(matches!(*body, Stmt::Expression { .. }));
+    } else { panic!("expected while"); }
+}
+
+#[test]
+fn do_while_statement() {
+    if let Stmt::DoWhile { test, body, .. } = first_stmt("do { f(); } while (cond);") {
+        assert!(matches!(*body, Stmt::Block { .. }));
+        assert!(matches!(test, Expr::Identifier { .. }));
+    } else { panic!("expected do-while"); }
+}
+
+#[test]
+fn switch_statement() {
+    if let Stmt::Switch { discriminant, cases, .. } = first_stmt("switch (x) { case 1: a(); break; case 2: b(); break; default: c(); }") {
+        assert!(matches!(discriminant, Expr::Identifier { .. }));
+        assert_eq!(cases.len(), 3);
+        assert!(cases[0].test.is_some());
+        assert!(cases[2].test.is_none());
+    } else { panic!("expected switch"); }
+}
+
+#[test]
+fn try_catch_finally() {
+    if let Stmt::Try { handler, finalizer, .. } = first_stmt("try { f(); } catch (e) { g(e); } finally { h(); }") {
+        let h = handler.expect("handler");
+        assert_eq!(h.param.unwrap().name, "e");
+        assert!(finalizer.is_some());
+    } else { panic!("expected try"); }
+}
+
+#[test]
+fn try_optional_catch_binding() {
+    if let Stmt::Try { handler, .. } = first_stmt("try { f(); } catch { g(); }") {
+        let h = handler.expect("handler");
+        assert!(h.param.is_none());
+    } else { panic!("expected try"); }
+}
+
+#[test]
+fn return_no_argument() {
+    if let Stmt::Return { argument, .. } = first_stmt("return;") {
+        assert!(argument.is_none());
+    } else { panic!("expected return"); }
+}
+
+#[test]
+fn return_with_argument() {
+    if let Stmt::Return { argument, .. } = first_stmt("return 42;") {
+        assert!(argument.is_some());
+    } else { panic!("expected return"); }
+}
+
+#[test]
+fn throw_statement() {
+    if let Stmt::Throw { argument, .. } = first_stmt("throw new Error('boom');") {
+        assert!(matches!(argument, Expr::New { .. }));
+    } else { panic!("expected throw"); }
+}
+
+#[test]
+fn break_with_label() {
+    if let Stmt::Break { label, .. } = first_stmt("break outer;") {
+        assert_eq!(label.unwrap().name, "outer");
+    } else { panic!("expected break"); }
+}
+
+#[test]
+fn continue_unlabelled() {
+    if let Stmt::Continue { label, .. } = first_stmt("continue;") {
+        assert!(label.is_none());
+    } else { panic!("expected continue"); }
+}
+
+#[test]
+fn debugger_statement() {
+    assert!(matches!(first_stmt("debugger;"), Stmt::Debugger { .. }));
+}
+
+#[test]
+fn labelled_statement() {
+    if let Stmt::Labelled { label, body, .. } = first_stmt("outer: for (;;) { break outer; }") {
+        assert_eq!(label.name, "outer");
+        assert!(matches!(*body, Stmt::For { .. }));
+    } else { panic!("expected labelled"); }
 }
 
 // ─────────── Mixed-module integration ───────────

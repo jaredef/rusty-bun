@@ -462,7 +462,9 @@ fn is_node_builtin(name: &str) -> bool {
         "node:cluster" | "cluster" |
         "node:tls" | "tls" |
         "node:v8" | "v8" |
-        "node:constants" | "constants"
+        "node:constants" | "constants" |
+        "node:sqlite" | "sqlite" |
+        "node:inspector" | "inspector"
     )
 }
 
@@ -621,6 +623,18 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["O_RDONLY", "O_WRONLY", "O_RDWR", "O_CREAT", "O_EXCL",
               "O_TRUNC", "O_APPEND", "S_IFMT", "S_IFREG", "S_IFDIR",
               "EACCES", "EEXIST", "ENOENT", "EPERM"]),
+        // Π2.6.substrate-tail: node:sqlite + node:inspector stubs.
+        // Surfaced via host/tools/substrate-rank.sh as the only
+        // unwired substrate nodes with measurable in-degree (~6 each).
+        // node:sqlite is Node 22+ experimental (Bun has bun:sqlite);
+        // node:inspector is debugger protocol. Both are stubs: present
+        // surface so packages that top-level-import them load cleanly;
+        // any real usage will throw on call.
+        "node:sqlite" | "sqlite" => ("nodeSqlite",
+            &["DatabaseSync", "Database", "constants"]),
+        "node:inspector" | "inspector" => ("nodeInspector",
+            &["Session", "open", "close", "url", "waitForDebugger",
+              "console", "Network", "Session_constructor"]),
         "node:assert/strict" | "assert/strict" => ("nodeAssertStrict",
             &["ok", "equal", "notEqual", "deepEqual", "notDeepEqual",
               "throws", "doesNotThrow", "rejects", "doesNotReject",
@@ -9334,6 +9348,10 @@ const COMMONJS_LOADER_JS: &str = r#"
         "v8": () => globalThis.nodeV8,
         "node:constants": () => globalThis.nodeConstants,
         "constants": () => globalThis.nodeConstants,
+        "node:sqlite": () => globalThis.nodeSqlite,
+        "sqlite": () => globalThis.nodeSqlite,
+        "node:inspector": () => globalThis.nodeInspector,
+        "inspector": () => globalThis.nodeInspector,
     };
 
     function loadModule(absPath) {
@@ -12322,6 +12340,47 @@ fn install_node_extra_builtins_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                              external_script_source_size: 0 };
                 },
             };
+            // Π2.6.substrate-tail: node:sqlite stub. Node 22+
+            // experimental. Bun has bun:sqlite; rusty-bun doesn't
+            // ship native sqlite. Stub: constructable shape with
+            // throw-on-call methods so packages that top-level
+            // import (undici's optional cache, etc.) load cleanly.
+            globalThis.nodeSqlite = (function() {
+                class DatabaseSync {
+                    constructor() {
+                        throw new Error("node:sqlite not implemented in rusty-bun-host");
+                    }
+                }
+                return {
+                    DatabaseSync,
+                    Database: DatabaseSync,
+                    constants: {},
+                };
+            })();
+            // Π2.6.substrate-tail: node:inspector stub. Debugger
+            // protocol; not applicable to QuickJS runtime. Stub.
+            globalThis.nodeInspector = (function() {
+                class Session {
+                    constructor() {}
+                    connect() {}
+                    disconnect() {}
+                    post(_method, _params, cb) {
+                        if (typeof cb === "function") queueMicrotask(() => cb(null, {}));
+                    }
+                    on() { return this; }
+                    once() { return this; }
+                    off() { return this; }
+                }
+                return {
+                    Session,
+                    open: () => {},
+                    close: () => {},
+                    url: () => undefined,
+                    waitForDebugger: () => {},
+                    console: undefined,
+                    Network: { dataReceived: () => {}, dataSent: () => {} },
+                };
+            })();
             // node:constants — deprecated namespace alias for os.constants
             // and fs constants. Stub with the most-commonly-checked values;
             // libs typically just check existence not exact byte values.

@@ -29,6 +29,7 @@ members = [
     "pilots/node-http/derived",
     "pilots/node-path/derived",
     "pilots/rusty-js-ast",
+    "pilots/rusty-js-bytecode/derived",
     "pilots/rusty-js-parser/derived",
     "pilots/streams/derived",
     "pilots/structured-clone/derived",

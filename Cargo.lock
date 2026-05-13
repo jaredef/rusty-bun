@@ -436,6 +436,14 @@ name = "rusty-js-ast"
 version = "0.1.0"
 
 [[package]]
+name = "rusty-js-bytecode"
+version = "0.1.0"
+dependencies = [
+ "rusty-js-ast",
+ "rusty-js-parser",
+]
+
+[[package]]
 name = "rusty-js-parser"
 version = "0.1.0"
 dependencies = [

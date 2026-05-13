@@ -160,11 +160,49 @@ pub struct Module {
 pub enum ModuleItem {
     Import(ImportDeclaration),
     Export(ExportDeclaration),
-    /// Statement-or-Declaration. v1 stores the raw byte-span of the
-    /// construct; the parser performs balanced-brace skip to find its
-    /// end. Subsequent sub-rounds will replace this with typed
-    /// statement/declaration nodes.
-    StatementOrDecl(Span),
+    Statement(Stmt),
+}
+
+// ─────────── Statement (round-3b subset) ───────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    /// `let | const | var X[=init][, ...];`
+    Variable(VariableStatement),
+    /// `<Expr>;`
+    Expression { expr: Expr, span: Span },
+    /// `{ <stmts> }`
+    Block { body: Vec<Stmt>, span: Span },
+    /// `;`
+    Empty { span: Span },
+    /// `function NAME(...) { ... }` — body span; full parameter/body AST
+    /// lands in a follow-on sub-round.
+    FunctionDecl { name: Option<BindingIdentifier>, is_async: bool, is_generator: bool, body_span: Span, span: Span },
+    /// `class NAME { ... }` — body span; full member AST lands later.
+    ClassDecl { name: Option<BindingIdentifier>, body_span: Span, span: Span },
+    /// Statement forms not yet typed (If, For, While, Switch, Try, Return,
+    /// Throw, Break, Continue, Labelled, With, Debugger). Captured opaquely
+    /// via balanced-brace skip until follow-on sub-rounds.
+    Opaque { span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableStatement {
+    pub kind: VariableKind,
+    pub declarators: Vec<VariableDeclarator>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariableKind { Let, Const, Var }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDeclarator {
+    /// v1 stores the binding's introduced names. Full BindingPattern AST
+    /// lands in a follow-on sub-round.
+    pub names: Vec<BindingIdentifier>,
+    pub init: Option<Expr>,
+    pub span: Span,
 }
 
 // ─────────── ImportDeclaration ───────────

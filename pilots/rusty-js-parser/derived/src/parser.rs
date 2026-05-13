@@ -79,9 +79,9 @@ impl<'src> Parser<'src> {
                 body.push(ModuleItem::Export(decl));
                 continue;
             }
-            // Statement or declaration — skip its byte-span with balanced braces.
-            let span = self.skip_statement_or_decl()?;
-            body.push(ModuleItem::StatementOrDecl(span));
+            // Statement or declaration.
+            let stmt = self.parse_statement()?;
+            body.push(ModuleItem::Statement(stmt));
         }
 
         Ok(Module {
@@ -537,10 +537,10 @@ impl<'src> Parser<'src> {
                 } else {
                     break;
                 }
-                // Optional initializer `= <expr>` (until comma at depth 0 or end of decl).
+                // Optional initializer `= <expr>` — typed AssignmentExpression.
                 if self.is_punct(Punct::Assign) {
                     self.bump_regexp()?;
-                    self.skip_until_top_comma_or_terminator()?;
+                    let _ = self.parse_assignment_expression()?;
                 }
                 if self.is_punct(Punct::Comma) {
                     self.bump_regexp()?;
@@ -867,6 +867,13 @@ impl<'src> Parser<'src> {
     }
     pub(crate) fn skip_balanced_public(&mut self, open: Punct, close: Punct) -> Result<(), ParseError> {
         self.skip_balanced(open, close)
+    }
+    pub(crate) fn consume_semicolon_pub(&mut self) { self.consume_semicolon() }
+    pub(crate) fn extract_obj_destructure_names_pub(&mut self, out: &mut Vec<rusty_js_ast::BindingIdentifier>) -> Result<(), ParseError> {
+        self.extract_destructure_names_object(out)
+    }
+    pub(crate) fn extract_arr_destructure_names_pub(&mut self, out: &mut Vec<rusty_js_ast::BindingIdentifier>) -> Result<(), ParseError> {
+        self.extract_destructure_names_array(out)
     }
 
     pub(crate) fn err_here(&self, message: String) -> ParseError {

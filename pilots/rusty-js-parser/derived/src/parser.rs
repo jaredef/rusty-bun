@@ -30,13 +30,26 @@ pub struct Parser<'src> {
     lx: Lexer<'src>,
     /// One-token lookahead, replenished by `bump`.
     lookahead: Token,
+    /// Watchdog. The current v1 parser captures statement bodies as opaque
+    /// byte-spans via balanced-brace skip; pathological inputs without
+    /// expression-grammar handling can over-read. Cap at a generous bound
+    /// proportional to source size so the parser never unboundedly allocates.
+    /// The expression-grammar sub-round retires this watchdog.
+    advance_count: usize,
+    advance_cap: usize,
 }
 
 impl<'src> Parser<'src> {
     pub fn new(src: &'src str) -> Result<Self, ParseError> {
         let mut lx = Lexer::new(src);
         let lookahead = lx.next_token(LexerGoal::RegExp).map_err(lex_to_parse)?;
-        Ok(Self { src, lx, lookahead })
+        // Watchdog: cap advances at 16x source bytes. Well-formed source
+        // uses at most ~1 token per ~3 bytes; this is a 48x margin and
+        // catches the v1 opaque-span-skip's pathological cases without
+        // affecting any well-formed parse. Retired by the expression-
+        // grammar sub-round once declaration bodies become typed.
+        let advance_cap = (src.len() * 16).max(2048);
+        Ok(Self { src, lx, lookahead, advance_count: 0, advance_cap })
     }
 
     pub fn parse_module(&mut self) -> Result<Module, ParseError> {
@@ -782,6 +795,10 @@ impl<'src> Parser<'src> {
     // ───────────────────────────── Token plumbing ─────────────────────────────
 
     fn bump_regexp(&mut self) -> Result<Token, ParseError> {
+        self.advance_count += 1;
+        if self.advance_count > self.advance_cap {
+            return Err(self.err_here("parser watchdog tripped (expression grammar pending)".into()));
+        }
         let cur = std::mem::replace(
             &mut self.lookahead,
             self.lx.next_token(LexerGoal::RegExp).map_err(lex_to_parse)?,

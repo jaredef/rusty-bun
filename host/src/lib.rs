@@ -8753,12 +8753,16 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                         this._readyState = 1;  // OPEN
                         // Π1.5.e: register in __keepAlive so the eval loop
                         // auto-pumps the receive path between microtasks.
-                        // Real Bun runs this in a background task; we
-                        // simulate by hooking into the existing keep-alive
-                        // registry (Π2.6 infrastructure). The consumer
-                        // pattern `ws.onmessage = cb; ...` now works without
-                        // explicit pump() calls.
+                        // Π2.6.c.e: also register the transport sid with
+                        // the reactor (non-TLS path). __keepAlive still
+                        // drives __tick; the reactor registration just
+                        // lets mio wake the eval loop precisely when
+                        // frame bytes arrive (no busy-spin).
                         if (globalThis.__keepAlive) globalThis.__keepAlive.add(this);
+                        if (!this._isTls && this._sid != null) {
+                            try { globalThis.TCP.setNonblocking(this._sid, true); } catch (_) {}
+                            try { globalThis.__reactor.register(this._sid); } catch (_) {}
+                        }
                         queueMicrotask(() => this._dispatch("open", { type: "open" }));
                     } catch (e) {
                         this._readyState = 3;  // CLOSED
@@ -8990,10 +8994,15 @@ fn install_websocket_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                     if (this._readyState !== 1 && this._readyState !== 2) return 0;
                     let dispatched = 0;
                     // Read one chunk if available.
+                    // Π2.6.c.e: non-TLS path uses tryRead (nonblocking).
+                    // null → no data right now, just skip the accumulate
+                    // step. The next mio readiness event wakes us back.
+                    // TLS path stays on blocking __tls.read for now (will
+                    // migrate when TLS gains a tryRead variant — Π2.6.c.d).
                     let chunk = null;
                     try {
                         if (this._isTls) chunk = globalThis.__tls.read(this._sid);
-                        else chunk = globalThis.TCP.read(this._sid, 65536);
+                        else chunk = globalThis.TCP.tryRead(this._sid, 65536);
                     } catch (_) { chunk = new Uint8Array(0); }
                     if (chunk && chunk.length > 0) {
                         for (let i = 0; i < chunk.length; i++) this._readBuf.push(chunk[i]);

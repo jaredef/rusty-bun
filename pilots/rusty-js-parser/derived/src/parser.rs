@@ -333,15 +333,10 @@ impl<'src> Parser<'src> {
         let name = if matches!(self.lookahead.kind, TokenKind::Ident(_)) && !self.is_punct(Punct::LParen) {
             Some(self.parse_binding_identifier()?)
         } else { None };
-        // Skip parameter list and body via balanced parens/braces.
-        let body_start = self.lookahead.span.start;
-        self.skip_balanced(Punct::LParen, Punct::RParen)?;
-        self.skip_balanced(Punct::LBrace, Punct::RBrace)?;
+        let params = self.parse_function_parameters()?;
+        let body = self.parse_function_body()?;
         Ok(DefaultExportBody::HoistableFunction {
-            name,
-            body_span: Span::new(body_start, self.last_span_end()),
-            is_async,
-            is_generator,
+            name, params, body, is_async, is_generator,
         })
     }
 

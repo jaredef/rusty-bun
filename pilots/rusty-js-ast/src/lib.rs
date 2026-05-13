@@ -171,10 +171,16 @@ pub enum Stmt {
     Expression { expr: Expr, span: Span },
     Block { body: Vec<Stmt>, span: Span },
     Empty { span: Span },
-    /// `function NAME(...) { ... }` — body span; full parameter/body AST
-    /// lands in a follow-on sub-round.
-    FunctionDecl { name: Option<BindingIdentifier>, is_async: bool, is_generator: bool, body_span: Span, span: Span },
-    /// `class NAME { ... }` — body span; full member AST lands later.
+    /// `function NAME(params) { body }` — typed parameters + body.
+    FunctionDecl {
+        name: Option<BindingIdentifier>,
+        is_async: bool,
+        is_generator: bool,
+        params: Vec<Parameter>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    /// `class NAME { ... }` — body span; full member AST lands in round 3e.
     ClassDecl { name: Option<BindingIdentifier>, body_span: Span, span: Span },
     /// `if (test) consequent [else alternate]`
     If { test: Expr, consequent: Box<Stmt>, alternate: Option<Box<Stmt>>, span: Span },
@@ -229,6 +235,20 @@ pub struct SwitchCase {
     /// `None` = default clause
     pub test: Option<Expr>,
     pub consequent: Vec<Stmt>,
+    pub span: Span,
+}
+
+// ─────────── Function parameters ───────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    /// v1 captures the binding-introduced names; full BindingPattern AST
+    /// lands when destructure-patterns become first-class.
+    pub names: Vec<BindingIdentifier>,
+    /// `= default` initializer.
+    pub default: Option<Expr>,
+    /// `...rest` — true for the rest parameter (must be last per spec).
+    pub rest: bool,
     pub span: Span,
 }
 
@@ -352,7 +372,13 @@ pub enum DefaultExportBody {
     /// `export default function NAME?(...) { ... }` — Bun's Tuple-B-relevant
     /// case is when NAME is present, in which case the engine's E5 host
     /// hook exposes NAME as a named export per Doc 717.
-    HoistableFunction { name: Option<BindingIdentifier>, body_span: Span, is_async: bool, is_generator: bool },
+    HoistableFunction {
+        name: Option<BindingIdentifier>,
+        params: Vec<Parameter>,
+        body: Vec<Stmt>,
+        is_async: bool,
+        is_generator: bool,
+    },
     /// `export default class NAME? { ... }` — same Tuple-B applicability when NAME present.
     Class { name: Option<BindingIdentifier>, body_span: Span },
     /// `export default <AssignmentExpression>;` — typed Expr (v1 subset);

@@ -165,15 +165,64 @@ impl<'src> Parser<'src> {
             self.bump()?;
             Some(BindingIdentifier { name: n, span })
         } else { None };
-        let body_start = self.lookahead_span().start;
-        self.skip_balanced_public(Punct::LParen, Punct::RParen)?;
-        self.skip_balanced_public(Punct::LBrace, Punct::RBrace)?;
+        let params = self.parse_function_parameters()?;
+        let body = self.parse_function_body()?;
         let end = self.last_span_end();
         Ok(Stmt::FunctionDecl {
-            name, is_async, is_generator,
-            body_span: Span::new(body_start, end),
+            name, is_async, is_generator, params, body,
             span: Span::new(start, end),
         })
+    }
+
+    pub(crate) fn parse_function_parameters(&mut self) -> Result<Vec<rusty_js_ast::Parameter>, ParseError> {
+        self.expect_punct(Punct::LParen)?;
+        let mut out = Vec::new();
+        while !matches!(self.current_kind(), TokenKind::Punct(Punct::RParen)) {
+            let p_start = self.lookahead_span().start;
+            let rest = if matches!(self.current_kind(), TokenKind::Punct(Punct::Spread)) {
+                self.bump()?; true
+            } else { false };
+            let mut names: Vec<BindingIdentifier> = Vec::new();
+            match self.current_kind().clone() {
+                TokenKind::Ident(n) => {
+                    let span = self.lookahead_span();
+                    self.bump()?;
+                    names.push(BindingIdentifier { name: n, span });
+                }
+                TokenKind::Punct(Punct::LBrace) => {
+                    self.bump()?;
+                    self.extract_obj_destructure_names_pub(&mut names)?;
+                }
+                TokenKind::Punct(Punct::LBracket) => {
+                    self.bump()?;
+                    self.extract_arr_destructure_names_pub(&mut names)?;
+                }
+                _ => return Err(self.err_here("expected parameter binding".into())),
+            }
+            let default = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                self.bump()?;
+                Some(self.parse_assignment_expression()?)
+            } else { None };
+            let p_end = self.last_span_end();
+            out.push(rusty_js_ast::Parameter {
+                names, default, rest, span: Span::new(p_start, p_end),
+            });
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
+                self.bump()?;
+            } else { break; }
+        }
+        self.expect_punct(Punct::RParen)?;
+        Ok(out)
+    }
+
+    pub(crate) fn parse_function_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        self.expect_punct(Punct::LBrace)?;
+        let mut out = Vec::new();
+        while !matches!(self.current_kind(), TokenKind::Punct(Punct::RBrace)) && !self.at_eof_internal() {
+            out.push(self.parse_statement()?);
+        }
+        self.expect_punct(Punct::RBrace)?;
+        Ok(out)
     }
 
     fn parse_class_decl_stmt(&mut self) -> Result<Stmt, ParseError> {

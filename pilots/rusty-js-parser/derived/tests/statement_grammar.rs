@@ -122,10 +122,75 @@ fn empty_statement() {
 
 #[test]
 fn function_declaration() {
-    if let Stmt::FunctionDecl { name, is_async, is_generator, .. } = first_stmt("function foo() {}") {
+    if let Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. } = first_stmt("function foo() {}") {
         assert_eq!(name.unwrap().name, "foo");
         assert!(!is_async);
         assert!(!is_generator);
+        assert!(params.is_empty());
+        assert!(body.is_empty());
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_parameters() {
+    if let Stmt::FunctionDecl { params, .. } = first_stmt("function add(a, b) { return a + b; }") {
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].names[0].name, "a");
+        assert_eq!(params[1].names[0].name, "b");
+        assert!(!params[0].rest);
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_default_parameter() {
+    if let Stmt::FunctionDecl { params, .. } = first_stmt("function f(x = 1, y = x + 2) {}") {
+        assert_eq!(params.len(), 2);
+        assert!(params[0].default.is_some());
+        assert!(params[1].default.is_some());
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_rest_parameter() {
+    if let Stmt::FunctionDecl { params, .. } = first_stmt("function f(a, ...rest) {}") {
+        assert_eq!(params.len(), 2);
+        assert!(!params[0].rest);
+        assert!(params[1].rest);
+        assert_eq!(params[1].names[0].name, "rest");
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_destructure_parameter() {
+    if let Stmt::FunctionDecl { params, .. } = first_stmt("function f({a, b: c}) {}") {
+        assert_eq!(params.len(), 1);
+        let names: Vec<&str> = params[0].names.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"a"));
+        assert!(names.contains(&"c"));
+    } else { panic!(); }
+}
+
+#[test]
+fn function_typed_body() {
+    if let Stmt::FunctionDecl { body, .. } = first_stmt("function f(x) { let y = x + 1; return y; }") {
+        assert_eq!(body.len(), 2);
+        assert!(matches!(&body[0], Stmt::Variable(_)));
+        assert!(matches!(&body[1], Stmt::Return { .. }));
+    } else { panic!(); }
+}
+
+#[test]
+fn function_recursive_body() {
+    // Function body containing another function body — Block-of-statements
+    // recursion through parse_statement.
+    if let Stmt::FunctionDecl { body, .. } = first_stmt(
+        "function outer() { function inner() { return 1; } return inner; }"
+    ) {
+        assert_eq!(body.len(), 2);
+        if let Stmt::FunctionDecl { name, .. } = &body[0] {
+            assert_eq!(name.as_ref().unwrap().name, "inner");
+        } else { panic!("expected nested function"); }
+        assert!(matches!(&body[1], Stmt::Return { .. }));
     } else { panic!(); }
 }
 

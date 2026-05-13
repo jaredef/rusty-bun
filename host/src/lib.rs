@@ -1156,7 +1156,13 @@ impl Loader for FsLoader {
                    // keys, etc.). Bun includes function intrinsics as named exports,\n\
                    // so we do too. Only 'caller' and 'arguments' are filtered as\n\
                    // they're forbidden strict-mode binding names.\n\
-                   const SKIP = new Set(['caller','arguments']);\n\
+                   const SKIP = new Set(['caller','arguments','__esModule']);\n\
+                   // When __esModule is set (TS-emitted CJS), Bun does NOT\n\
+                   // surface function intrinsics (length/name/prototype) as\n\
+                   // named exports — only the explicit exports the module\n\
+                   // wrote. Without __esModule (plain CJS function export\n\
+                   // like rfdc), Bun does include those intrinsics.\n\
+                   if (m && m.__esModule) {{ SKIP.add('length'); SKIP.add('name'); SKIP.add('prototype'); }}\n\
                    return Object.getOwnPropertyNames(m).filter(k => !SKIP.has(k));\n\
                  }})()",
                 json_str(name)
@@ -1178,9 +1184,11 @@ impl Loader for FsLoader {
                  export default __default;\n",
                 json_str(name)
             );
-            // ESM bodies are strict-mode; reserved words can't be used as
-            // binding names in `export const NAME = ...`. ECMAScript 2024
-            // reserved set: https://tc39.es/ecma262/#sec-keywords-and-reserved-words
+            // ESM bodies are strict-mode. Reserved words can't be used as
+            // lexical binding names in `export const NAME = ...`, but they
+            // CAN be used as export aliases via `export { local as NAME }`.
+            // Bun surfaces reserved-word CJS keys (e.g. joi's .boolean, .in,
+            // .function) — so we do the same via the alias form.
             const RESERVED: &[&str] = &[
                 "default", "break", "case", "catch", "class", "const", "continue",
                 "debugger", "delete", "do", "else", "enum", "export", "extends",
@@ -1191,23 +1199,31 @@ impl Loader for FsLoader {
                 // Strict-mode-only reserved (ESM is always strict):
                 "implements", "interface", "let", "package", "private", "protected",
                 "public", "static", "await",
-                // Future reserved:
-                "abstract", "boolean", "byte", "char", "double", "final", "float",
-                "goto", "int", "long", "native", "short", "synchronized", "throws",
-                "transient", "volatile",
                 // Globals / strict-mode-restricted that QuickJS rejects as
                 // lexical binding names ("invalid lexical variable name"):
                 "undefined", "eval", "arguments",
             ];
-            for k in keys {
-                if RESERVED.contains(&k.as_str()) { continue; }
+            for (i, k) in keys.iter().enumerate() {
+                // 'default' is always handled separately at the top of esm_src.
+                // Re-exporting via alias would create a duplicate export.
+                if k == "default" { continue; }
+                // IdentifierName: must be a valid JS identifier for use as
+                // an export name (even via alias). Skip hyphens, digits-first, etc.
                 let valid = !k.is_empty()
                     && k.chars().enumerate().all(|(i, c)| {
                         if i == 0 { c.is_alphabetic() || c == '_' || c == '$' }
                         else { c.is_alphanumeric() || c == '_' || c == '$' }
                     });
                 if !valid { continue; }
-                esm_src.push_str(&format!("export const {0} = __m.{0};\n", k));
+                if RESERVED.contains(&k.as_str()) {
+                    // Use a fresh local binding and alias-export.
+                    esm_src.push_str(&format!(
+                        "const __k_{i} = __m.{k};\nexport {{ __k_{i} as {k} }};\n",
+                        i = i, k = k
+                    ));
+                } else {
+                    esm_src.push_str(&format!("export const {0} = __m.{0};\n", k));
+                }
             }
             return Module::declare(ctx.clone(), name, esm_src);
         }

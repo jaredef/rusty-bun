@@ -1,3 +1,6 @@
-// shelljs's import-time eval traverses many Node-API surfaces.
-// Shape-only deferred (similar to fs-extra/execa class).
-process.stdout.write(JSON.stringify({ probeRan: true }) + "\n");
+try {
+  const shell = (await import("shelljs")).default;
+  process.stdout.write("OK\n");
+} catch (e) {
+  process.stdout.write("ERR " + (e.stack || e.message) + "\n");
+}

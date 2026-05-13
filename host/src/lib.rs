@@ -7925,8 +7925,44 @@ const COMMONJS_LOADER_JS: &str = r#"
         return out;
     }
 
+    // Rename reserved-keyword class fields in CJS sources before eval.
+    // Mirrors the FsLoader-side Rust preprocessor for the ESM path.
+    function fixReservedClassFields(source) {
+        // Cheap rejection: if the source has no reserved-keyword names
+        // in suspicious class-body positions, skip the walk.
+        if (!/[\s;{](?:static|set|get|delete)[\s(=;]/.test(source)) return source;
+        const lines = source.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // Find the first non-whitespace position
+            let p = 0;
+            while (p < line.length && (line[p] === " " || line[p] === "\t")) p++;
+            if (p === 0) continue;  // top-level, not class body
+            const rest = line.substring(p);
+            // Bare statement-form class fields (rare): `set;` `get;` `delete;`.
+            if (rest === "set;" || rest === "get;" || rest === "delete;") {
+                lines[i] = line.substring(0, p) + "_" + rest;
+                continue;
+            }
+            // Arrow-init class fields: `set = (k, v) => {...}`.
+            if (rest.startsWith("set =") || rest.startsWith("set=")
+                || rest.startsWith("get =") || rest.startsWith("get=")
+                || rest.startsWith("delete =") || rest.startsWith("delete=")) {
+                lines[i] = line.substring(0, p) + "_" + rest;
+                continue;
+            }
+            // Method-name shorthand in class body: `static(args) {`. The
+            // reserved word `static` can only appear as a modifier in
+            // class bodies; the shorthand-method form needs renaming.
+            if (rest.startsWith("static(")) {
+                lines[i] = line.substring(0, p) + "_" + rest;
+                continue;
+            }
+        }
+        return lines.join("\n");
+    }
     function readSourceUtf8(absPath) {
-        return fixRegexUEscapes(fs.readFileSyncUtf8(absPath));
+        return fixReservedClassFields(fixRegexUEscapes(fs.readFileSyncUtf8(absPath)));
     }
 
     function pathExists(absPath) {
@@ -9235,8 +9271,15 @@ fn install_node_util_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
                 if (typeof ctor !== "function" || ctor === null) {
                     throw new TypeError("util.inherits: constructor must be a function");
                 }
+                // Permissive: when superCtor is missing/non-function (qrcode's
+                // build-time bundling passes an undefined stream parent in
+                // some configurations), no-op the prototype chain wiring so
+                // the consumer can complete its top-level class evaluation.
                 if (typeof superCtor !== "function" || superCtor === null) {
-                    throw new TypeError("util.inherits: superConstructor must be a function");
+                    Object.defineProperty(ctor, "super_", {
+                        value: undefined, writable: true, configurable: true,
+                    });
+                    return;
                 }
                 Object.defineProperty(ctor, "super_", {
                     value: superCtor, writable: true, configurable: true,

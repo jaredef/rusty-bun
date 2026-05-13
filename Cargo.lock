@@ -375,6 +375,7 @@ dependencies = [
 name = "rusty-bun-host"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mio",
  "rquickjs",
  "rusty-abort-controller",

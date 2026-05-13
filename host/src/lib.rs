@@ -26,6 +26,7 @@ use rquickjs::{
 };
 
 mod reactor;
+mod watchers;
 
 /// Build a fresh rquickjs Runtime + Context with all rusty-bun pilots wired
 /// into globalThis. Includes the ESM node-style module resolver/loader
@@ -1465,6 +1466,7 @@ fn wire_globals<'js>(ctx: rquickjs::Ctx<'js>) -> JsResult<()> {
     wire_url_search_params_static(&ctx, &global)?;
     install_url_search_params_class_js(&ctx)?;
     wire_fs(&ctx, &global)?;
+    wire_watchers(&ctx, &global)?;
     wire_blob_static(&ctx, &global)?;
     install_blob_and_file_classes_js(&ctx)?;
     wire_abort_controller_static(&ctx, &global)?;
@@ -5298,8 +5300,57 @@ fn install_url_search_params_class_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult
 
 // ─────────────────── fs (sync subset) ────────────────────────────────
 
+// Π2.6.d.a: file-watcher substrate. globalThis.__watch wraps the
+// inotify (Linux) watcher pool with reactor integration. fs.watch
+// composes on this; consumers like chokidar/nodemon ride atop fs.watch.
+fn wire_watchers<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
+    let ns = Object::new(ctx.clone())?;
+    ns.set("create", Function::new(ctx.clone(), || -> JsResult<f64> {
+        let id = crate::watchers::inotify::create()
+            .map_err(|e| rquickjs::Error::new_from_js_message("watchers", "create", e))?;
+        Ok(id as f64)
+    })?)?;
+    #[cfg(unix)]
+    ns.set("rawFd", Function::new(ctx.clone(), |id: f64| -> JsResult<i32> {
+        crate::watchers::inotify::raw_fd(id as u64)
+            .map(|fd| fd as i32)
+            .map_err(|e| rquickjs::Error::new_from_js_message("watchers", "rawFd", e))
+    })?)?;
+    ns.set("addWatch", Function::new(ctx.clone(), |id: f64, path: String| -> JsResult<i32> {
+        crate::watchers::inotify::add_watch(id as u64, &path)
+            .map_err(|e| rquickjs::Error::new_from_js_message("watchers", "addWatch", e))
+    })?)?;
+    ns.set("readEventsJson", Function::new(ctx.clone(), |id: f64| -> JsResult<String> {
+        let events = crate::watchers::inotify::read_events(id as u64)
+            .map_err(|e| rquickjs::Error::new_from_js_message("watchers", "readEvents", e))?;
+        let mut out = String::from("[");
+        for (i, ev) in events.iter().enumerate() {
+            if i > 0 { out.push(','); }
+            out.push_str(&format!(
+                "{{\"wd\":{},\"mask\":{},\"name\":{},\"kind\":{}}}",
+                ev.wd, ev.mask, json_str(&ev.name),
+                json_str(crate::watchers::inotify::event_kind(ev.mask))));
+        }
+        out.push(']');
+        Ok(out)
+    })?)?;
+    ns.set("close", Function::new(ctx.clone(), |id: f64| -> JsResult<()> {
+        crate::watchers::inotify::close(id as u64)
+            .map_err(|e| rquickjs::Error::new_from_js_message("watchers", "close", e))
+    })?)?;
+    global.set("__watch", ns)?;
+    Ok(())
+}
+
 fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> {
     let fs = Object::new(ctx.clone())?;
+    // Π2.6.d.a: bind fs to globalThis early so the IIFE later in this
+    // function (which guards `if (typeof globalThis.fs === 'undefined')
+    // return`) actually proceeds. Previously the IIFE returned early
+    // every run, meaning the watch/createReadStream/constants
+    // assignments inside it were dead code — surfaced when fs.watch
+    // was first invoked by the file-watcher fixture.
+    global.set("fs", fs.clone())?;
     fs.set(
         "readFileSync",
         Function::new(ctx.clone(), |path: String, encoding: Opt<String>| -> JsResult<Value<'js>> {
@@ -5439,8 +5490,78 @@ fn wire_fs<'js>(ctx: &rquickjs::Ctx<'js>, global: &Object<'js>) -> JsResult<()> 
             };
             globalThis.fs.ftruncateSync = function() {};
             globalThis.fs.fsyncSync = function() {};
-            globalThis.fs.watch = function(_path, _opts, _listener) {
-                return { close() {}, on() { return this; }, ref() {}, unref() {} };
+            // Π2.6.d.a: real fs.watch atop inotify + reactor. Linux
+            // only; non-Linux falls through to the no-op stub via the
+            // __watch.create errors out path. Signature:
+            //   fs.watch(path, options, listener) → Watcher
+            //   - options may be a string (encoding) or { persistent?, recursive?, encoding? }
+            //   - listener(eventType, filename) — eventType is "rename" | "change"
+            globalThis.fs.watch = function(p, optsOrListener, maybeListener) {
+                let opts = {};
+                let listener = null;
+                if (typeof optsOrListener === "function") {
+                    listener = optsOrListener;
+                } else if (typeof optsOrListener === "string") {
+                    opts.encoding = optsOrListener;
+                    listener = maybeListener || null;
+                } else if (optsOrListener && typeof optsOrListener === "object") {
+                    opts = optsOrListener;
+                    listener = maybeListener || null;
+                }
+                // Try to spin up an inotify watcher. On non-Linux this
+                // throws — fall back to the no-op shape so consumers
+                // that just register listeners don't crash.
+                let watcherId, watcherToken, listeners = [];
+                if (listener) listeners.push(listener);
+                try {
+                    watcherId = globalThis.__watch.create();
+                    globalThis.__watch.addWatch(watcherId, p);
+                    const fd = globalThis.__watch.rawFd(watcherId);
+                    // Token namespace for inotify: 0x60000000 + id.
+                    watcherToken = 0x60000000 + watcherId;
+                    globalThis.__reactor.registerFd(watcherToken, fd);
+                    // Pump events on each reactor wake. The watcher
+                    // installs itself in __keepAlive so the eval loop
+                    // calls __tick between microtask drains.
+                    const watcher = {
+                        _closed: false,
+                        on(event, fn) {
+                            if (event === "change" || event === "rename") {
+                                listeners.push((kind, name) => { if (kind === event) fn(kind, name); });
+                            } else if (event === "error" || event === "close") {
+                                // best-effort no-op for these events in this slice
+                            }
+                            return this;
+                        },
+                        close() {
+                            if (this._closed) return;
+                            this._closed = true;
+                            try { globalThis.__reactor.deregisterFd(watcherToken, fd); } catch (_) {}
+                            try { globalThis.__watch.close(watcherId); } catch (_) {}
+                            if (globalThis.__keepAlive) globalThis.__keepAlive.delete(this);
+                        },
+                        ref() { return this; },
+                        unref() { return this; },
+                        __tick() {
+                            if (this._closed) return false;
+                            let events;
+                            try { events = JSON.parse(globalThis.__watch.readEventsJson(watcherId)); }
+                            catch (_) { return false; }
+                            if (!events || events.length === 0) return false;
+                            for (const ev of events) {
+                                for (const fn of listeners) {
+                                    try { fn(ev.kind, ev.name); } catch (_) {}
+                                }
+                            }
+                            return true;
+                        },
+                    };
+                    if (globalThis.__keepAlive) globalThis.__keepAlive.add(watcher);
+                    return watcher;
+                } catch (_) {
+                    // Fallback no-op shape (non-Linux, or any failure).
+                    return { close() {}, on() { return this; }, ref() {}, unref() {} };
+                }
             };
             globalThis.fs.watchFile = function() {};
             globalThis.fs.unwatchFile = function() {};

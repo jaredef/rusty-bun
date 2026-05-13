@@ -528,7 +528,8 @@ fn node_builtin_esm_source(name: &str) -> Option<String> {
             &["spawn", "spawnSync", "exec", "execSync", "execFile",
               "execFileSync", "fork", "ChildProcess"]),
         "node:net" | "net" => ("nodeNet",
-            &["Socket", "connect", "createConnection", "createServer"]),
+            &["Socket", "connect", "createConnection", "createServer",
+              "isIP", "isIPv4", "isIPv6", "BlockList", "SocketAddress"]),
         "node:tty" | "tty" => ("nodeTty",
             &["isatty", "ReadStream", "WriteStream"]),
         "node:zlib" | "zlib" => ("nodeZlib",
@@ -11451,9 +11452,31 @@ fn install_node_net_js<'js>(ctx: &Ctx<'js>) -> JsResult<()> {
                 Socket,
                 connect,
                 createConnection: connect,
-                // Server deferred (Bun.serve covers HTTP); throw on use.
                 createServer: () => {
                     throw new Error("net.createServer not implemented; use Bun.serve for HTTP");
+                },
+                isIP: (s) => {
+                    if (typeof s !== "string") return 0;
+                    // IPv4: a.b.c.d with octets 0-255
+                    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(s)) {
+                        const parts = s.split(".").map(Number);
+                        if (parts.every(o => o >= 0 && o <= 255)) return 4;
+                    }
+                    // IPv6: at least one : and all hex/colons
+                    if (s.includes(":") && /^[0-9a-fA-F:]+$/.test(s)) return 6;
+                    return 0;
+                },
+                isIPv4: function (s) { return this.isIP(s) === 4; },
+                isIPv6: function (s) { return this.isIP(s) === 6; },
+                BlockList: class BlockList {
+                    constructor() { this._rules = []; }
+                    addAddress() {}
+                    addRange() {}
+                    addSubnet() {}
+                    check() { return false; }
+                },
+                SocketAddress: class SocketAddress {
+                    constructor(opts) { Object.assign(this, opts || {}); }
                 },
             };
 

@@ -8701,3 +8701,10 @@ consumer_test!(consumer_get_stream_app_byte_identical_to_bun, "consumer-get-stre
 consumer_test!(consumer_into_stream_app_byte_identical_to_bun, "consumer-into-stream-app");
 consumer_test!(consumer_jsqr_app_byte_identical_to_bun, "consumer-jsqr-app");
 consumer_test!(consumer_postcss_selector_parser_app_byte_identical_to_bun, "consumer-postcss-selector-parser-app");
+consumer_test!(consumer_graphql_tag_app_byte_identical_to_bun, "consumer-graphql-tag-app");
+consumer_test!(consumer_change_case_app_byte_identical_to_bun, "consumer-change-case-app");
+consumer_test!(consumer_bignumber_app_byte_identical_to_bun, "consumer-bignumber-app");
+consumer_test!(consumer_pako_app_byte_identical_to_bun, "consumer-pako-app");
+consumer_test!(consumer_p_defer_app_byte_identical_to_bun, "consumer-p-defer-app");
+consumer_test!(consumer_p_finally_app_byte_identical_to_bun, "consumer-p-finally-app");
+consumer_test!(consumer_p_throttle_app_byte_identical_to_bun, "consumer-p-throttle-app");

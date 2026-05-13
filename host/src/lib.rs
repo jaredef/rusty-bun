@@ -10850,6 +10850,10 @@ fn install_node_stream_js<'js>(ctx: &rquickjs::Ctx<'js>) -> JsResult<()> {
             Readable.pipeline = pipeline;
             Readable.finished = finished;
             Readable.Stream = Readable;
+            // Node's stream module re-exports EventEmitter for legacy.
+            // @redis/client + many older libs do
+            // `require('stream').EventEmitter`.
+            Readable.EventEmitter = EE;
             Readable.getDefaultHighWaterMark = (objectMode) => objectMode ? 16 : 16 * 1024;
             Readable.setDefaultHighWaterMark = () => {};
             Readable.isReadable = (s) => s instanceof Readable || (s && typeof s.read === "function");

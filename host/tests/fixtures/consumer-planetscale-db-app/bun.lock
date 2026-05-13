@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "@planetscale/database": "*",
+      },
+    },
+  },
+  "packages": {
+    "@planetscale/database": ["@planetscale/database@1.20.1", "", {}, "sha512-DeMEVtQXwyYQDEztj3iuwJ7IdIqYgd68m26gsXpkRJ7rJd0V9Q0cSzQQ32ziwK04nFXuOfu1/RKAXwq6arIZZA=="],
+  }
+}

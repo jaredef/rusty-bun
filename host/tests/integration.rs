@@ -8667,3 +8667,6 @@ consumer_test!(consumer_pump_app_byte_identical_to_bun, "consumer-pump-app");
 consumer_test!(consumer_readable_stream_app_byte_identical_to_bun, "consumer-readable-stream-app");
 consumer_test!(consumer_csv_parser_app_byte_identical_to_bun, "consumer-csv-parser-app");
 consumer_test!(consumer_jsonstream_app_byte_identical_to_bun, "consumer-jsonstream-app");
+consumer_test!(consumer_redis_app_byte_identical_to_bun, "consumer-redis-app");
+consumer_test!(consumer_mqtt_app_byte_identical_to_bun, "consumer-mqtt-app");
+consumer_test!(consumer_planetscale_db_app_byte_identical_to_bun, "consumer-planetscale-db-app");

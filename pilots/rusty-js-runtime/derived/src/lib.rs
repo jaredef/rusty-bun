@@ -18,7 +18,7 @@ pub mod prototype;
 pub mod iterator;
 pub mod regexp;
 
-pub use module::{HostHook, ModuleStatus};
+pub use module::{HostHook, ModuleKind, ModuleStatus, detect_module_kind};
 pub use job_queue::{Job, JobKind, JobQueue};
 
 pub use value::{Value, Object, ObjectRef, PropertyDescriptor, InternalKind};

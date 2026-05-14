@@ -42,11 +42,14 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
 /// the global as the namespace object is the cleanest closure point.
 pub fn install_builtin_module_resolver(rt: &mut Runtime) {
     rt.install_host_hook(HostHook::ResolveBuiltinModule(Box::new(|rt, specifier| {
+        // Tier-Ω.5.j.cjs: accept un-prefixed names as well so
+        // `require("fs")` works alongside `require("node:fs")` /
+        // `import ... from "node:fs"`.
         let global_name = match specifier {
-            "node:fs" => "fs",
-            "node:path" => "path",
-            "node:os" => "os",
-            "node:process" => "process",
+            "node:fs" | "fs" => "fs",
+            "node:path" | "path" => "path",
+            "node:os" | "os" => "os",
+            "node:process" | "process" => "process",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

@@ -37,12 +37,91 @@ use std::rc::Rc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleStatus { Unlinked, Linking, Linked, Evaluating, Evaluated, Failed }
 
+/// Tier-Ω.5.j.cjs: ESM vs CJS classification. Drives the evaluation
+/// pipeline: ESM goes through `evaluate_module`, CJS goes through the
+/// wrapper-synthesis path in `evaluate_cjs_module`. ESM-importing-CJS
+/// reads `module.exports` instead of a spec namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleKind { ESM, CJS }
+
 pub struct ModuleRecord {
     pub url: String,
     pub status: ModuleStatus,
     pub ast: Rc<AstModule>,
     pub bytecode: Rc<CompiledModule>,
     pub namespace: Option<ObjectRef>,
+    /// Tier-Ω.5.j.cjs: kind tag. ESM for built-ins and `.mjs` / `.js`
+    /// under a `"type":"module"` package.json. CJS otherwise.
+    pub kind: ModuleKind,
+    /// Tier-Ω.5.j.cjs: for CJS modules, the post-evaluation
+    /// `module.exports` value (possibly rebound from the original
+    /// `{exports:{}}`). ESM/built-in records leave this as None.
+    pub cjs_exports: Option<Value>,
+}
+
+/// Tier-Ω.5.j.cjs: classify a resolved URL or a bare `node:*` specifier.
+///
+///   1. `node:*` → ESM (built-in namespace).
+///   2. `.mjs` → ESM.
+///   3. `.cjs` → CJS.
+///   4. `.js` (or no extension) → walk up looking for the nearest
+///      `package.json`. If it parses and contains `"type":"module"`,
+///      ESM; otherwise CJS. Missing package.json defaults to CJS.
+///   5. Anything else (no extension, no parent walk hit) defaults to
+///      CJS — matches Node's heuristic for bare loose files.
+pub fn detect_module_kind(resolved_url: &str) -> ModuleKind {
+    if resolved_url.starts_with("node:") {
+        return ModuleKind::ESM;
+    }
+    let path_str = match resolved_url.strip_prefix("file://") {
+        Some(p) => p,
+        None => return ModuleKind::CJS,
+    };
+    let path = std::path::Path::new(path_str);
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    match ext {
+        "mjs" => ModuleKind::ESM,
+        "cjs" => ModuleKind::CJS,
+        _ => {
+            // .js or unknown — walk up to find the nearest package.json.
+            let mut cur = path.parent();
+            while let Some(d) = cur {
+                let candidate = d.join("package.json");
+                if candidate.is_file() {
+                    if let Ok(text) = std::fs::read_to_string(&candidate) {
+                        // Lightweight scan — full JSON parse would pull
+                        // a dep. Look for `"type"` then `"module"` or
+                        // `"commonjs"` in textual order. False positives
+                        // on comments-in-strings are tolerable for v1.
+                        if let Some(t) = scan_package_type(&text) {
+                            return if t == "module" { ModuleKind::ESM } else { ModuleKind::CJS };
+                        }
+                        // package.json with no "type" → CJS per Node.
+                        return ModuleKind::CJS;
+                    }
+                }
+                cur = d.parent();
+            }
+            ModuleKind::CJS
+        }
+    }
+}
+
+/// Minimal `"type"` field scan over package.json text. Returns
+/// `"module"` or `"commonjs"` if found, else None. Avoids pulling a
+/// JSON-parser dep into the runtime crate.
+fn scan_package_type(text: &str) -> Option<String> {
+    // Find `"type"` then the next quoted value.
+    let key_pos = text.find("\"type\"")?;
+    let after = &text[key_pos + 6..];
+    let colon = after.find(':')?;
+    let after = &after[colon + 1..];
+    // Skip whitespace.
+    let after = after.trim_start();
+    if !after.starts_with('"') { return None; }
+    let after = &after[1..];
+    let end = after.find('"')?;
+    Some(after[..end].to_string())
 }
 
 /// Host-supplied callback kinds. The host installs these to customize the
@@ -170,12 +249,27 @@ impl Runtime {
             let source = std::fs::read_to_string(stripped).map_err(|e| {
                 RuntimeError::TypeError(format!("module load: cannot read '{}': {}", stripped, e))
             })?;
-            self.evaluate_module(&source, url)
+            match detect_module_kind(url) {
+                ModuleKind::ESM => self.evaluate_module(&source, url),
+                ModuleKind::CJS => self.evaluate_cjs_module(&source, url),
+            }
         } else {
             Err(RuntimeError::TypeError(format!(
                 "load_module: unsupported URL scheme '{}'", url
             )))
         }
+    }
+
+    /// Tier-Ω.5.j.cjs: look up the CJS `module.exports` value for a
+    /// previously-evaluated CJS module. Returns None for ESM/built-in
+    /// records.
+    pub fn cjs_exports_of(&self, url: &str) -> Option<Value> {
+        self.modules.get(url).and_then(|r| r.borrow().cjs_exports.clone())
+    }
+
+    /// Tier-Ω.5.j.cjs: kind of a cached module record.
+    pub fn module_kind_of(&self, url: &str) -> Option<ModuleKind> {
+        self.modules.get(url).map(|r| r.borrow().kind)
     }
 
     /// Tier-Ω.5.b: dispatch a `node:*` specifier to the host's
@@ -219,6 +313,7 @@ impl Runtime {
         self.modules.insert(specifier.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: specifier.to_string(), status: ModuleStatus::Evaluated,
             ast: empty_ast, bytecode: empty_bc, namespace: Some(ns),
+            kind: ModuleKind::ESM, cjs_exports: None,
         })));
         Ok(ns)
     }
@@ -245,6 +340,8 @@ impl Runtime {
             ast: ast_rc.clone(),
             bytecode: bytecode_rc.clone(),
             namespace: Some(namespace),
+            kind: ModuleKind::ESM,
+            cjs_exports: None,
         }));
         self.modules.insert(url.to_string(), record.clone());
 
@@ -280,8 +377,25 @@ impl Runtime {
             } else {
                 self.load_module(&resolved)?
             };
-            let v = match &ib.kind {
-                ImportBindingKind::Default => {
+            // Tier-Ω.5.j.cjs: if the resolved target is a CJS module,
+            // import bindings read `module.exports` per Node interop —
+            // default is the raw value, named is a property lookup on
+            // the object form, namespace is a synthesized wrapper.
+            let cjs_raw = if is_builtin { None } else { self.cjs_exports_of(&resolved) };
+            let v = match (&ib.kind, &cjs_raw) {
+                (ImportBindingKind::Default, Some(raw)) => raw.clone(),
+                (ImportBindingKind::Namespace, Some(raw)) => {
+                    Value::Object(self.cjs_namespace_view(raw.clone()))
+                }
+                (ImportBindingKind::Named(n), Some(raw)) => {
+                    match raw {
+                        Value::Object(oid) => self.object_get(*oid, n),
+                        _ => return Err(RuntimeError::TypeError(format!(
+                            "named import '{}' from CJS module '{}': module.exports is not an object",
+                            n, resolved))),
+                    }
+                }
+                (ImportBindingKind::Default, None) => {
                     // Built-ins follow Node's CJS-interop convention: the
                     // default import is the namespace object itself when
                     // no explicit `default` property exists. Pure-ESM disk
@@ -291,8 +405,8 @@ impl Runtime {
                         Value::Object(ns)
                     } else { d }
                 }
-                ImportBindingKind::Namespace => Value::Object(ns),
-                ImportBindingKind::Named(n) => self.object_get(ns, n),
+                (ImportBindingKind::Namespace, None) => Value::Object(ns),
+                (ImportBindingKind::Named(n), None) => self.object_get(ns, n),
             };
             import_values.push((ib.slot, v));
         }
@@ -374,6 +488,282 @@ impl Runtime {
         Ok(namespace)
     }
 
+    /// Tier-Ω.5.j.cjs: evaluate a CJS module from source. Synthesizes a
+    /// wrapper function via source-level concatenation, loads it as an
+    /// ESM module whose default export is the wrapper, allocates
+    /// `module`/`exports`, builds a per-module `require` NativeFn, and
+    /// invokes the wrapper. The final `module.exports` becomes the
+    /// module's "namespace" for both `require()` and ESM-importing-CJS
+    /// callers.
+    ///
+    /// v1 deviation: line numbers in CJS parse/runtime errors are off by
+    /// one line — the synthesized prefix adds one newline. Documented in
+    /// pilots/rusty-js-runtime/trajectory.md row Ω.5.j.cjs.
+    pub fn evaluate_cjs_module(&mut self, source: &str, url: &str) -> Result<ObjectRef, RuntimeError> {
+        // Pre-allocate the placeholder namespace view so cyclic
+        // require() observes *something* during evaluation. We'll
+        // refresh it after the wrapper returns.
+        let placeholder = self.alloc_object(Object::new_module_namespace());
+        // Insert a Linking record up-front so a cyclic require returns
+        // the partial exports instead of re-entering evaluation.
+        let initial_exports_obj = self.alloc_object(Object::new_ordinary());
+        let initial_exports = Value::Object(initial_exports_obj);
+        let empty_ast = Rc::new(AstModule {
+            span: rusty_js_ast::Span::new(0, 0),
+            body: Vec::new(),
+            import_entries: Vec::new(),
+            local_export_entries: Vec::new(),
+            indirect_export_entries: Vec::new(),
+            star_export_entries: Vec::new(),
+        });
+        let empty_bc = Rc::new(CompiledModule {
+            bytecode: Vec::new(), constants: Default::default(),
+            locals: Vec::new(), source_map: Vec::new(),
+            imports: Vec::new(), exports: Vec::new(),
+            reexport_sources: Vec::new(),
+        });
+        let record = Rc::new(RefCell::new(ModuleRecord {
+            url: url.to_string(),
+            status: ModuleStatus::Linking,
+            ast: empty_ast,
+            bytecode: empty_bc,
+            namespace: Some(placeholder),
+            kind: ModuleKind::CJS,
+            cjs_exports: Some(initial_exports.clone()),
+        }));
+        self.modules.insert(url.to_string(), record.clone());
+
+        // Synthesize the wrapper. The CJS source goes inside a function
+        // body whose `default` export is the function. We can then call
+        // the function with the synthesized arguments.
+        //
+        // Note: the leading newline before <source> normalizes line
+        // numbers to off-by-one regardless of source content.
+        let wrapped = format!(
+            "export default (function (exports, module, require, __filename, __dirname) {{\n{}\n}});\n",
+            source
+        );
+
+        // Parse + compile the wrapper. Reuse the existing ESM pipeline.
+        let ast = rusty_js_parser::parse_module(&wrapped)
+            .map_err(|e| RuntimeError::CompileError(format!("parse (cjs wrapper): {}", e.message)))?;
+        let _ast_rc = Rc::new(ast);
+        let bytecode = rusty_js_bytecode::compile_module(&wrapped)
+            .map_err(|e| RuntimeError::CompileError(format!("compile (cjs wrapper): {}", e.message)))?;
+        let bytecode_rc = Rc::new(bytecode);
+
+        // Run the wrapper's outer module body. No imports/re-exports
+        // are expected (the wrapper itself never uses them), so the
+        // import-resolution and reexport-loading loops are noops here;
+        // we skip them to keep the path linear.
+        let mut frame = Frame::new_module(&bytecode_rc);
+        self.run_frame_module(&mut frame)?;
+        let locals = frame.locals.clone();
+
+        // Find the wrapper function: it's the `default` local. The
+        // compiler stored it under the "<module.default>" slot whose
+        // index is recorded in the exports list.
+        let wrapper_fn: Value = bytecode_rc.exports.iter().find_map(|eb| {
+            if let rusty_js_bytecode::ExportBinding::Local { exported, local } = eb {
+                if exported == "default" {
+                    return locals.get(*local as usize).cloned();
+                }
+            }
+            None
+        }).unwrap_or(Value::Undefined);
+
+        // Build synthesized __filename / __dirname.
+        let (filename, dirname) = filename_dirname_from_url(url);
+        let filename_v = Value::String(Rc::new(filename));
+        let dirname_v = Value::String(Rc::new(dirname));
+
+        // Build the per-module require NativeFn. Captures the URL.
+        let require_url = url.to_string();
+        let require_fn: crate::value::NativeFn = Rc::new(move |rt, args| {
+            let spec = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(RuntimeError::TypeError(
+                    "require: argument must be a string specifier".into())),
+            };
+            rt.cjs_require(&require_url, &spec)
+        });
+        let require_obj = Object {
+            proto: None,
+            extensible: true,
+            properties: std::collections::HashMap::new(),
+            internal_kind: crate::value::InternalKind::Function(
+                crate::value::FunctionInternals {
+                    name: "require".to_string(),
+                    native: require_fn,
+                }
+            ),
+        };
+        let require_id = self.alloc_object(require_obj);
+        let require_v = Value::Object(require_id);
+
+        // Build the `module` object: { exports: <initial_exports_obj> }.
+        let module_id = self.alloc_object(Object::new_ordinary());
+        self.object_set(module_id, "exports".to_string(), initial_exports.clone());
+        let module_v = Value::Object(module_id);
+
+        // Call the wrapper with the synthesized argument tuple.
+        let _ = self.call_function(
+            wrapper_fn,
+            Value::Undefined,
+            vec![
+                initial_exports.clone(),
+                module_v.clone(),
+                require_v,
+                filename_v,
+                dirname_v,
+            ],
+        )?;
+
+        // After the call, the canonical exports value is
+        // `module.exports` (which may have been rebound).
+        let final_exports = self.object_get(module_id, "exports");
+
+        // Update the record + refresh the placeholder namespace view.
+        {
+            let mut r = record.borrow_mut();
+            r.cjs_exports = Some(final_exports.clone());
+            r.status = ModuleStatus::Evaluated;
+        }
+
+        // Refresh the placeholder namespace view in place so any cached
+        // ObjectRef (e.g. an ESM importer holding `ns`) sees the final
+        // exports shape.
+        self.populate_cjs_namespace_view(placeholder, &final_exports);
+
+        Ok(placeholder)
+    }
+
+    /// Tier-Ω.5.j.cjs: build a fresh namespace view ObjectRef from a
+    /// CJS module.exports value. Used by ESM `import * as X from
+    /// "./lib.cjs"` to satisfy the spec namespace shape.
+    pub fn cjs_namespace_view(&mut self, exports: Value) -> ObjectRef {
+        let ns = self.alloc_object(Object::new_module_namespace());
+        self.populate_cjs_namespace_view(ns, &exports);
+        ns
+    }
+
+    fn populate_cjs_namespace_view(&mut self, ns: ObjectRef, exports: &Value) {
+        match exports {
+            Value::Object(oid) => {
+                // Mirror own properties + a `default` pointer at the
+                // exports value itself.
+                let pairs: Vec<(String, Value)> = self
+                    .obj(*oid)
+                    .properties
+                    .iter()
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                for (k, v) in pairs {
+                    self.object_set(ns, k, v);
+                }
+                self.object_set(ns, "default".to_string(), exports.clone());
+            }
+            _ => {
+                // Non-object exports: only `default` is meaningful.
+                self.object_set(ns, "default".to_string(), exports.clone());
+            }
+        }
+    }
+
+    /// Tier-Ω.5.j.cjs: implement `require(spec)` from a CJS module
+    /// whose URL is `parent_url`. Resolution order:
+    ///   1. Built-in (host hook). Tries the spec as-is, then `node:` +
+    ///      spec if no prefix is present. Lets `require("fs")` work.
+    ///   2. Relative `./` / `../` / absolute `file://` → existing
+    ///      resolve_module pipeline.
+    ///   3. Otherwise → TypeError (bare specifier; node_modules walk
+    ///      deferred).
+    pub fn cjs_require(&mut self, parent_url: &str, spec: &str) -> Result<Value, RuntimeError> {
+        // (1) Built-in dispatch — direct or via node: prefix.
+        let builtin_attempts: Vec<String> = if spec.starts_with("node:") {
+            vec![spec.to_string()]
+        } else if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("file://") {
+            Vec::new()
+        } else {
+            vec![spec.to_string(), format!("node:{}", spec)]
+        };
+        for cand in &builtin_attempts {
+            // Probe the hook by attempting resolution. Cache hits are
+            // fine: resolve_builtin_namespace will reuse them.
+            let probe = self.try_resolve_builtin(cand);
+            if let Ok(Some(ns)) = probe {
+                return Ok(Value::Object(ns));
+            }
+        }
+        // (2) Disk resolution.
+        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("file://") {
+            let resolved = Runtime::resolve_module(parent_url, spec)?;
+            // Cache check first.
+            if let Some(rec) = self.modules.get(&resolved) {
+                let r = rec.borrow();
+                if let Some(raw) = r.cjs_exports.clone() {
+                    return Ok(raw);
+                }
+                if let Some(ns) = r.namespace {
+                    return Ok(Value::Object(ns));
+                }
+            }
+            // Load. For CJS the return is module.exports; for ESM,
+            // the namespace object.
+            let ns = self.load_module(&resolved)?;
+            match self.cjs_exports_of(&resolved) {
+                Some(v) => Ok(v),
+                None => Ok(Value::Object(ns)),
+            }
+        } else {
+            Err(RuntimeError::TypeError(format!(
+                "require('{}'): bare specifier resolution (node_modules) is not supported in v1",
+                spec
+            )))
+        }
+    }
+
+    /// Tier-Ω.5.j.cjs: side-effect-free probe of the
+    /// ResolveBuiltinModule host hook. Returns Ok(Some(ns)) if a
+    /// built-in matches; Ok(None) otherwise.
+    fn try_resolve_builtin(&mut self, spec: &str) -> Result<Option<ObjectRef>, RuntimeError> {
+        // Cache hit?
+        if let Some(rec) = self.modules.get(spec) {
+            if let Some(ns) = rec.borrow().namespace { return Ok(Some(ns)); }
+        }
+        let hook = self.host_hooks.resolve_builtin.take();
+        let result = match &hook {
+            Some(f) => f(self, spec),
+            None => Ok(None),
+        };
+        self.host_hooks.resolve_builtin = hook;
+        let ns = match result? {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+        // Cache.
+        let empty_ast = Rc::new(AstModule {
+            span: rusty_js_ast::Span::new(0, 0),
+            body: Vec::new(),
+            import_entries: Vec::new(),
+            local_export_entries: Vec::new(),
+            indirect_export_entries: Vec::new(),
+            star_export_entries: Vec::new(),
+        });
+        let empty_bc = Rc::new(CompiledModule {
+            bytecode: Vec::new(), constants: Default::default(),
+            locals: Vec::new(), source_map: Vec::new(),
+            imports: Vec::new(), exports: Vec::new(),
+            reexport_sources: Vec::new(),
+        });
+        self.modules.insert(spec.to_string(), Rc::new(RefCell::new(ModuleRecord {
+            url: spec.to_string(), status: ModuleStatus::Evaluated,
+            ast: empty_ast, bytecode: empty_bc, namespace: Some(ns),
+            kind: ModuleKind::ESM, cjs_exports: None,
+        })));
+        Ok(Some(ns))
+    }
+
     /// Run a CompiledModule, returning the terminal stack value AND the
     /// frame's final local-slot table (for namespace construction).
     /// Retained for callers that bypass the disk-loader pipeline (tests +
@@ -406,8 +796,10 @@ fn probe_with_extensions(candidate: &std::path::Path, original: &str) -> Result<
     let attempts: Vec<std::path::PathBuf> = vec![
         candidate.to_path_buf(),
         with_suffix(candidate, ".mjs"),
+        with_suffix(candidate, ".cjs"),
         with_suffix(candidate, ".js"),
         candidate.join("index.mjs"),
+        candidate.join("index.cjs"),
         candidate.join("index.js"),
     ];
     for p in &attempts {
@@ -430,6 +822,16 @@ fn probe_with_extensions(candidate: &std::path::Path, original: &str) -> Result<
 /// the existing extension and would convert `./util` → `./util.mjs`
 /// correctly but `./util.foo` → `./util.mjs` (wrong). We want the
 /// concat-after form per the locked design.
+/// Tier-Ω.5.j.cjs: derive __filename + __dirname from a `file://` URL.
+/// For URLs without the prefix, returns the URL itself as __filename
+/// and an empty __dirname.
+fn filename_dirname_from_url(url: &str) -> (String, String) {
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    let p = std::path::Path::new(path);
+    let dir = p.parent().map(|d| d.display().to_string()).unwrap_or_default();
+    (path.to_string(), dir)
+}
+
 fn with_suffix(p: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(suffix);

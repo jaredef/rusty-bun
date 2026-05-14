@@ -1806,8 +1806,19 @@ impl Compiler {
                 encode_op(&mut self.bytecode, Op::Call);
                 encode_u8(&mut self.bytecode, 2u8);
             }
-            _ => {
-                return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
+            other => {
+                let tag = match other {
+                    Expr::Sequence { .. } => "Sequence",
+                    Expr::Conditional { .. } => "Conditional",
+                    Expr::MetaProperty { .. } => "MetaProperty",
+                    Expr::Opaque { .. } => "Opaque",
+                    Expr::Class { .. } => "ClassExpression",
+                    Expr::Super { .. } => "Super(standalone)",
+                    Expr::Function { .. } => "Function",
+                    Expr::Arrow { .. } => "Arrow",
+                    _ => "<other>",
+                };
+                return Err(self.err(e.span(), &format!("expression form not yet supported in compiler v1: {}", tag)));
             }
         }
         Ok(())

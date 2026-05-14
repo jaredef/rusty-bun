@@ -68,6 +68,30 @@ pub struct Compiler {
     /// Compiler is compiling a nested function, i.e. enclosing.is_empty()
     /// is false).
     upvalues: Vec<UpvalueDescriptor>,
+    /// Tier-Ω.5.f: class lowering context. Pushed when entering a class
+    /// constructor / instance method / static method body. Read by
+    /// Expr::Super and super(...) / super.method() lowerings to resolve
+    /// the synthetic hidden bindings (`<super.ctor>` / `<super.proto>`)
+    /// allocated by the class-emission site.
+    class_stack: Vec<ClassFrame>,
+    /// Counter for synthesizing unique local names across nested classes.
+    class_seq: u32,
+}
+
+#[derive(Debug, Clone)]
+struct ClassFrame {
+    /// Synthetic outer-local name holding the parent constructor (None
+    /// when the class has no `extends` clause — super-references are a
+    /// compile-time error in that case).
+    super_ctor_name: Option<String>,
+    /// Synthetic outer-local name holding the parent prototype.
+    super_proto_name: Option<String>,
+    /// True inside the constructor body (only place where bare `super(...)`
+    /// is valid). False inside instance / static methods.
+    in_constructor: bool,
+    /// True for static methods — bare `super(...)` not allowed; super.x
+    /// resolves to the parent constructor, not the parent prototype.
+    is_static: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +154,8 @@ impl Compiler {
             loop_stack: Vec::new(),
             enclosing: Vec::new(),
             upvalues: Vec::new(),
+            class_stack: Vec::new(),
+            class_seq: 0,
         }
     }
 
@@ -450,6 +476,22 @@ impl Compiler {
                     self.emit_back_jump(target);
                 }
             }
+            Stmt::ClassDecl { name, super_class, members, span } => {
+                // Lower the class definition; result (the constructor function)
+                // is left on the stack, then bound to a local under `name`.
+                self.compile_class(*span, name.as_ref(), super_class.as_ref(), members)?;
+                if let Some(n) = name {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: n.name.clone(),
+                        kind: VariableKind::Let,
+                        depth: 0,
+                    });
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, slot);
+                } else {
+                    encode_op(&mut self.bytecode, Op::Pop);
+                }
+            }
             _ => {
                 return Err(self.err(span, "statement form not yet supported in compiler v1"));
             }
@@ -693,6 +735,14 @@ impl Compiler {
                 encode_op(&mut self.bytecode, Op::PushThis);
             }
             Expr::Member { object, property, optional: _, .. } => {
+                // Tier-Ω.5.f: super.x read — load from the parent prototype
+                // (or parent constructor in a static context). The lookup
+                // does NOT thread `this` for a bare member read; only when
+                // wrapped in a Call does receiver-as-this matter.
+                if matches!(object.as_ref(), Expr::Super { .. }) {
+                    self.compile_super_member_load(e.span(), property)?;
+                    return Ok(());
+                }
                 self.compile_expr(object)?;
                 match property.as_ref() {
                     MemberProperty::Identifier { name, .. } => {
@@ -715,6 +765,23 @@ impl Compiler {
                 let n = arguments.len();
                 if n > 255 {
                     return Err(self.err(e.span(), "too many call arguments (>255)"));
+                }
+                // Tier-Ω.5.f: super(...) call inside a derived-class
+                // constructor. Lowers to a method-call on the parent
+                // constructor with the current `this` as receiver.
+                if matches!(callee.as_ref(), Expr::Super { .. }) {
+                    self.compile_super_call(e.span(), arguments)?;
+                    return Ok(());
+                }
+                // Tier-Ω.5.f: super.method(...) call inside an instance or
+                // static method. Lowers to a method-call on the parent
+                // prototype's (or parent constructor's) named slot with
+                // the current `this` as receiver.
+                if let Expr::Member { object, property, .. } = callee.as_ref() {
+                    if matches!(object.as_ref(), Expr::Super { .. }) {
+                        self.compile_super_member_call(e.span(), property, arguments)?;
+                        return Ok(());
+                    }
                 }
                 // Tier-Ω.5.a: when callee is a MemberExpression, emit a
                 // method-call form so `this` threads as the receiver.
@@ -863,6 +930,20 @@ impl Compiler {
             Expr::Update { operator, argument, prefix, .. } => {
                 self.compile_update(e.span(), *operator, argument, *prefix)?;
             }
+            Expr::Class { name, super_class, members, span } => {
+                // Class expression: lower exactly like ClassDecl but leave
+                // the constructor on the stack as the expression's value.
+                self.compile_class(
+                    *span,
+                    name.as_ref(),
+                    super_class.as_ref().map(|b| b.as_ref()),
+                    members,
+                )?;
+            }
+            Expr::Super { span } => {
+                return Err(self.err(*span,
+                    "bare `super` reference is only valid as `super(...)` or `super.method(...)`"));
+            }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
             }
@@ -899,6 +980,8 @@ impl Compiler {
             loop_stack: Vec::new(),
             enclosing: sub_enclosing,
             upvalues: Vec::new(),
+            class_stack: self.class_stack.clone(),
+            class_seq: self.class_seq,
         };
         let param_count = params.len() as u16;
         for p in params {
@@ -1483,6 +1566,315 @@ impl Compiler {
             }
             _ => return Err(self.err(span, "update on non-identifier non-member target not yet supported")),
         }
+        Ok(())
+    }
+
+    // ───────────────── Tier-Ω.5.f: class lowering ─────────────────
+
+    /// Lower a class declaration / expression. Leaves the class's
+    /// constructor function on the operand stack.
+    ///
+    /// Strategy: a class is sugar over function + prototype + property
+    /// installation. The class body emits:
+    ///   1. (if extends) evaluate super-class, stash in a hidden local
+    ///      `<super.ctor>` and the super prototype in `<super.proto>`.
+    ///   2. Allocate the prototype object; if extends, wire its
+    ///      [[Prototype]] to the parent's prototype via SetPrototype.
+    ///   3. Build the constructor closure (default no-op if absent).
+    ///      Bind to a hidden local so methods that capture super can
+    ///      land. Wire ctor.prototype = <proto>; proto.constructor = ctor.
+    ///      If extends, wire ctor.[[Prototype]] = super-ctor for static
+    ///      inheritance.
+    ///   4. Install each instance / static method onto its target with
+    ///      ClassFrame pushed so super-references resolve to the
+    ///      synthesized outer-local names.
+    ///
+    /// Method-shorthand `super.method` / `super(...)` references in the
+    /// method body resolve via the existing upvalue machinery — the
+    /// synthesized outer-local names are real entries in `self.locals`,
+    /// and the sub-compiler captures them as upvalues per Tier-Ω.5.c.
+    fn compile_class(
+        &mut self,
+        span: Span,
+        _name: Option<&BindingIdentifier>,
+        super_class: Option<&Expr>,
+        members: &[ClassMember],
+    ) -> Result<(), CompileError> {
+        let seq = self.class_seq;
+        self.class_seq += 1;
+
+        let super_ctor_name = format!("<class${}.super.ctor>", seq);
+        let super_proto_name = format!("<class${}.super.proto>", seq);
+        let proto_name = format!("<class${}.proto>", seq);
+        let ctor_name = format!("<class${}.ctor>", seq);
+
+        // ── 1. extends evaluation ──────────────────────────────────
+        let super_ctor_slot = if let Some(sc) = super_class {
+            let slot = self.alloc_temp(&super_ctor_name);
+            self.compile_expr(sc)?;
+            encode_op(&mut self.bytecode, Op::StoreLocal);
+            encode_u16(&mut self.bytecode, slot);
+            // <super.proto> = <super.ctor>.prototype
+            let proto_slot = self.alloc_temp(&super_proto_name);
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, slot);
+            let key_proto = self.constants.intern(Constant::String("prototype".into()));
+            encode_op(&mut self.bytecode, Op::GetProp);
+            encode_u16(&mut self.bytecode, key_proto);
+            encode_op(&mut self.bytecode, Op::StoreLocal);
+            encode_u16(&mut self.bytecode, proto_slot);
+            Some((slot, proto_slot))
+        } else {
+            None
+        };
+
+        // ── 2. prototype object allocation + extends-wiring ────────
+        let proto_slot = self.alloc_temp(&proto_name);
+        encode_op(&mut self.bytecode, Op::NewObject);
+        encode_op(&mut self.bytecode, Op::StoreLocal);
+        encode_u16(&mut self.bytecode, proto_slot);
+        if let Some((_sc, sp)) = super_ctor_slot {
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, proto_slot);
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, sp);
+            encode_op(&mut self.bytecode, Op::SetPrototype);
+        }
+
+        // ── 3. constructor closure ─────────────────────────────────
+        //
+        // Find an explicit `constructor` member, else synthesize a no-op.
+        let mut ctor_params: Vec<Parameter> = Vec::new();
+        let mut ctor_body: Vec<Stmt> = Vec::new();
+        for m in members {
+            if let ClassMember::Method { kind: MethodKind::Constructor, params, body, .. } = m {
+                ctor_params = params.clone();
+                ctor_body = body.clone();
+                break;
+            }
+        }
+
+        // Push class context for the constructor body.
+        self.class_stack.push(ClassFrame {
+            super_ctor_name: super_ctor_slot.map(|_| super_ctor_name.clone()),
+            super_proto_name: super_ctor_slot.map(|_| super_proto_name.clone()),
+            in_constructor: true,
+            is_static: false,
+        });
+        let ctor_proto = self.compile_function_proto(None, false, false, &ctor_params, &ctor_body)?;
+        self.class_stack.pop();
+        let ctor_captures = ctor_proto.upvalues.clone();
+        let ctor_idx = self.constants.intern(Constant::Function(Box::new(ctor_proto)));
+        encode_op(&mut self.bytecode, Op::MakeClosure);
+        encode_u16(&mut self.bytecode, ctor_idx);
+        emit_captures(&mut self.bytecode, &ctor_captures);
+        let ctor_slot = self.alloc_temp(&ctor_name);
+        encode_op(&mut self.bytecode, Op::StoreLocal);
+        encode_u16(&mut self.bytecode, ctor_slot);
+
+        // ctor.prototype = <proto>
+        let key_proto = self.constants.intern(Constant::String("prototype".into()));
+        encode_op(&mut self.bytecode, Op::LoadLocal);
+        encode_u16(&mut self.bytecode, ctor_slot);
+        encode_op(&mut self.bytecode, Op::LoadLocal);
+        encode_u16(&mut self.bytecode, proto_slot);
+        encode_op(&mut self.bytecode, Op::SetProp);
+        encode_u16(&mut self.bytecode, key_proto);
+        encode_op(&mut self.bytecode, Op::Pop);
+
+        // <proto>.constructor = ctor
+        let key_constructor = self.constants.intern(Constant::String("constructor".into()));
+        encode_op(&mut self.bytecode, Op::LoadLocal);
+        encode_u16(&mut self.bytecode, proto_slot);
+        encode_op(&mut self.bytecode, Op::LoadLocal);
+        encode_u16(&mut self.bytecode, ctor_slot);
+        encode_op(&mut self.bytecode, Op::SetProp);
+        encode_u16(&mut self.bytecode, key_constructor);
+        encode_op(&mut self.bytecode, Op::Pop);
+
+        // ctor.[[Prototype]] = <super.ctor> for static-method inheritance.
+        if let Some((sc, _sp)) = super_ctor_slot {
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, ctor_slot);
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, sc);
+            encode_op(&mut self.bytecode, Op::SetPrototype);
+        }
+
+        // ── 4. methods ─────────────────────────────────────────────
+        for m in members {
+            match m {
+                ClassMember::Method { kind, params, body, name: m_name, is_static, is_async, is_generator, span: m_span } => {
+                    if matches!(kind, MethodKind::Constructor) { continue; }
+                    if !matches!(kind, MethodKind::Method) {
+                        return Err(self.err(*m_span,
+                            "getter / setter class members not yet supported"));
+                    }
+                    if *is_async || *is_generator {
+                        return Err(self.err(*m_span,
+                            "async / generator class methods not yet supported"));
+                    }
+                    let method_key = match m_name {
+                        ClassMemberName::Identifier { name, .. } => name.clone(),
+                        ClassMemberName::String { value, .. } => value.clone(),
+                        ClassMemberName::Number { value, .. } => {
+                            if value.fract() == 0.0 { format!("{}", *value as i64) }
+                            else { format!("{}", value) }
+                        }
+                        ClassMemberName::Private { .. } | ClassMemberName::Computed { .. } => {
+                            return Err(self.err(*m_span,
+                                "private / computed class member names not yet supported"));
+                        }
+                    };
+
+                    // Push class context: not the constructor, so super(...)
+                    // is forbidden inside the method; super.x is allowed
+                    // and resolves through the prototype.
+                    self.class_stack.push(ClassFrame {
+                        super_ctor_name: super_ctor_slot.map(|_| super_ctor_name.clone()),
+                        super_proto_name: super_ctor_slot.map(|_| super_proto_name.clone()),
+                        in_constructor: false,
+                        is_static: *is_static,
+                    });
+                    let m_proto = self.compile_function_proto(None, false, false, params, body)?;
+                    self.class_stack.pop();
+                    let captures = m_proto.upvalues.clone();
+                    let m_idx = self.constants.intern(Constant::Function(Box::new(m_proto)));
+
+                    // Push the target object on the stack first, then the
+                    // method closure, then SetProp.
+                    let target_slot = if *is_static { ctor_slot } else { proto_slot };
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, target_slot);
+                    encode_op(&mut self.bytecode, Op::MakeClosure);
+                    encode_u16(&mut self.bytecode, m_idx);
+                    emit_captures(&mut self.bytecode, &captures);
+                    let key_idx = self.constants.intern(Constant::String(method_key));
+                    encode_op(&mut self.bytecode, Op::SetProp);
+                    encode_u16(&mut self.bytecode, key_idx);
+                    encode_op(&mut self.bytecode, Op::Pop);
+                }
+                ClassMember::Field { span: f_span, .. } => {
+                    return Err(self.err(*f_span,
+                        "class fields not yet supported (Tier-Ω.5.f scope ceiling)"));
+                }
+                ClassMember::StaticBlock { span: b_span, .. } => {
+                    return Err(self.err(*b_span,
+                        "static initializer blocks not yet supported (Tier-Ω.5.f scope ceiling)"));
+                }
+            }
+        }
+
+        // ── result: leave the constructor on the stack ─────────────
+        encode_op(&mut self.bytecode, Op::LoadLocal);
+        encode_u16(&mut self.bytecode, ctor_slot);
+        let _ = span;
+        Ok(())
+    }
+
+    /// Lower `super(args...)` inside a derived-class constructor body.
+    /// Emits a method-call on the parent constructor with the current
+    /// `this` as receiver. The result is left on the stack (Pop'd by
+    /// the surrounding ExpressionStatement).
+    fn compile_super_call(
+        &mut self,
+        span: Span,
+        arguments: &[Argument],
+    ) -> Result<(), CompileError> {
+        let frame = self.class_stack.last().cloned()
+            .ok_or_else(|| self.err(span, "super(...) outside of a class"))?;
+        if !frame.in_constructor {
+            return Err(self.err(span,
+                "super(...) is only valid inside a derived-class constructor"));
+        }
+        let super_ctor_name = frame.super_ctor_name.clone().ok_or_else(|| {
+            self.err(span,
+                "super(...) used in a class with no `extends` clause")
+        })?;
+        let n = arguments.len();
+        if n > 255 {
+            return Err(self.err(span, "too many super-call arguments (>255)"));
+        }
+        // Receiver = current `this`.
+        encode_op(&mut self.bytecode, Op::PushThis);
+        // Method = parent constructor.
+        self.emit_load_ident(&super_ctor_name);
+        for a in arguments {
+            match a {
+                Argument::Expr(e) => self.compile_expr(e)?,
+                Argument::Spread { .. } => {
+                    return Err(self.err(span, "spread arguments not yet supported"));
+                }
+            }
+        }
+        encode_op(&mut self.bytecode, Op::CallMethod);
+        encode_u8(&mut self.bytecode, n as u8);
+        Ok(())
+    }
+
+    /// Lower `super.x` (bare read) inside a class method body. Resolves
+    /// against the parent prototype (instance methods) or the parent
+    /// constructor (static methods).
+    fn compile_super_member_load(
+        &mut self,
+        span: Span,
+        property: &MemberProperty,
+    ) -> Result<(), CompileError> {
+        let frame = self.class_stack.last().cloned()
+            .ok_or_else(|| self.err(span, "super reference outside of a class"))?;
+        let target_name = if frame.is_static {
+            frame.super_ctor_name.clone()
+        } else {
+            frame.super_proto_name.clone()
+        }.ok_or_else(|| self.err(span,
+            "super reference in a class with no `extends` clause"))?;
+        self.emit_load_ident(&target_name);
+        match property {
+            MemberProperty::Identifier { name, .. } => {
+                let idx = self.constants.intern(Constant::String(name.clone()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, idx);
+            }
+            MemberProperty::Computed { expr, .. } => {
+                self.compile_expr(expr)?;
+                encode_op(&mut self.bytecode, Op::GetIndex);
+            }
+            MemberProperty::Private { name, .. } => {
+                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, idx);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lower `super.method(args...)` — a super member-call with the
+    /// current `this` as receiver. The method lookup goes through the
+    /// parent prototype (instance) or constructor (static).
+    fn compile_super_member_call(
+        &mut self,
+        span: Span,
+        property: &MemberProperty,
+        arguments: &[Argument],
+    ) -> Result<(), CompileError> {
+        let n = arguments.len();
+        if n > 255 {
+            return Err(self.err(span, "too many super-call arguments (>255)"));
+        }
+        // Receiver = current `this`.
+        encode_op(&mut self.bytecode, Op::PushThis);
+        // Method = (parent prototype | parent ctor) [.property].
+        self.compile_super_member_load(span, property)?;
+        for a in arguments {
+            match a {
+                Argument::Expr(e) => self.compile_expr(e)?,
+                Argument::Spread { .. } => {
+                    return Err(self.err(span, "spread arguments not yet supported"));
+                }
+            }
+        }
+        encode_op(&mut self.bytecode, Op::CallMethod);
+        encode_u8(&mut self.bytecode, n as u8);
         Ok(())
     }
 }

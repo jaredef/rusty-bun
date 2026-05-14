@@ -111,6 +111,10 @@ pub enum Op {
     SetProp = 0x81,
     GetIndex = 0x82,
     SetIndex = 0x83,
+    /// SET_PROTOTYPE — pops [target, proto] (proto on top); sets
+    /// target.[[Prototype]] = proto when proto is Object, or to None when
+    /// proto is Null. Tier-Ω.5.f: class-extends chain wiring.
+    SetPrototype = 0x84,
 
     // Object / array construction
     NewObject = 0x90,
@@ -165,7 +169,7 @@ impl Op {
             | Lt | Gt | Le | Ge | Eq | Ne | StrictEq | StrictNe | In | Instanceof
             | BitAnd | BitOr | BitXor | BitNot | Shl | Shr | UShr | Not
             | Return | ReturnUndef
-            | GetIndex | SetIndex | NewObject
+            | GetIndex | SetIndex | SetPrototype | NewObject
             | Typeof | Void | Delete
             | Throw | TryExit
             | IterInit | IterNext | IterClose
@@ -238,6 +242,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x70 => Call, 0x71 => New, 0x72 => Return, 0x73 => ReturnUndef,
         0x74 => CallMethod, 0x75 => PushThis,
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
+        0x84 => SetPrototype,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,
         0xA0 => Typeof, 0xA1 => Void, 0xA2 => Delete,
         0xB0 => MakeClosure, 0xB1 => MakeArrow,

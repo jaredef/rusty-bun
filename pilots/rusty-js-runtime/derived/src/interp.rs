@@ -692,6 +692,48 @@ impl Runtime {
                     };
                     frame.push(v);
                 }
+                Op::SetPrototype => {
+                    // Pop [target, proto]; proto on top.
+                    let proto_v = frame.pop()?;
+                    let target_v = frame.pop()?;
+                    let target_id = match target_v {
+                        Value::Object(id) => id,
+                        _ => return Err(RuntimeError::TypeError(
+                            "SetPrototype: target is not an object".into())),
+                    };
+                    let new_proto = match proto_v {
+                        Value::Object(id) => Some(id),
+                        Value::Null => None,
+                        _ => return Err(RuntimeError::TypeError(
+                            "SetPrototype: proto must be Object or Null".into())),
+                    };
+                    self.obj_mut(target_id).proto = new_proto;
+                }
+                Op::Instanceof => {
+                    // pops [obj, ctor]; ctor on top.
+                    let ctor_v = frame.pop()?;
+                    let obj_v = frame.pop()?;
+                    let result = match (&obj_v, &ctor_v) {
+                        (Value::Object(obj_id), Value::Object(ctor_id)) => {
+                            // Read ctor.prototype (own + proto-chain), walk obj's proto chain.
+                            let proto_v = self.object_get(*ctor_id, "prototype");
+                            match proto_v {
+                                Value::Object(target_proto) => {
+                                    let mut cur = self.obj(*obj_id).proto;
+                                    let mut found = false;
+                                    while let Some(c) = cur {
+                                        if c == target_proto { found = true; break; }
+                                        cur = self.obj(c).proto;
+                                    }
+                                    found
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                    frame.push(Value::Boolean(result));
+                }
                 Op::SetIndex => {
                     let value = frame.pop()?;
                     let key_v = frame.pop()?;
@@ -768,7 +810,22 @@ impl Runtime {
                     }
                     args.reverse();
                     let callee = frame.pop()?;
-                    let this_id = self.alloc_object(Object::new_ordinary());
+                    // Tier-Ω.5.f: consult callee.prototype property to set
+                    // the new instance's [[Prototype]]. This is the load-
+                    // bearing engine change that makes user-defined classes
+                    // (whose prototypes are ordinary objects with method
+                    // properties, not intrinsic prototypes) work with `new`.
+                    let proto_override = if let Value::Object(cid) = &callee {
+                        match self.object_get(*cid, "prototype") {
+                            Value::Object(pid) => Some(pid),
+                            _ => None,
+                        }
+                    } else { None };
+                    let mut ordinary = Object::new_ordinary();
+                    if proto_override.is_some() {
+                        ordinary.proto = proto_override;
+                    }
+                    let this_id = self.alloc_object(ordinary);
                     let this_obj = Value::Object(this_id);
                     let ret = self.call_function(callee, this_obj.clone(), args)?;
                     let result = match ret {

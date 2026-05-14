@@ -131,6 +131,13 @@ pub enum Op {
     MakeClosure = 0xB0,
     /// MAKE_ARROW <u16>
     MakeArrow = 0xB1,
+    /// CAPTURE_LOCAL <u16> — pop top-of-stack closure, read frame.locals[slot],
+    /// append into the closure's upvalues, push closure back. Emitted after
+    /// MakeClosure for each captured outer local (Tier-Ω.5.c).
+    CaptureLocal = 0xB2,
+    /// CAPTURE_UPVALUE <u16> — like CaptureLocal but reads from the current
+    /// frame's upvalues slot (transitively-captured outer upvalue).
+    CaptureUpvalue = 0xB3,
 
     // Exception handling
     Throw = 0xC0,
@@ -167,7 +174,7 @@ impl Op {
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
             | DefineLocal | GetProp | SetProp | NewArray | InitProp
-            | MakeClosure | MakeArrow => 2,
+            | MakeClosure | MakeArrow | CaptureLocal | CaptureUpvalue => 2,
             PushI32 | Jump | JumpIfTrue | JumpIfFalse
             | JumpIfTrueKeep | JumpIfFalseKeep | JumpIfNullish
             | InitIndex | TryEnter => 4,
@@ -234,6 +241,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,
         0xA0 => Typeof, 0xA1 => Void, 0xA2 => Delete,
         0xB0 => MakeClosure, 0xB1 => MakeArrow,
+        0xB2 => CaptureLocal, 0xB3 => CaptureUpvalue,
         0xC0 => Throw, 0xC1 => TryEnter, 0xC2 => TryExit,
         0xD0 => IterInit, 0xD1 => IterNext, 0xD2 => IterClose,
         0xE0 => Nop, 0xE1 => Debugger,

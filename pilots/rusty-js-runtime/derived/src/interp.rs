@@ -331,6 +331,47 @@ impl Runtime {
                     let v = frame.pop()?;
                     self.globals.insert(name, v);
                 }
+                Op::LoadUpvalue => {
+                    let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 2;
+                    let v = frame.upvalues.get(slot).cloned().unwrap_or(Value::Undefined);
+                    frame.push(v);
+                }
+                Op::StoreUpvalue => {
+                    let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 2;
+                    let v = frame.pop()?;
+                    while frame.upvalues.len() <= slot { frame.upvalues.push(Value::Undefined); }
+                    frame.upvalues[slot] = v;
+                }
+                Op::CaptureLocal => {
+                    let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 2;
+                    let v = frame.locals.get(slot).cloned().unwrap_or(Value::Undefined);
+                    let top = match frame.peek(0)? {
+                        Value::Object(id) => *id,
+                        _ => return Err(RuntimeError::TypeError("CaptureLocal: top of stack is not a closure".into())),
+                    };
+                    if let InternalKind::Closure(c) = &mut self.obj_mut(top).internal_kind {
+                        c.upvalues.push(v);
+                    } else {
+                        return Err(RuntimeError::TypeError("CaptureLocal: top is not a closure".into()));
+                    }
+                }
+                Op::CaptureUpvalue => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 2;
+                    let v = frame.upvalues.get(idx).cloned().unwrap_or(Value::Undefined);
+                    let top = match frame.peek(0)? {
+                        Value::Object(id) => *id,
+                        _ => return Err(RuntimeError::TypeError("CaptureUpvalue: top is not a closure".into())),
+                    };
+                    if let InternalKind::Closure(c) = &mut self.obj_mut(top).internal_kind {
+                        c.upvalues.push(v);
+                    } else {
+                        return Err(RuntimeError::TypeError("CaptureUpvalue: top is not a closure".into()));
+                    }
+                }
                 Op::DefineLocal => {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
@@ -772,8 +813,17 @@ impl Runtime {
         let proto = proto_opt.expect("closure branch implies proto");
         let args = effective_args;
         let this = effective_this;
-        // Build the inner frame's locals: arguments first, then space for
-        // additional locals beyond params.
+        // Snapshot the closure's upvalues for the inner frame. v1
+        // value-capture: clone the Values; mutation inside the closure
+        // operates on the frame's snapshot and is *not* propagated back
+        // to the creating scope. See trajectory row.
+        let upvalues: Vec<Value> = {
+            let o = self.obj(id);
+            match &o.internal_kind {
+                crate::value::InternalKind::Closure(c) => c.upvalues.clone(),
+                _ => Vec::new(),
+            }
+        };
         let mut locals: Vec<Value> = Vec::new();
         for (i, _) in proto.locals.iter().enumerate() {
             if i < args.len() {
@@ -782,7 +832,6 @@ impl Runtime {
                 locals.push(Value::Undefined);
             }
         }
-        // If fewer locals than args (e.g. extra args), trim — JS permits.
         let mut inner = Frame {
             bytecode: &proto.bytecode,
             constants: &proto.constants,
@@ -791,6 +840,7 @@ impl Runtime {
             pc: 0,
             try_stack: Vec::new(),
             this_value: this,
+            upvalues,
         };
         self.run_frame(&mut inner)
     }
@@ -842,6 +892,10 @@ pub struct Frame<'a> {
     /// `this` for the executing frame. Module frames default to Undefined;
     /// method-call frames receive the receiver. Tier-Ω.5.a.
     pub this_value: Value,
+    /// Captured upvalues snapshot for this frame. Tier-Ω.5.c. Closure
+    /// frames receive the closure object's upvalues vector (cloned at
+    /// frame entry — v1 uses value-capture semantics, see trajectory).
+    pub upvalues: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -862,6 +916,7 @@ impl<'a> Frame<'a> {
             pc: 0,
             try_stack: Vec::new(),
             this_value: Value::Undefined,
+            upvalues: Vec::new(),
         }
     }
 

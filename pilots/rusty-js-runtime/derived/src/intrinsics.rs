@@ -23,6 +23,9 @@ impl Runtime {
         // Object.prototype. Tier-Ω.5.a.
         self.install_prototypes();
         self.install_globals();
+        self.install_object_static();
+        self.install_array_static();
+        self.install_symbol_static();
         self.install_math();
         self.install_json();
         self.install_console();
@@ -182,6 +185,198 @@ impl Runtime {
         });
     }
 
+    fn install_object_static(&mut self) {
+        let obj_ctor = self.alloc_object(Object::new_ordinary());
+        register_method(self, obj_ctor, "keys", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+            };
+            let arr = rt.alloc_object(Object::new_array());
+            let keys: Vec<String> = {
+                let o = rt.obj(id);
+                if matches!(o.internal_kind, InternalKind::Array) {
+                    // Numeric keys in ascending order, length excluded.
+                    let mut ks: Vec<(u64, String)> = o.properties.iter()
+                        .filter_map(|(k, d)| if d.enumerable && k != "length" {
+                            k.parse::<u64>().ok().map(|n| (n, k.clone()))
+                        } else { None })
+                        .collect();
+                    ks.sort_by_key(|(n, _)| *n);
+                    ks.into_iter().map(|(_, k)| k).collect()
+                } else {
+                    o.properties.iter().filter(|(k, d)| d.enumerable && *k != "length")
+                        .map(|(k, _)| k.clone()).collect()
+                }
+            };
+            for (i, k) in keys.iter().enumerate() {
+                rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+            }
+            rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
+            Ok(Value::Object(arr))
+        });
+        register_method(self, obj_ctor, "values", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+            };
+            let arr = rt.alloc_object(Object::new_array());
+            let kvs: Vec<(String, Value)> = {
+                let o = rt.obj(id);
+                let is_array = matches!(o.internal_kind, InternalKind::Array);
+                let mut entries: Vec<(String, Value)> = o.properties.iter()
+                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                if is_array {
+                    entries.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(u64::MAX));
+                }
+                entries
+            };
+            for (i, (_, v)) in kvs.iter().enumerate() {
+                rt.object_set(arr, i.to_string(), v.clone());
+            }
+            rt.object_set(arr, "length".into(), Value::Number(kvs.len() as f64));
+            Ok(Value::Object(arr))
+        });
+        register_method(self, obj_ctor, "entries", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+            };
+            let arr = rt.alloc_object(Object::new_array());
+            let kvs: Vec<(String, Value)> = {
+                let o = rt.obj(id);
+                let is_array = matches!(o.internal_kind, InternalKind::Array);
+                let mut entries: Vec<(String, Value)> = o.properties.iter()
+                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                if is_array {
+                    entries.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(u64::MAX));
+                }
+                entries
+            };
+            for (i, (k, v)) in kvs.iter().enumerate() {
+                let pair = rt.alloc_object(Object::new_array());
+                rt.object_set(pair, "0".into(), Value::String(Rc::new(k.clone())));
+                rt.object_set(pair, "1".into(), v.clone());
+                rt.object_set(pair, "length".into(), Value::Number(2.0));
+                rt.object_set(arr, i.to_string(), Value::Object(pair));
+            }
+            rt.object_set(arr, "length".into(), Value::Number(kvs.len() as f64));
+            Ok(Value::Object(arr))
+        });
+        register_method(self, obj_ctor, "assign", |rt, args| {
+            let target = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError("Object.assign: target must be an object".into())),
+            };
+            for src in args.iter().skip(1) {
+                if let Value::Object(sid) = src {
+                    let entries: Vec<(String, Value)> = rt.obj(*sid).properties.iter()
+                        .filter(|(_, d)| d.enumerable)
+                        .map(|(k, d)| (k.clone(), d.value.clone()))
+                        .collect();
+                    for (k, v) in entries { rt.object_set(target, k, v); }
+                }
+            }
+            Ok(Value::Object(target))
+        });
+        register_method(self, obj_ctor, "freeze", |rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            if let Value::Object(id) = &v {
+                let o = rt.obj_mut(*id);
+                o.extensible = false;
+                for d in o.properties.values_mut() {
+                    d.writable = false; d.configurable = false;
+                }
+            }
+            Ok(v)
+        });
+        register_method(self, obj_ctor, "isFrozen", |rt, args| {
+            let id = match args.first() { Some(Value::Object(id)) => *id, _ => return Ok(Value::Boolean(true)) };
+            let o = rt.obj(id);
+            let frozen = !o.extensible && o.properties.values().all(|d| !d.writable && !d.configurable);
+            Ok(Value::Boolean(frozen))
+        });
+        register_method(self, obj_ctor, "fromEntries", |rt, args| {
+            let out = rt.alloc_object(Object::new_ordinary());
+            let src = match args.first() { Some(v) => v.clone(), None => return Ok(Value::Object(out)) };
+            // Iterate via @@iterator protocol.
+            let entries = collect_iterable(rt, src)?;
+            for e in entries {
+                if let Value::Object(pair) = e {
+                    let k = rt.object_get(pair, "0");
+                    let v = rt.object_get(pair, "1");
+                    let key = crate::abstract_ops::to_string(&k).as_str().to_string();
+                    rt.object_set(out, key, v);
+                }
+            }
+            Ok(Value::Object(out))
+        });
+        self.globals.insert("Object".into(), Value::Object(obj_ctor));
+    }
+
+    fn install_array_static(&mut self) {
+        let arr_ctor = self.alloc_object(Object::new_ordinary());
+        register_method(self, arr_ctor, "isArray", |rt, args| {
+            Ok(Value::Boolean(matches!(args.first(),
+                Some(Value::Object(id)) if matches!(rt.obj(*id).internal_kind, InternalKind::Array))))
+        });
+        register_method(self, arr_ctor, "of", |rt, args| {
+            let out = rt.alloc_object(Object::new_array());
+            for (i, v) in args.iter().enumerate() {
+                rt.object_set(out, i.to_string(), v.clone());
+            }
+            rt.object_set(out, "length".into(), Value::Number(args.len() as f64));
+            Ok(Value::Object(out))
+        });
+        register_method(self, arr_ctor, "from", |rt, args| {
+            let src = args.first().cloned().unwrap_or(Value::Undefined);
+            let map_fn = args.get(1).cloned();
+            let out = rt.alloc_object(Object::new_array());
+            // Two shapes: iterable (has @@iterator) or array-like (has length).
+            let items: Vec<Value> = match &src {
+                Value::Object(id) => {
+                    // Try iterator first.
+                    let has_iter = !matches!(rt.object_get(*id, "@@iterator"), Value::Undefined);
+                    if has_iter {
+                        collect_iterable(rt, src.clone())?
+                    } else {
+                        let len = rt.array_length(*id);
+                        (0..len).map(|i| rt.object_get(*id, &i.to_string())).collect()
+                    }
+                }
+                Value::String(s) => s.chars().map(|c| Value::String(Rc::new(c.to_string()))).collect(),
+                _ => Vec::new(),
+            };
+            for (i, v) in items.into_iter().enumerate() {
+                let mapped = if let Some(f) = &map_fn {
+                    rt.call_function(f.clone(), Value::Undefined, vec![v, Value::Number(i as f64)])?
+                } else { v };
+                rt.object_set(out, i.to_string(), mapped);
+            }
+            let len = rt.array_length(out);
+            rt.object_set(out, "length".into(), Value::Number(len as f64));
+            Ok(Value::Object(out))
+        });
+        self.globals.insert("Array".into(), Value::Object(arr_ctor));
+    }
+
+    fn install_symbol_static(&mut self) {
+        let sym = self.alloc_object(Object::new_ordinary());
+        // Well-known Symbol.iterator is, in v1, the string key "@@iterator".
+        self.object_set(sym, "iterator".into(), Value::String(Rc::new("@@iterator".into())));
+        // Calling Symbol(desc) — v1 returns a fresh empty object tagged
+        // with a description property. Not a real Symbol primitive.
+        register_method(self, sym, "for", |_rt, args| {
+            let s = args.first().map(|v| crate::abstract_ops::to_string(v).as_str().to_string()).unwrap_or_default();
+            Ok(Value::String(Rc::new(format!("@@sym:{}", s))))
+        });
+        self.globals.insert("Symbol".into(), Value::Object(sym));
+    }
+
     fn install_console(&mut self) {
         let console = self.alloc_object(Object::new_ordinary());
         register_method(self, console, "log", |_rt, args|{
@@ -213,6 +408,34 @@ impl Runtime {
         });
         self.globals.insert("console".into(), Value::Object(console));
     }
+}
+
+/// Drain an iterable's @@iterator into a Vec<Value>. Used by
+/// Object.fromEntries / Array.from.
+pub(crate) fn collect_iterable(rt: &mut Runtime, src: Value) -> Result<Vec<Value>, RuntimeError> {
+    let id = match src {
+        Value::Object(id) => id,
+        _ => return Ok(Vec::new()),
+    };
+    let method = rt.object_get(id, "@@iterator");
+    let iter = rt.call_function(method, Value::Object(id), Vec::new())?;
+    let iter_id = match iter {
+        Value::Object(id) => id,
+        _ => return Err(RuntimeError::TypeError("iterator is not an object".into())),
+    };
+    let next = rt.object_get(iter_id, "next");
+    let mut out = Vec::new();
+    loop {
+        let result = rt.call_function(next.clone(), Value::Object(iter_id), Vec::new())?;
+        let rid = match result {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("iterator next did not return an object".into())),
+        };
+        let done = abstract_ops::to_boolean(&rt.object_get(rid, "done"));
+        if done { break; }
+        out.push(rt.object_get(rid, "value"));
+    }
+    Ok(out)
 }
 
 fn num_arg(args: &[Value], i: usize) -> f64 {

@@ -60,6 +60,47 @@ pub struct Compiler {
     /// jumps and the bytecode offset of the loop's continue target.
     /// Push on loop entry, pop on loop exit.
     loop_stack: Vec<LoopFrame>,
+    /// Tier-Ω.5.c: each enclosing-function level's locals + accumulated
+    /// upvalues, walked when resolving identifiers inside nested functions.
+    /// Innermost outer is at the back. Empty at the top-level module.
+    enclosing: Vec<EnclosingFrame>,
+    /// This proto's own upvalue descriptors (only meaningful when this
+    /// Compiler is compiling a nested function, i.e. enclosing.is_empty()
+    /// is false).
+    upvalues: Vec<UpvalueDescriptor>,
+}
+
+#[derive(Debug, Clone)]
+struct EnclosingFrame {
+    locals: Vec<LocalDescriptor>,
+    /// Upvalues that this enclosing frame itself captured. Needed when an
+    /// inner function references a name owned by an even-outer level — the
+    /// intermediate frames each get a transitive upvalue.
+    upvalues: Vec<UpvalueDescriptor>,
+}
+
+fn emit_captures(buf: &mut Vec<u8>, captures: &[UpvalueDescriptor]) {
+    for u in captures {
+        match u.source {
+            UpvalueSource::Local(slot) => {
+                encode_op(buf, Op::CaptureLocal);
+                encode_u16(buf, slot);
+            }
+            UpvalueSource::Upvalue(idx) => {
+                encode_op(buf, Op::CaptureUpvalue);
+                encode_u16(buf, idx);
+            }
+        }
+    }
+}
+
+fn add_upvalue_to(table: &mut Vec<UpvalueDescriptor>, src: UpvalueSource, name: String) -> u16 {
+    if let Some(i) = table.iter().position(|u| u.source == src) {
+        return i as u16;
+    }
+    let idx = table.len() as u16;
+    table.push(UpvalueDescriptor { source: src, name });
+    idx
 }
 
 #[derive(Debug)]
@@ -87,6 +128,8 @@ impl Compiler {
             locals: Vec::new(),
             source_map: Vec::new(),
             loop_stack: Vec::new(),
+            enclosing: Vec::new(),
+            upvalues: Vec::new(),
         }
     }
 
@@ -245,6 +288,78 @@ impl Compiler {
                 let frame = self.loop_stack.pop().unwrap();
                 for site in frame.break_patches { self.patch_jump_at(site); }
             }
+            Stmt::ForOf { left, right, body, await_, .. } => {
+                if *await_ {
+                    return Err(self.err(span, "for-await-of not yet supported"));
+                }
+                // Allocate hidden slot for the iterator and a binding slot
+                // for the loop variable.
+                let iter_slot = self.alloc_local(LocalDescriptor {
+                    name: "<iter>".into(), kind: VariableKind::Let, depth: 0,
+                });
+                let (bind_slot, _bind_name) = match left {
+                    rusty_js_ast::ForBinding::Decl { kind, name, .. } => {
+                        let s = self.alloc_local(LocalDescriptor {
+                            name: name.name.clone(), kind: *kind, depth: 0,
+                        });
+                        (s, name.name.clone())
+                    }
+                    rusty_js_ast::ForBinding::Identifier(id) => {
+                        if let Some(s) = self.resolve_local(&id.name) { (s, id.name.clone()) }
+                        else {
+                            let s = self.alloc_local(LocalDescriptor {
+                                name: id.name.clone(), kind: VariableKind::Let, depth: 0,
+                            });
+                            (s, id.name.clone())
+                        }
+                    }
+                };
+                // Compute iterable[@@iterator]() and store into iter_slot.
+                self.compile_expr(right)?;
+                encode_op(&mut self.bytecode, Op::Dup);
+                let iter_key = self.constants.intern(Constant::String("@@iterator".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, iter_key);
+                encode_op(&mut self.bytecode, Op::CallMethod);
+                encode_u8(&mut self.bytecode, 0);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, iter_slot);
+
+                let loop_start = self.bytecode.len();
+                self.loop_stack.push(LoopFrame {
+                    continue_target: loop_start, continue_pending: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                });
+                // result = iter.next()
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, iter_slot);
+                encode_op(&mut self.bytecode, Op::Dup);
+                let next_key = self.constants.intern(Constant::String("next".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, next_key);
+                encode_op(&mut self.bytecode, Op::CallMethod);
+                encode_u8(&mut self.bytecode, 0);
+                // [result]
+                encode_op(&mut self.bytecode, Op::Dup);
+                let done_key = self.constants.intern(Constant::String("done".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, done_key);
+                // [result, done] — JumpIfTrue pops done
+                let j_done = self.emit_jump(Op::JumpIfTrue);
+                // [result]
+                let value_key = self.constants.intern(Constant::String("value".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, value_key);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, bind_slot);
+                self.compile_stmt(body)?;
+                self.emit_back_jump(loop_start);
+                self.patch_jump(j_done);
+                // At the exit, the result object is on the stack — pop it.
+                encode_op(&mut self.bytecode, Op::Pop);
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
             Stmt::Break { label, .. } => {
                 if label.is_some() {
                     return Err(self.err(span, "labelled break not yet supported"));
@@ -259,9 +374,11 @@ impl Compiler {
             }
             Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. } => {
                 let proto = self.compile_function_proto(name.clone(), *is_async, *is_generator, params, body)?;
+                let captures = proto.upvalues.clone();
                 let idx = self.constants.intern(Constant::Function(Box::new(proto)));
                 encode_op(&mut self.bytecode, Op::MakeClosure);
                 encode_u16(&mut self.bytecode, idx);
+                emit_captures(&mut self.bytecode, &captures);
                 // Bind to a local slot under the function's name.
                 if let Some(n) = name {
                     let slot = self.alloc_local(LocalDescriptor {
@@ -394,6 +511,54 @@ impl Compiler {
         None
     }
 
+    /// Tier-Ω.5.c: resolve an identifier to an upvalue slot in this proto.
+    /// Walks the enclosing chain bottom-up. If the name resolves to a local
+    /// in an outer frame, an upvalue is created in this proto (and in every
+    /// intermediate enclosing frame as a transitive upvalue).
+    ///
+    /// Returns the upvalue index in `self.upvalues` (0-based).
+    fn resolve_upvalue(&mut self, name: &str) -> Option<u16> {
+        if self.enclosing.is_empty() { return None; }
+        // Walk from innermost enclosing (back) to outermost (front).
+        // Innermost-first lets us emit the chain of transitive upvalues
+        // in the right order.
+        let levels = self.enclosing.len();
+        for depth in (0..levels).rev() {
+            // Check locals of this enclosing level.
+            let local_slot = self.enclosing[depth].locals.iter().enumerate().rev()
+                .find(|(_, l)| l.name == name).map(|(i, _)| i as u16);
+            if let Some(slot) = local_slot {
+                // Build the upvalue chain top-down from `depth` toward
+                // current proto. Topmost (this proto) ends up referencing
+                // an Upvalue of the immediate parent unless `depth` is
+                // levels-1 (immediate parent), in which case it references
+                // a Local.
+                let mut src = UpvalueSource::Local(slot);
+                let name_s = name.to_string();
+                for d in (depth + 1)..levels {
+                    let up_idx = add_upvalue_to(&mut self.enclosing[d].upvalues, src, name_s.clone());
+                    src = UpvalueSource::Upvalue(up_idx);
+                }
+                let idx = add_upvalue_to(&mut self.upvalues, src, name.to_string());
+                return Some(idx);
+            }
+            // Else check upvalues of this enclosing level — name might be
+            // already-captured at this depth from an even-outer level.
+            let up_at_depth = self.enclosing[depth].upvalues.iter().enumerate()
+                .find(|(_, u)| u.name == name).map(|(i, _)| i as u16);
+            if let Some(up_idx) = up_at_depth {
+                let mut src = UpvalueSource::Upvalue(up_idx);
+                for d in (depth + 1)..levels {
+                    let i = add_upvalue_to(&mut self.enclosing[d].upvalues, src, name.to_string());
+                    src = UpvalueSource::Upvalue(i);
+                }
+                let idx = add_upvalue_to(&mut self.upvalues, src, name.to_string());
+                return Some(idx);
+            }
+        }
+        None
+    }
+
     fn compile_expr(&mut self, e: &Expr) -> Result<(), CompileError> {
         self.record_span(e.span());
         match e {
@@ -427,6 +592,9 @@ impl Compiler {
                 if let Some(slot) = self.resolve_local(name) {
                     encode_op(&mut self.bytecode, Op::LoadLocal);
                     encode_u16(&mut self.bytecode, slot);
+                } else if let Some(up) = self.resolve_upvalue(name) {
+                    encode_op(&mut self.bytecode, Op::LoadUpvalue);
+                    encode_u16(&mut self.bytecode, up);
                 } else {
                     let name_idx = self.constants.intern(Constant::String(name.clone()));
                     encode_op(&mut self.bytecode, Op::LoadGlobal);
@@ -528,6 +696,9 @@ impl Compiler {
                         if let Some(slot) = self.resolve_local(name) {
                             encode_op(&mut self.bytecode, Op::StoreLocal);
                             encode_u16(&mut self.bytecode, slot);
+                        } else if let Some(up) = self.resolve_upvalue(name) {
+                            encode_op(&mut self.bytecode, Op::StoreUpvalue);
+                            encode_u16(&mut self.bytecode, up);
                         } else {
                             let idx = self.constants.intern(Constant::String(name.clone()));
                             encode_op(&mut self.bytecode, Op::StoreGlobal);
@@ -710,12 +881,13 @@ impl Compiler {
             }
             Expr::Function { name, is_async, is_generator, params, body, .. } => {
                 let proto = self.compile_function_proto(name.clone(), *is_async, *is_generator, params, body)?;
+                let captures = proto.upvalues.clone();
                 let idx = self.constants.intern(Constant::Function(Box::new(proto)));
                 encode_op(&mut self.bytecode, Op::MakeClosure);
                 encode_u16(&mut self.bytecode, idx);
+                emit_captures(&mut self.bytecode, &captures);
             }
             Expr::Arrow { is_async, params, body, .. } => {
-                // Arrow body is either a single Expression or a Block.
                 let body_stmts: Vec<Stmt> = match body {
                     ArrowBody::Block(stmts) => stmts.clone(),
                     ArrowBody::Expression(expr) => vec![Stmt::Return {
@@ -724,9 +896,11 @@ impl Compiler {
                     }],
                 };
                 let proto = self.compile_function_proto(None, *is_async, false, params, &body_stmts)?;
+                let captures = proto.upvalues.clone();
                 let idx = self.constants.intern(Constant::Function(Box::new(proto)));
                 encode_op(&mut self.bytecode, Op::MakeArrow);
                 encode_u16(&mut self.bytecode, idx);
+                emit_captures(&mut self.bytecode, &captures);
             }
             Expr::Update { operator, argument, prefix, .. } => {
                 // v1: support identifier-target updates only.
@@ -734,18 +908,18 @@ impl Compiler {
                     Expr::Identifier { name, .. } => name.clone(),
                     _ => return Err(self.err(e.span(), "update on non-identifier not yet supported")),
                 };
+                enum Tgt { Local(u16), Up(u16), Global(u16) }
                 let slot = self.resolve_local(&name);
+                let target = if let Some(s) = slot { Tgt::Local(s) }
+                    else if let Some(u) = self.resolve_upvalue(&name) { Tgt::Up(u) }
+                    else { Tgt::Global(self.constants.intern(Constant::String(name.clone()))) };
                 // Load current value
-                if let Some(s) = slot {
-                    encode_op(&mut self.bytecode, Op::LoadLocal);
-                    encode_u16(&mut self.bytecode, s);
-                } else {
-                    let idx = self.constants.intern(Constant::String(name.clone()));
-                    encode_op(&mut self.bytecode, Op::LoadGlobal);
-                    encode_u16(&mut self.bytecode, idx);
+                match &target {
+                    Tgt::Local(s)  => { encode_op(&mut self.bytecode, Op::LoadLocal);  encode_u16(&mut self.bytecode, *s); }
+                    Tgt::Up(u)     => { encode_op(&mut self.bytecode, Op::LoadUpvalue); encode_u16(&mut self.bytecode, *u); }
+                    Tgt::Global(i) => { encode_op(&mut self.bytecode, Op::LoadGlobal); encode_u16(&mut self.bytecode, *i); }
                 }
                 if !prefix {
-                    // Postfix: duplicate the current value as the expression's result.
                     encode_op(&mut self.bytecode, Op::Dup);
                 }
                 encode_op(&mut self.bytecode, match operator {
@@ -753,15 +927,11 @@ impl Compiler {
                     UpdateOp::Dec => Op::Dec,
                 });
                 // Store back
-                if let Some(s) = slot {
-                    if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
-                    encode_op(&mut self.bytecode, Op::StoreLocal);
-                    encode_u16(&mut self.bytecode, s);
-                } else {
-                    let idx = self.constants.intern(Constant::String(name.clone()));
-                    if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
-                    encode_op(&mut self.bytecode, Op::StoreGlobal);
-                    encode_u16(&mut self.bytecode, idx);
+                if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
+                match &target {
+                    Tgt::Local(s)  => { encode_op(&mut self.bytecode, Op::StoreLocal);  encode_u16(&mut self.bytecode, *s); }
+                    Tgt::Up(u)     => { encode_op(&mut self.bytecode, Op::StoreUpvalue); encode_u16(&mut self.bytecode, *u); }
+                    Tgt::Global(i) => { encode_op(&mut self.bytecode, Op::StoreGlobal); encode_u16(&mut self.bytecode, *i); }
                 }
                 if !prefix {
                     // Result is the prior value already on the stack (from
@@ -776,9 +946,9 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compile a nested function body into a FunctionProto. v1 does not
-    /// yet resolve upvalues (closure captures); nested functions can
-    /// reference globals but not outer-frame locals.
+    /// Compile a nested function body into a FunctionProto. Tier-Ω.5.c
+    /// threads the outer-scope chain in so identifiers in the body that
+    /// resolve to an enclosing local are captured as upvalues.
     fn compile_function_proto(
         &mut self,
         _name: Option<BindingIdentifier>,
@@ -787,9 +957,25 @@ impl Compiler {
         params: &[Parameter],
         body: &[Stmt],
     ) -> Result<FunctionProto, CompileError> {
-        // Sub-compiler with its own state.
-        let mut sub = Compiler::new();
-        // Register parameters as locals (slot 0..n).
+        // Build the sub-compiler's enclosing chain from self's enclosing
+        // plus self's own locals/upvalues snapshot. The snapshot is
+        // immutable from the sub's perspective EXCEPT the sub may
+        // back-fill upvalues into intermediate frames (handled by writing
+        // back to self after the sub finishes).
+        let mut sub_enclosing: Vec<EnclosingFrame> = self.enclosing.iter().cloned().collect();
+        sub_enclosing.push(EnclosingFrame {
+            locals: self.locals.clone(),
+            upvalues: self.upvalues.clone(),
+        });
+        let mut sub = Compiler {
+            bytecode: Vec::new(),
+            constants: ConstantsPool::new(),
+            locals: Vec::new(),
+            source_map: Vec::new(),
+            loop_stack: Vec::new(),
+            enclosing: sub_enclosing,
+            upvalues: Vec::new(),
+        };
         let param_count = params.len() as u16;
         for p in params {
             for n in &p.names {
@@ -802,12 +988,23 @@ impl Compiler {
         }
         for s in body { sub.compile_stmt(s)?; }
         encode_op(&mut sub.bytecode, Op::ReturnUndef);
+
+        // Back-propagate any new upvalues the sub added to intermediate
+        // enclosing frames. The innermost enclosing-of-sub is this proto
+        // itself, so its upvalues -> self.upvalues. Even-outer frames -> self.enclosing[i].
+        let mut frames = sub.enclosing;
+        let inner = frames.pop().expect("sub had at least one enclosing");
+        self.upvalues = inner.upvalues;
+        for (i, ef) in frames.into_iter().enumerate() {
+            self.enclosing[i].upvalues = ef.upvalues;
+        }
+
         Ok(FunctionProto {
             bytecode: sub.bytecode,
             constants: sub.constants,
             params: param_count,
             locals: sub.locals,
-            upvalues: Vec::new(),
+            upvalues: sub.upvalues,
         })
     }
 

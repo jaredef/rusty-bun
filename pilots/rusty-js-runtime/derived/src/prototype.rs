@@ -409,6 +409,13 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         }
         Ok(Value::Boolean(false))
     });
+    register_method(rt, host, "@@iterator", |rt, _args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("@@iterator: this is not an Array".into())),
+        };
+        Ok(Value::Object(crate::iterator::make_array_iterator(rt, id)))
+    });
     register_method(rt, host, "every", |rt, args| {
         let id = match rt.current_this() {
             Value::Object(id) => id,
@@ -564,6 +571,10 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
     });
     register_method(rt, host, "toString", |rt, _args| {
         Ok(Value::String(Rc::new(abstract_ops::to_string(&rt.current_this()).as_str().to_string())))
+    });
+    register_method(rt, host, "@@iterator", |rt, _args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        Ok(Value::Object(crate::iterator::make_string_iterator(rt, s)))
     });
 }
 

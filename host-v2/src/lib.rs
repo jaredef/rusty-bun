@@ -6,6 +6,7 @@
 //! http, TLS, WebSocket, crypto.subtle, mio reactor integration, and
 //! the CJS↔ESM bridge.
 
+pub mod fs;
 pub mod path;
 pub mod os;
 pub mod process;
@@ -16,8 +17,14 @@ use rusty_js_runtime::Runtime;
 /// Install the Bun-host surface onto the engine. Call after
 /// `rt.install_intrinsics()` (which installs Math / JSON / console /
 /// Promise / globals from the engine itself).
+///
+/// Installs the PollIo host hook that drains the fs PendingIo queue —
+/// this is what lets `fs.readFile().then(...)` actually resolve under
+/// `run_to_completion`. Tier-Omega.4.d.
 pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     path::install(rt);
     os::install(rt);
     process::install(rt, argv);
+    fs::install(rt);
+    fs::install_poll_io(rt);
 }

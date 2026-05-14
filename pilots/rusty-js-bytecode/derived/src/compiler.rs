@@ -64,9 +64,18 @@ pub struct Compiler {
 
 #[derive(Debug)]
 struct LoopFrame {
-    /// Bytecode offset where `continue` should jump to (loop test or update).
+    /// Bytecode offset where `continue` should jump to. For while / do-while
+    /// this is fixed up front. For C-style for, the target is the update
+    /// position which isn't known when the body compiles — `continue` then
+    /// records a patch site in continue_patches instead of emitting a
+    /// back-jump immediately.
     continue_target: usize,
-    /// Operand-byte offsets of unresolved `break` jumps. Patched on loop exit.
+    /// True while continue_target is provisional; `continue` records a
+    /// patch site instead of emitting a known back-jump.
+    continue_pending: bool,
+    /// Operand-byte offsets of unresolved continue forward-jumps.
+    continue_patches: Vec<usize>,
+    /// Operand-byte offsets of unresolved break forward-jumps.
     break_patches: Vec<usize>,
 }
 
@@ -163,7 +172,10 @@ impl Compiler {
             }
             Stmt::While { test, body, .. } => {
                 let loop_start = self.bytecode.len();
-                self.loop_stack.push(LoopFrame { continue_target: loop_start, break_patches: Vec::new() });
+                self.loop_stack.push(LoopFrame {
+                    continue_target: loop_start, continue_pending: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                });
                 self.compile_expr(test)?;
                 let jump_if_false = self.emit_jump(Op::JumpIfFalse);
                 self.compile_stmt(body)?;
@@ -174,12 +186,21 @@ impl Compiler {
             }
             Stmt::DoWhile { body, test, .. } => {
                 let loop_start = self.bytecode.len();
-                // Continue target is the test position; we'll record it after body.
-                self.loop_stack.push(LoopFrame { continue_target: 0, break_patches: Vec::new() });
+                self.loop_stack.push(LoopFrame {
+                    continue_target: 0, continue_pending: true,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                });
                 self.compile_stmt(body)?;
                 let test_pos = self.bytecode.len();
-                // Now set the continue target retroactively on the current frame.
-                self.loop_stack.last_mut().unwrap().continue_target = test_pos;
+                // Finalize continue target to test_pos and patch any
+                // pending continue sites.
+                {
+                    let frame = self.loop_stack.last_mut().unwrap();
+                    frame.continue_target = test_pos;
+                    frame.continue_pending = false;
+                }
+                let patches = std::mem::take(&mut self.loop_stack.last_mut().unwrap().continue_patches);
+                for site in patches { self.patch_jump_at(site); }
                 self.compile_expr(test)?;
                 let jump_back = self.emit_jump(Op::JumpIfTrue);
                 self.patch_jump_to(jump_back, loop_start);
@@ -187,7 +208,6 @@ impl Compiler {
                 for site in frame.break_patches { self.patch_jump_at(site); }
             }
             Stmt::For { init, test, update, body, .. } => {
-                // Init runs once, in the surrounding scope.
                 if let Some(init) = init {
                     match init {
                         ForInit::Variable(v) => self.compile_stmt(&Stmt::Variable(v.clone()))?,
@@ -198,16 +218,24 @@ impl Compiler {
                     }
                 }
                 let test_pos = self.bytecode.len();
-                // continue jumps to update; if no update, continue jumps to test.
-                let cont_target = test_pos;
-                self.loop_stack.push(LoopFrame { continue_target: cont_target, break_patches: Vec::new() });
+                self.loop_stack.push(LoopFrame {
+                    continue_target: 0, continue_pending: true,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                });
                 let jump_if_false = if let Some(t) = test {
                     self.compile_expr(t)?;
                     Some(self.emit_jump(Op::JumpIfFalse))
                 } else { None };
                 self.compile_stmt(body)?;
                 let update_pos = self.bytecode.len();
-                self.loop_stack.last_mut().unwrap().continue_target = update_pos;
+                // Finalize continue target and patch pending continue sites.
+                {
+                    let frame = self.loop_stack.last_mut().unwrap();
+                    frame.continue_target = update_pos;
+                    frame.continue_pending = false;
+                }
+                let patches = std::mem::take(&mut self.loop_stack.last_mut().unwrap().continue_patches);
+                for site in patches { self.patch_jump_at(site); }
                 if let Some(u) = update {
                     self.compile_expr(u)?;
                     encode_op(&mut self.bytecode, Op::Pop);
@@ -290,11 +318,19 @@ impl Compiler {
                 if label.is_some() {
                     return Err(self.err(span, "labelled continue not yet supported"));
                 }
-                if let Some(frame) = self.loop_stack.last() {
-                    let target = frame.continue_target;
-                    self.emit_back_jump(target);
-                } else {
+                if self.loop_stack.is_empty() {
                     return Err(self.err(span, "continue outside of loop"));
+                }
+                let pending = self.loop_stack.last().unwrap().continue_pending;
+                if pending {
+                    // Record patch site; will be filled when continue_target
+                    // is finalized.
+                    let patch_site = encode_op(&mut self.bytecode, Op::Jump);
+                    encode_i32(&mut self.bytecode, 0);
+                    self.loop_stack.last_mut().unwrap().continue_patches.push(patch_site);
+                } else {
+                    let target = self.loop_stack.last().unwrap().continue_target;
+                    self.emit_back_jump(target);
                 }
             }
             _ => {

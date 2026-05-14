@@ -224,6 +224,201 @@ fn multiple_locals() {
 
 // ─────────── Typeof ───────────
 
+// ─────────── Control flow ───────────
+
+#[test]
+fn if_true_branch() {
+    if let Value::Number(n) = run("if (true) { return 1; } return 2;") {
+        assert_eq!(n, 1.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn if_false_branch() {
+    if let Value::Number(n) = run("if (false) { return 1; } return 2;") {
+        assert_eq!(n, 2.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn if_else_branch() {
+    if let Value::Number(n) = run("if (false) { return 1; } else { return 2; }") {
+        assert_eq!(n, 2.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn if_condition_evaluated() {
+    if let Value::Number(n) = run("let x = 5; if (x > 3) { return 100; } return 200;") {
+        assert_eq!(n, 100.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn while_loop_executes() {
+    let s = r#"
+        let i = 0;
+        let sum = 0;
+        while (i < 5) {
+            sum = sum + i;
+            i = i + 1;
+        }
+        return sum;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 10.0);  // 0 + 1 + 2 + 3 + 4
+    } else { panic!(); }
+}
+
+#[test]
+fn for_c_style_loop() {
+    let s = r#"
+        let total = 0;
+        for (let i = 1; i <= 10; i = i + 1) {
+            total = total + i;
+        }
+        return total;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 55.0);  // sum 1..10
+    } else { panic!(); }
+}
+
+#[test]
+fn do_while_runs_body_at_least_once() {
+    let s = r#"
+        let i = 10;
+        do { i = i + 1; } while (i < 5);
+        return i;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 11.0);  // body ran once
+    } else { panic!(); }
+}
+
+#[test]
+fn break_exits_loop() {
+    let s = r#"
+        let i = 0;
+        while (true) {
+            if (i === 3) { break; }
+            i = i + 1;
+        }
+        return i;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 3.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn continue_skips_iteration() {
+    let s = r#"
+        let sum = 0;
+        for (let i = 0; i < 5; i = i + 1) {
+            if (i === 2) { continue; }
+            sum = sum + i;
+        }
+        return sum;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 8.0);  // 0 + 1 + 3 + 4
+    } else { panic!(); }
+}
+
+// ─────────── Short-circuit / conditional ───────────
+
+#[test]
+fn logical_and_short_circuit() {
+    if let Value::Number(n) = run("return 5 && 10;") {
+        assert_eq!(n, 10.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn logical_and_falsy_returns_lhs() {
+    if let Value::Number(n) = run("return 0 && 10;") {
+        assert_eq!(n, 0.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn logical_or_returns_first_truthy() {
+    if let Value::Number(n) = run("return 0 || 7;") {
+        assert_eq!(n, 7.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn logical_or_truthy_lhs_kept() {
+    if let Value::Number(n) = run("return 3 || 7;") {
+        assert_eq!(n, 3.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn nullish_coalesce_null() {
+    if let Value::Number(n) = run("return null ?? 5;") {
+        assert_eq!(n, 5.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn nullish_coalesce_undefined() {
+    if let Value::Number(n) = run("return undefined ?? 7;") {
+        assert_eq!(n, 7.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn nullish_coalesce_zero_kept() {
+    // 0 is not nullish, so should be returned (this is the key difference vs ||)
+    if let Value::Number(n) = run("return 0 ?? 5;") {
+        assert_eq!(n, 0.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn conditional_true() {
+    if let Value::Number(n) = run("return true ? 1 : 2;") {
+        assert_eq!(n, 1.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn conditional_false() {
+    if let Value::Number(n) = run("return false ? 1 : 2;") {
+        assert_eq!(n, 2.0);
+    } else { panic!(); }
+}
+
+// ─────────── Try / catch ───────────
+
+#[test]
+fn try_catch_catches_throw() {
+    let s = r#"
+        try { throw 42; }
+        catch (e) { return e; }
+        return 0;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 42.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn try_without_throw_skips_handler() {
+    let s = r#"
+        let x = 0;
+        try { x = 1; }
+        catch (e) { x = 99; }
+        return x;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 1.0);
+    } else { panic!(); }
+}
+
 #[test]
 fn typeof_primitives() {
     if let Value::String(s) = run("return typeof 42;") {

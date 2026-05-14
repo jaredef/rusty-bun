@@ -43,6 +43,28 @@ impl Runtime {
     }
 
     fn run_frame(&mut self, frame: &mut Frame) -> Result<Value, RuntimeError> {
+        // Outer driver: each iteration runs the inner dispatch; if a JS
+        // throw bubbles up, walk the try_stack and either resume at a
+        // catch handler or re-raise to the caller.
+        loop {
+            match self.run_frame_inner(frame) {
+                Ok(v) => return Ok(v),
+                Err(RuntimeError::Thrown(v)) => {
+                    if let Some(t) = frame.try_stack.pop() {
+                        frame.operand_stack.truncate(t.sp_at_entry);
+                        frame.operand_stack.push(v);
+                        frame.pc = t.catch_offset;
+                        // Continue the outer loop -> re-enter the dispatch.
+                    } else {
+                        return Err(RuntimeError::Thrown(v));
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn run_frame_inner(&mut self, frame: &mut Frame) -> Result<Value, RuntimeError> {
         loop {
             let pc = frame.pc;
             if pc >= frame.bytecode.len() {
@@ -238,6 +260,68 @@ impl Runtime {
                     frame.push(Value::Undefined);
                 }
 
+                // ─── Control flow ───
+                Op::Jump => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    frame.pc = (frame.pc as i32 + disp) as usize;
+                }
+                Op::JumpIfTrue => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    if to_boolean(&frame.pop()?) {
+                        frame.pc = (frame.pc as i32 + disp) as usize;
+                    }
+                }
+                Op::JumpIfFalse => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    if !to_boolean(&frame.pop()?) {
+                        frame.pc = (frame.pc as i32 + disp) as usize;
+                    }
+                }
+                Op::JumpIfTrueKeep => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    if to_boolean(frame.peek(0)?) {
+                        frame.pc = (frame.pc as i32 + disp) as usize;
+                    }
+                }
+                Op::JumpIfFalseKeep => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    if !to_boolean(frame.peek(0)?) {
+                        frame.pc = (frame.pc as i32 + disp) as usize;
+                    }
+                }
+                Op::JumpIfNullish => {
+                    let disp = decode_i32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    let v = frame.pop()?;
+                    if matches!(v, Value::Undefined | Value::Null) {
+                        frame.pc = (frame.pc as i32 + disp) as usize;
+                    }
+                }
+
+                // ─── Exception handling (minimal in round 3.d.c) ───
+                Op::Throw => {
+                    let v = frame.pop()?;
+                    return Err(RuntimeError::Thrown(v));
+                }
+                Op::TryEnter => {
+                    // catch_offset is an absolute bytecode offset where
+                    // the catch handler begins. Pushed onto frame.try_stack.
+                    let catch_off = rusty_js_bytecode::op::decode_u32(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 4;
+                    frame.try_stack.push(TryFrame {
+                        catch_offset: catch_off,
+                        sp_at_entry: frame.operand_stack.len(),
+                    });
+                }
+                Op::TryExit => {
+                    frame.try_stack.pop();
+                }
+
                 // ─── Returns ───
                 Op::Return => {
                     let v = frame.pop()?;
@@ -294,6 +378,13 @@ pub struct Frame<'a> {
     pub locals: Vec<Value>,
     pub operand_stack: Vec<Value>,
     pub pc: usize,
+    pub try_stack: Vec<TryFrame>,
+}
+
+#[derive(Debug)]
+pub struct TryFrame {
+    pub catch_offset: usize,
+    pub sp_at_entry: usize,
 }
 
 impl<'a> Frame<'a> {
@@ -306,6 +397,7 @@ impl<'a> Frame<'a> {
             locals,
             operand_stack: Vec::with_capacity(32),
             pc: 0,
+            try_stack: Vec::new(),
         }
     }
 

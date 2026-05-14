@@ -57,6 +57,12 @@ pub struct CompiledModule {
     /// runtime reads each `local` slot and writes it to namespace[`exported`].
     /// `default` exports use the synthetic local "<module.default>".
     pub exports: Vec<ExportBinding>,
+    /// Tier-Ω.5.h: ESM re-export source dependencies. Each entry is the
+    /// `from "..."` specifier of an `export ... from "..."` form. The
+    /// runtime loads these modules eagerly (like ImportDeclaration sources)
+    /// so their namespaces are populated in the module cache before the
+    /// namespace-build phase reads from them.
+    pub reexport_sources: Vec<String>,
 }
 
 /// One ESM import binding. Compiled from ImportDeclaration entries.
@@ -82,12 +88,42 @@ pub enum ImportBindingKind {
 }
 
 /// One ESM export binding. Compiled from ExportDeclaration entries.
+///
+/// Tier-Ω.5.h widened this from a single (exported, local) struct to a
+/// four-variant enum to accommodate the four re-export forms. The
+/// runtime's namespace-build phase iterates these and reads from either
+/// the local-slot table (Local) or from a previously-loaded source
+/// module's namespace (Named / Star / StarAs). Snapshot semantics: source
+/// modules are loaded eagerly during evaluate_module's link phase so
+/// their namespaces are populated by the time the namespace-build phase
+/// runs. Cyclic re-exports may observe partial namespaces (v1 deviation
+/// from spec live-bindings — see module.rs banner).
 #[derive(Debug, Clone)]
-pub struct ExportBinding {
-    /// Name as it appears in the namespace.
-    pub exported: String,
-    /// Local-slot index whose value populates namespace[`exported`].
-    pub local: u16,
+pub enum ExportBinding {
+    /// `export { x }` (no `from`) and `export default ...` — the namespace
+    /// entry is populated from a local slot in this module's frame.
+    Local {
+        /// Name as it appears in the namespace.
+        exported: String,
+        /// Local-slot index whose value populates namespace[`exported`].
+        local: u16,
+    },
+    /// `export { x } from "..."` or `export { x as y } from "..."`. The
+    /// runtime reads `source_specifier`'s namespace at `imported`, writes
+    /// the value to this module's namespace under `exported`. Either
+    /// name may be `"default"` to express default<->named conversions.
+    Named {
+        exported: String,
+        source_specifier: String,
+        imported: String,
+    },
+    /// `export * from "..."`. The runtime iterates the source's namespace
+    /// own properties and copies each (except `"default"` per spec
+    /// §16.2.3.7) into this namespace under the same name.
+    Star { source_specifier: String },
+    /// `export * as ns from "..."`. The runtime writes the source's whole
+    /// namespace object to this namespace under `exported`.
+    StarAs { exported: String, source_specifier: String },
 }
 
 pub struct Compiler {
@@ -125,6 +161,8 @@ pub struct Compiler {
     /// lowered. Filled lazily at compile time (Named export specifiers
     /// resolve their `local` -> slot at end-of-module).
     exports: Vec<ExportBinding>,
+    /// Tier-Ω.5.h: re-export source dependencies (`from "..."` specifiers).
+    reexport_sources: Vec<String>,
     /// Tier-Ω.5.b: snapshot of named local-or-default exports seen so far,
     /// pending slot lookup. For `export { name }` the slot is the local
     /// previously declared by `const name = ...` / `function name() {}`.
@@ -212,6 +250,7 @@ impl Compiler {
             class_seq: 0,
             imports: Vec::new(),
             exports: Vec::new(),
+            reexport_sources: Vec::new(),
             pending_named_exports: Vec::new(),
         }
     }
@@ -275,7 +314,7 @@ impl Compiler {
         // local previously bound by the declaration.
         for (exported, local_name) in std::mem::take(&mut self.pending_named_exports) {
             if let Some(slot) = self.resolve_local(&local_name) {
-                self.exports.push(ExportBinding { exported, local: slot });
+                self.exports.push(ExportBinding::Local { exported, local: slot });
             }
             // Silently drop unresolved names; the namespace builder yields
             // Undefined for missing exports.
@@ -289,6 +328,7 @@ impl Compiler {
             source_map: std::mem::take(&mut self.source_map),
             imports: std::mem::take(&mut self.imports),
             exports: std::mem::take(&mut self.exports),
+            reexport_sources: std::mem::take(&mut self.reexport_sources),
         })
     }
 
@@ -313,10 +353,49 @@ impl Compiler {
                     self.pending_named_exports.push((exported_name, local_name));
                 }
             }
-            ExportDeclaration::Named { source: Some(_), span, .. }
-            | ExportDeclaration::StarFrom { span, .. }
-            | ExportDeclaration::StarAsFrom { span, .. } => {
-                return Err(self.err(*span, "re-export forms (export ... from) not yet supported"));
+            // Tier-Ω.5.h: re-export forms. Each records its source-module
+            // specifier in `reexport_sources` so the runtime loads the
+            // dependency eagerly, then emits one or more ExportBinding
+            // entries that the namespace-build phase resolves against the
+            // source module's namespace.
+            ExportDeclaration::Named { source: Some(src), specifiers, .. } => {
+                let source_specifier = src.value.clone();
+                if !self.reexport_sources.iter().any(|s| s == &source_specifier) {
+                    self.reexport_sources.push(source_specifier.clone());
+                }
+                for spec in specifiers {
+                    let imported = match &spec.local {
+                        ModuleExportName::Ident(b) => b.name.clone(),
+                        ModuleExportName::String { value, .. } => value.clone(),
+                    };
+                    let exported = match &spec.exported {
+                        ModuleExportName::Ident(b) => b.name.clone(),
+                        ModuleExportName::String { value, .. } => value.clone(),
+                    };
+                    self.exports.push(ExportBinding::Named {
+                        exported, source_specifier: source_specifier.clone(), imported,
+                    });
+                }
+            }
+            ExportDeclaration::StarFrom { source, .. } => {
+                let source_specifier = source.value.clone();
+                if !self.reexport_sources.iter().any(|s| s == &source_specifier) {
+                    self.reexport_sources.push(source_specifier.clone());
+                }
+                self.exports.push(ExportBinding::Star { source_specifier });
+            }
+            ExportDeclaration::StarAsFrom { source, exported, .. } => {
+                let source_specifier = source.value.clone();
+                if !self.reexport_sources.iter().any(|s| s == &source_specifier) {
+                    self.reexport_sources.push(source_specifier.clone());
+                }
+                let exported_name = match exported {
+                    ModuleExportName::Ident(b) => b.name.clone(),
+                    ModuleExportName::String { value, .. } => value.clone(),
+                };
+                self.exports.push(ExportBinding::StarAs {
+                    exported: exported_name, source_specifier,
+                });
             }
             ExportDeclaration::Default { body, span } => {
                 // Synthesize a local slot for the default binding. Reuse
@@ -344,7 +423,7 @@ impl Compiler {
                 }
                 encode_op(&mut self.bytecode, Op::StoreLocal);
                 encode_u16(&mut self.bytecode, slot);
-                self.exports.push(ExportBinding {
+                self.exports.push(ExportBinding::Local {
                     exported: "default".to_string(), local: slot,
                 });
             }
@@ -1415,6 +1494,7 @@ impl Compiler {
             class_seq: self.class_seq,
             imports: Vec::new(),
             exports: Vec::new(),
+            reexport_sources: Vec::new(),
             pending_named_exports: Vec::new(),
         };
         let param_count = params.len() as u16;

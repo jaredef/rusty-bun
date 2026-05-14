@@ -18,12 +18,18 @@
 //! - `import.meta.url` / `import.meta.dir`.
 //! - Live (read-through) bindings.
 //! - Top-level await.
-//! - Re-exports (`export { x } from "..."`, `export * from "..."`).
+//!
+//! Tier-Ω.5.h: ESM re-export forms landed. All four shapes are lowered
+//! (`export { x } from`, rename, `export * from`, `export * as ns from`)
+//! including default<->named conversions. Source modules are loaded
+//! eagerly during the link phase so their namespaces are populated when
+//! the namespace-build phase reads from them. Snapshot semantics
+//! continue to apply — live bindings are still deferred.
 
 use crate::interp::{Frame, Runtime, RuntimeError};
 use crate::value::{Object, ObjectRef, Value};
 use rusty_js_ast::Module as AstModule;
-use rusty_js_bytecode::{CompiledModule, ImportBindingKind};
+use rusty_js_bytecode::{CompiledModule, ExportBinding, ImportBindingKind};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -208,6 +214,7 @@ impl Runtime {
             bytecode: Vec::new(), constants: Default::default(),
             locals: Vec::new(), source_map: Vec::new(),
             imports: Vec::new(), exports: Vec::new(),
+            reexport_sources: Vec::new(),
         });
         self.modules.insert(specifier.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: specifier.to_string(), status: ModuleStatus::Evaluated,
@@ -240,6 +247,25 @@ impl Runtime {
             namespace: Some(namespace),
         }));
         self.modules.insert(url.to_string(), record.clone());
+
+        // Tier-Ω.5.h: re-export source dependencies. Load each eagerly so
+        // its namespace lives in the module cache by the time the
+        // namespace-build phase runs. Build a per-module map from the
+        // original specifier text (as it appeared in the source) to the
+        // loaded namespace ObjectRef. The namespace-build phase consults
+        // this map by specifier — not by resolved URL — because the
+        // CompiledModule retains the original specifier strings.
+        let mut reexport_namespaces: HashMap<String, ObjectRef> = HashMap::new();
+        for spec in &bytecode_rc.reexport_sources {
+            let resolved = Runtime::resolve_module(url, spec)?;
+            let is_builtin = resolved.starts_with("node:");
+            let ns = if is_builtin {
+                self.resolve_builtin_namespace(&resolved)?
+            } else {
+                self.load_module(&resolved)?
+            };
+            reexport_namespaces.insert(spec.clone(), ns);
+        }
 
         // Resolve every import to a value vector parallel to
         // bytecode.imports, then write into the frame's local slots
@@ -284,9 +310,56 @@ impl Runtime {
         // slot and writes namespace[exported] = value. Undefined slots
         // (e.g. unresolved `export { name }` after a parser-skipped
         // declaration) become namespace[name] = Undefined.
+        // Snapshot the source-module namespace property tables before the
+        // mutation loop. The borrow checker disallows holding a &Object
+        // across object_set, so we extract just the (key, value) pairs we
+        // need for Star expansion. For Named / StarAs the read is a single
+        // object_get / direct ObjectRef, which is cheap.
         for eb in &bytecode_rc.exports {
-            let v = locals.get(eb.local as usize).cloned().unwrap_or(Value::Undefined);
-            self.object_set(namespace, eb.exported.clone(), v);
+            match eb {
+                ExportBinding::Local { exported, local } => {
+                    let v = locals.get(*local as usize).cloned().unwrap_or(Value::Undefined);
+                    self.object_set(namespace, exported.clone(), v);
+                }
+                ExportBinding::Named { exported, source_specifier, imported } => {
+                    // Look up the source namespace loaded earlier. If the
+                    // entry is missing the compiler/runtime are out of sync;
+                    // treat the export as Undefined to stay closure-shaped.
+                    let v = match reexport_namespaces.get(source_specifier) {
+                        Some(src_ns) => self.object_get(*src_ns, imported),
+                        None => Value::Undefined,
+                    };
+                    self.object_set(namespace, exported.clone(), v);
+                }
+                ExportBinding::Star { source_specifier } => {
+                    // ECMA-262 §16.2.3.7: `export *` re-exports every name
+                    // OTHER than `default`. Snapshot the source namespace's
+                    // own properties, then copy each non-`default` entry.
+                    let keys_values: Vec<(String, Value)> = match reexport_namespaces.get(source_specifier) {
+                        Some(src_ns) => {
+                            let o = self.obj(*src_ns);
+                            o.properties
+                                .iter()
+                                .filter(|(k, _)| k.as_str() != "default")
+                                .map(|(k, d)| (k.clone(), d.value.clone()))
+                                .collect()
+                        }
+                        None => Vec::new(),
+                    };
+                    for (k, v) in keys_values {
+                        self.object_set(namespace, k, v);
+                    }
+                }
+                ExportBinding::StarAs { exported, source_specifier } => {
+                    // `export * as ns from "..."` binds the source's whole
+                    // namespace object under `exported`.
+                    let v = match reexport_namespaces.get(source_specifier) {
+                        Some(src_ns) => Value::Object(*src_ns),
+                        None => Value::Undefined,
+                    };
+                    self.object_set(namespace, exported.clone(), v);
+                }
+            }
         }
 
         // Call HostFinalizeModuleNamespace if installed.

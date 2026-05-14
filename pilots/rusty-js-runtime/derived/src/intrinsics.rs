@@ -146,6 +146,16 @@ impl Runtime {
             let n = abstract_ops::to_number(&v);
             Ok(Value::Boolean(n.is_finite()))
         });
+        // Tier-Ω.5.j.proto: Function global as a non-constructible stub.
+        // Full eval-via-Function would need parser+compiler dependency
+        // injection and a Closure-from-FunctionExpression path; deferred.
+        // Stub throws a clearer error than "callee is not callable".
+        register_global_fn(self, "Function", |_rt, _args| {
+            // Throw a JS-catchable TypeError-shaped value so user try/catch
+            // observes it. Until Error intrinsics land, a string suffices.
+            Err(RuntimeError::Thrown(Value::String(Rc::new(
+                "TypeError: Function constructor not yet supported in v1".into()))))
+        });
     }
 
     fn install_math(&mut self) {
@@ -370,6 +380,101 @@ impl Runtime {
                 }
             }
             Ok(Value::Object(out))
+        });
+        // Tier-Ω.5.j.proto: Object.defineProperty / defineProperties /
+        // getOwnPropertyDescriptor / getOwnPropertyNames.
+        // v1 reads only `value` from the descriptor; writable/enumerable/
+        // configurable are tracked as defaults via existing object_set.
+        // Accessor descriptors (get/set) are not yet honored.
+        register_method(self, obj_ctor, "defineProperty", |rt, args| {
+            let target = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError("Object.defineProperty: target must be an object".into())),
+            };
+            let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined))
+                .as_str().to_string();
+            let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
+            let desc_id = match desc {
+                Value::Object(id) => id,
+                _ => return Err(RuntimeError::TypeError("Object.defineProperty: descriptor must be an object".into())),
+            };
+            let value = rt.object_get(desc_id, "value");
+            rt.object_set(target, key, value);
+            Ok(Value::Object(target))
+        });
+        register_method(self, obj_ctor, "defineProperties", |rt, args| {
+            let target = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError("Object.defineProperties: target must be an object".into())),
+            };
+            let props = match args.get(1) {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError("Object.defineProperties: props must be an object".into())),
+            };
+            // Snapshot own enumerable keys + descriptor objects.
+            let entries: Vec<(String, Value)> = {
+                let o = rt.obj(props);
+                o.properties.iter()
+                    .filter(|(_, d)| d.enumerable)
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect()
+            };
+            for (k, dv) in entries {
+                if let Value::Object(did) = dv {
+                    let value = rt.object_get(did, "value");
+                    rt.object_set(target, k, value);
+                }
+            }
+            Ok(Value::Object(target))
+        });
+        register_method(self, obj_ctor, "getOwnPropertyDescriptor", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Undefined),
+            };
+            let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined))
+                .as_str().to_string();
+            let (has, value, writable, enumerable, configurable) = {
+                let o = rt.obj(id);
+                match o.properties.get(&key) {
+                    Some(d) => (true, d.value.clone(), d.writable, d.enumerable, d.configurable),
+                    None => (false, Value::Undefined, false, false, false),
+                }
+            };
+            if !has { return Ok(Value::Undefined); }
+            let out = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(out, "value".into(), value);
+            rt.object_set(out, "writable".into(), Value::Boolean(writable));
+            rt.object_set(out, "enumerable".into(), Value::Boolean(enumerable));
+            rt.object_set(out, "configurable".into(), Value::Boolean(configurable));
+            Ok(Value::Object(out))
+        });
+        register_method(self, obj_ctor, "getOwnPropertyNames", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+            };
+            let arr = rt.alloc_object(Object::new_array());
+            let keys: Vec<String> = {
+                let o = rt.obj(id);
+                let is_array = matches!(o.internal_kind, InternalKind::Array);
+                if is_array {
+                    let mut ks: Vec<(u64, String)> = o.properties.iter()
+                        .filter_map(|(k, _)| k.parse::<u64>().ok().map(|n| (n, k.clone())))
+                        .collect();
+                    ks.sort_by_key(|(n, _)| *n);
+                    let mut out: Vec<String> = ks.into_iter().map(|(_, k)| k).collect();
+                    if o.properties.contains_key("length") { out.push("length".into()); }
+                    out
+                } else {
+                    o.properties.keys().cloned().collect()
+                }
+            };
+            for (i, k) in keys.iter().enumerate() {
+                rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+            }
+            rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
+            Ok(Value::Object(arr))
         });
         self.globals.insert("Object".into(), Value::Object(obj_ctor));
     }

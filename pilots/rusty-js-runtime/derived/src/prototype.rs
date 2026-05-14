@@ -416,6 +416,53 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         };
         Ok(Value::Object(crate::iterator::make_array_iterator(rt, id)))
     });
+    // Tier-Ω.5.j.proto: Array.prototype.sort(comparator?).
+    // Mutates `this` in place, returns `this`. Stable.
+    // - No comparator: ToString each element, lexicographic compare.
+    // - With comparator: call comparator(a,b); sign of return → Ordering.
+    // v1 ignores spec's sparse-array semantics; sorts dense own indices 0..length-1.
+    register_method(rt, host, "sort", |rt, args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.sort: this is not an Array".into())),
+        };
+        let comparator = args.first().cloned().filter(|v| !matches!(v, Value::Undefined));
+        let len = rt.array_length(id);
+        let mut items: Vec<Value> = (0..len).map(|i| rt.object_get(id, &i.to_string())).collect();
+        // Stable sort. With comparator, use call_function; on error propagate.
+        // sort_by needs a non-fallible cmp, so collect errors via interior state.
+        let mut err: Option<RuntimeError> = None;
+        match comparator {
+            None => {
+                items.sort_by(|a, b| {
+                    let sa = abstract_ops::to_string(a);
+                    let sb = abstract_ops::to_string(b);
+                    sa.as_str().cmp(sb.as_str())
+                });
+            }
+            Some(cb) => {
+                items.sort_by(|a, b| {
+                    if err.is_some() { return std::cmp::Ordering::Equal; }
+                    match rt.call_function(cb.clone(), Value::Undefined, vec![a.clone(), b.clone()]) {
+                        Ok(v) => {
+                            let n = abstract_ops::to_number(&v);
+                            if n.is_nan() { std::cmp::Ordering::Equal }
+                            else if n < 0.0 { std::cmp::Ordering::Less }
+                            else if n > 0.0 { std::cmp::Ordering::Greater }
+                            else { std::cmp::Ordering::Equal }
+                        }
+                        Err(e) => { err = Some(e); std::cmp::Ordering::Equal }
+                    }
+                });
+            }
+        }
+        if let Some(e) = err { return Err(e); }
+        for (i, v) in items.into_iter().enumerate() {
+            rt.object_set(id, i.to_string(), v);
+        }
+        rt.object_set(id, "length".into(), Value::Number(len as f64));
+        Ok(Value::Object(id))
+    });
     register_method(rt, host, "every", |rt, args| {
         let id = match rt.current_this() {
             Value::Object(id) => id,

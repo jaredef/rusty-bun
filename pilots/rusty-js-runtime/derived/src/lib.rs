@@ -16,6 +16,7 @@ pub mod job_queue;
 pub mod promise;
 pub mod prototype;
 pub mod iterator;
+pub mod regexp;
 
 pub use module::{HostHook, ModuleStatus};
 pub use job_queue::{Job, JobKind, JobQueue};

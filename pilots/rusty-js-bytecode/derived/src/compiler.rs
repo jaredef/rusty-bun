@@ -1454,6 +1454,25 @@ impl Compiler {
                     encode_op(&mut self.bytecode, Op::Add);
                 }
             }
+            Expr::RegExp { pattern, flags, .. } => {
+                // Tier-Ω.5.i: lower regex literal to a call into the hidden
+                // global `__createRegExp(pattern, flags)`. Avoids adding a
+                // new opcode; trades one bytecode slot for two symbol-table
+                // lookups at install_intrinsics time. The runtime helper
+                // allocates an Object with InternalKind::RegExp wired to
+                // %RegExp.prototype% via the alloc-time proto seam.
+                let helper_name = self.constants.intern(Constant::String("__createRegExp".to_string()));
+                encode_op(&mut self.bytecode, Op::LoadGlobal);
+                encode_u16(&mut self.bytecode, helper_name);
+                let pat_idx = self.constants.intern(Constant::String((**pattern).clone()));
+                encode_op(&mut self.bytecode, Op::PushConst);
+                encode_u16(&mut self.bytecode, pat_idx);
+                let flags_idx = self.constants.intern(Constant::String((**flags).clone()));
+                encode_op(&mut self.bytecode, Op::PushConst);
+                encode_u16(&mut self.bytecode, flags_idx);
+                encode_op(&mut self.bytecode, Op::Call);
+                encode_u8(&mut self.bytecode, 2u8);
+            }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
             }

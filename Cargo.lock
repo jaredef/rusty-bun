@@ -468,6 +468,7 @@ dependencies = [
 name = "rusty-js-runtime"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "rusty-bun-host-v2",
  "rusty-js-ast",
  "rusty-js-bytecode",

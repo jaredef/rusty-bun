@@ -84,9 +84,16 @@ pub enum Expr {
         expressions: Vec<Expr>,
         span: Span,
     },
+    /// Regular-expression literal `/pattern/flags`. Tier-Ω.5.i substrate.
+    /// Pattern and flags carry the raw source spelling; pattern compilation
+    /// (JS regex → Rust `regex` crate) is deferred to runtime construction.
+    RegExp {
+        pattern: std::rc::Rc<String>,
+        flags: std::rc::Rc<String>,
+        span: Span,
+    },
     /// Opaque byte-span placeholder for forms still pending
-    /// (RegExp-typed-node, dynamic-import-call). Other forms have moved
-    /// off this fallback.
+    /// (dynamic-import-call). Other forms have moved off this fallback.
     Opaque { span: Span },
 }
 
@@ -217,6 +224,7 @@ impl Expr {
             Expr::Sequence { span, .. } | Expr::Function { span, .. } |
             Expr::Class { span, .. } | Expr::Arrow { span, .. } |
             Expr::TemplateLiteral { span, .. } |
+            Expr::RegExp { span, .. } |
             Expr::Opaque { span } => *span,
         }
     }

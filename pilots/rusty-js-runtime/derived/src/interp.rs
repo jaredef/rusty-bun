@@ -71,6 +71,9 @@ pub struct Runtime {
     pub promise_prototype: Option<rusty_js_gc::ObjectId>,
     pub string_prototype: Option<rusty_js_gc::ObjectId>,
     pub number_prototype: Option<rusty_js_gc::ObjectId>,
+    /// Tier-Ω.5.i: %RegExp.prototype% — installed alongside other
+    /// intrinsic prototypes; alloc_object auto-wires RegExp objects.
+    pub regexp_prototype: Option<rusty_js_gc::ObjectId>,
 }
 
 impl Runtime {
@@ -90,6 +93,7 @@ impl Runtime {
             promise_prototype: None,
             string_prototype: None,
             number_prototype: None,
+            regexp_prototype: None,
         }
     }
 
@@ -154,6 +158,7 @@ impl Runtime {
                 crate::value::InternalKind::Ordinary => self.object_prototype,
                 crate::value::InternalKind::Array => self.array_prototype,
                 crate::value::InternalKind::Promise(_) => self.promise_prototype,
+                crate::value::InternalKind::RegExp(_) => self.regexp_prototype,
                 crate::value::InternalKind::Function(_)
                 | crate::value::InternalKind::Closure(_)
                 | crate::value::InternalKind::BoundFunction(_) => self.function_prototype,

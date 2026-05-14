@@ -204,6 +204,23 @@ pub enum InternalKind {
     ModuleNamespace,
     /// Promise per ECMA-262 §27.2.
     Promise(PromiseState),
+    /// Regular expression object per ECMA-262 §22.2. Tier-Ω.5.i.
+    RegExp(RegExpInternals),
+}
+
+/// RegExp instance internals. `source` and `flags` retain the original JS
+/// spelling for the .source / .flags accessor surface. `compiled` is the
+/// Rust `regex` crate compilation of the translated pattern — None when
+/// the pattern uses features the Rust crate does not support (lookbehind,
+/// backreferences); methods then throw a TypeError on call rather than
+/// panicking. `last_index` backs the stateful exec/test path under the
+/// 'g' flag per §22.2.5.2.
+#[derive(Debug)]
+pub struct RegExpInternals {
+    pub source: Rc<String>,
+    pub flags: Rc<String>,
+    pub compiled: Option<regex::Regex>,
+    pub last_index: usize,
 }
 
 #[derive(Debug)]
@@ -235,6 +252,7 @@ impl InternalKind {
             InternalKind::BoundFunction(_) => "bound-function",
             InternalKind::Error => "error",
             InternalKind::ModuleNamespace => "module-namespace",
+            InternalKind::RegExp(_) => "regexp",
         }
     }
 }

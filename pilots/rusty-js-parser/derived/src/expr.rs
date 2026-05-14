@@ -491,10 +491,11 @@ impl<'src> Parser<'src> {
                         Err(self.err_here("unexpected template middle/tail in expression position".into())),
                 }
             }
-            TokenKind::Regex { .. } => {
-                // Opaque until regex AST node lands.
+            TokenKind::Regex { body, flags } => {
+                let pattern = std::rc::Rc::new(body.clone());
+                let flags = std::rc::Rc::new(flags.clone());
                 self.bump()?;
-                Ok(Expr::Opaque { span })
+                Ok(Expr::RegExp { pattern, flags, span })
             }
             TokenKind::Punct(Punct::LBracket) => self.parse_array_literal(),
             TokenKind::Punct(Punct::LBrace) => self.parse_object_literal(),

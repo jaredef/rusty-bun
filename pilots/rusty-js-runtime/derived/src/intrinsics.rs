@@ -30,6 +30,7 @@ impl Runtime {
         self.install_json();
         self.install_console();
         self.install_promise();
+        self.install_regexp();
         self.install_test_record();
         self.install_destructure_helpers();
     }

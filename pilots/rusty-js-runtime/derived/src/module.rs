@@ -324,7 +324,7 @@ impl Runtime {
     pub fn evaluate_module(&mut self, source: &str, url: &str) -> Result<ObjectRef, RuntimeError> {
         // Parse + compile.
         let ast = rusty_js_parser::parse_module(source)
-            .map_err(|e| RuntimeError::CompileError(format!("parse: {}", e.message)))?;
+            .map_err(|e| RuntimeError::CompileError(format!("parse: {} @byte{} @url={}", e.message, e.span.start, url)))?;
         let ast_rc = Rc::new(ast);
         let bytecode = rusty_js_bytecode::compile_module(source)
             .map_err(|e| RuntimeError::CompileError(format!("compile: {}", e.message)))?;
@@ -546,7 +546,7 @@ impl Runtime {
 
         // Parse + compile the wrapper. Reuse the existing ESM pipeline.
         let ast = rusty_js_parser::parse_module(&wrapped)
-            .map_err(|e| RuntimeError::CompileError(format!("parse (cjs wrapper): {}", e.message)))?;
+            .map_err(|e| RuntimeError::CompileError(format!("parse (cjs wrapper): {} @byte{} @url={}", e.message, e.span.start, url)))?;
         let _ast_rc = Rc::new(ast);
         let bytecode = rusty_js_bytecode::compile_module(&wrapped)
             .map_err(|e| RuntimeError::CompileError(format!("compile (cjs wrapper): {}", e.message)))?;

@@ -18,7 +18,7 @@ pub use disasm::disassemble;
 /// Convenience: parse + compile a module source string.
 pub fn compile_module(src: &str) -> Result<CompiledModule, CompileError> {
     let ast = rusty_js_parser::parse_module(src)
-        .map_err(|e| CompileError { span: e.span, message: format!("parse: {}", e.message) })?;
+        .map_err(|e| CompileError { span: e.span, message: format!("parse: {} @byte{}", e.message, e.span.start) })?;
     let mut c = Compiler::new();
     c.compile_module(&ast)
 }

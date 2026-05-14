@@ -345,6 +345,7 @@ impl Runtime {
                     frame.pc += 2;
                     let name = self.constant_name(frame, idx)?;
                     let v = self.globals.get(&name).cloned().unwrap_or(Value::Undefined);
+                    frame.last_property_lookup = Some(format!("<global>{}", name));
                     frame.push(v);
                 }
                 Op::StoreGlobal => {
@@ -680,6 +681,7 @@ impl Runtime {
                         }
                         _ => Value::Undefined,
                     };
+                    frame.last_property_lookup = Some(key);
                     frame.push(v);
                 }
                 Op::SetProp => {
@@ -805,7 +807,13 @@ impl Runtime {
                     }
                     args.reverse();
                     let callee = frame.pop()?;
-                    let result = self.call_function(callee, Value::Undefined, args)?;
+                    let callee_hint = frame.last_property_lookup.clone();
+                    let result = self.call_function(callee, Value::Undefined, args).map_err(|e| match e {
+                        RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
+                            RuntimeError::TypeError(format!("{} (callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
+                        }
+                        other => other,
+                    })?;
                     frame.push(result);
                 }
                 Op::CallMethod => {
@@ -818,7 +826,13 @@ impl Runtime {
                     args.reverse();
                     let method = frame.pop()?;
                     let receiver = frame.pop()?;
-                    let result = self.call_function(method, receiver, args)?;
+                    let method_name = frame.last_property_lookup.clone();
+                    let result = self.call_function(method, receiver, args).map_err(|e| match e {
+                        RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
+                            RuntimeError::TypeError(format!("{} (method='{}')", msg, method_name.unwrap_or_else(|| "?".into())))
+                        }
+                        other => other,
+                    })?;
                     frame.push(result);
                 }
                 Op::PushThis => {
@@ -882,7 +896,7 @@ impl Runtime {
     pub fn call_function(&mut self, callee: Value, this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         let id = match callee {
             Value::Object(id) => id,
-            _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
+            other => return Err(RuntimeError::TypeError(format!("callee is not callable: {:?}", other))),
         };
         // Extract proto-or-native by inspecting the heap object once.
         // BoundFunction: rewrite to its target, prepending bound args.
@@ -900,7 +914,7 @@ impl Runtime {
                     bound_args.extend(args);
                     return self.call_function(Value::Object(target), bound_this, bound_args);
                 }
-                _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
+                other => return Err(RuntimeError::TypeError(format!("callee is not callable: Object(kind={})", other.kind_name()))),
             }
         };
         if let Some(native) = native_opt {
@@ -941,6 +955,7 @@ impl Runtime {
             try_stack: Vec::new(),
             this_value: this,
             upvalues,
+            last_property_lookup: None,
         };
         self.run_frame(&mut inner)
     }
@@ -1002,6 +1017,9 @@ pub struct Frame<'a> {
     /// frames receive Rc-clones of the closure's upvalue cells so writes
     /// propagate to the outer frame and to sibling closures. Tier-Ω.5.e.
     pub upvalues: Vec<UpvalueCell>,
+    /// Diagnostic: name of the property most recently read by Op::GetProp.
+    /// Used to enrich "callee is not callable" errors with the method name.
+    pub last_property_lookup: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1024,6 +1042,7 @@ impl<'a> Frame<'a> {
             try_stack: Vec::new(),
             this_value: Value::Undefined,
             upvalues: Vec::new(),
+            last_property_lookup: None,
         }
     }
 

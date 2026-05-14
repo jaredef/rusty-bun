@@ -23,10 +23,12 @@ impl Runtime {
         self.install_math();
         self.install_json();
         self.install_console();
+        self.install_promise();
+        self.install_test_record();
     }
 
     fn install_globals(&mut self) {
-        register_global_fn(self, "parseInt", |args| {
+        register_global_fn(self, "parseInt", |_rt, args|{
             let s = if args.is_empty() { return Ok(Value::Number(f64::NAN)); } else { abstract_ops::to_string(&args[0]) };
             let radix = args.get(1).map(|v| abstract_ops::to_number(v) as i32).unwrap_or(10);
             let radix = if radix == 0 { 10 } else { radix };
@@ -50,7 +52,7 @@ impl Runtime {
             if !any { return Ok(Value::Number(f64::NAN)); }
             Ok(Value::Number(sign * acc as f64))
         });
-        register_global_fn(self, "parseFloat", |args| {
+        register_global_fn(self, "parseFloat", |_rt, args|{
             if args.is_empty() { return Ok(Value::Number(f64::NAN)); }
             let s = abstract_ops::to_string(&args[0]);
             let trimmed = s.trim_start();
@@ -72,12 +74,12 @@ impl Runtime {
             if end == 0 { return Ok(Value::Number(f64::NAN)); }
             Ok(Value::Number(trimmed[..end].parse().unwrap_or(f64::NAN)))
         });
-        register_global_fn(self, "isNaN", |args| {
+        register_global_fn(self, "isNaN", |_rt, args|{
             let v = args.first().cloned().unwrap_or(Value::Undefined);
             let n = abstract_ops::to_number(&v);
             Ok(Value::Boolean(n.is_nan()))
         });
-        register_global_fn(self, "isFinite", |args| {
+        register_global_fn(self, "isFinite", |_rt, args|{
             let v = args.first().cloned().unwrap_or(Value::Undefined);
             let n = abstract_ops::to_number(&v);
             Ok(Value::Boolean(n.is_finite()))
@@ -86,22 +88,22 @@ impl Runtime {
 
     fn install_math(&mut self) {
         let math = new_object();
-        register_method(&math, "abs", |args| Ok(Value::Number(num_arg(args, 0).abs())));
-        register_method(&math, "floor", |args| Ok(Value::Number(num_arg(args, 0).floor())));
-        register_method(&math, "ceil", |args| Ok(Value::Number(num_arg(args, 0).ceil())));
-        register_method(&math, "round", |args| {
+        register_method(&math, "abs", |_rt, args|Ok(Value::Number(num_arg(args, 0).abs())));
+        register_method(&math, "floor", |_rt, args|Ok(Value::Number(num_arg(args, 0).floor())));
+        register_method(&math, "ceil", |_rt, args|Ok(Value::Number(num_arg(args, 0).ceil())));
+        register_method(&math, "round", |_rt, args|{
             // JS Math.round rounds half-to-positive-infinity, not Rust's
             // half-to-even. Reimplement.
             let x = num_arg(args, 0);
             Ok(Value::Number((x + 0.5).floor()))
         });
-        register_method(&math, "trunc", |args| Ok(Value::Number(num_arg(args, 0).trunc())));
-        register_method(&math, "sqrt", |args| Ok(Value::Number(num_arg(args, 0).sqrt())));
-        register_method(&math, "cbrt", |args| Ok(Value::Number(num_arg(args, 0).cbrt())));
-        register_method(&math, "pow", |args| {
+        register_method(&math, "trunc", |_rt, args|Ok(Value::Number(num_arg(args, 0).trunc())));
+        register_method(&math, "sqrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).sqrt())));
+        register_method(&math, "cbrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).cbrt())));
+        register_method(&math, "pow", |_rt, args|{
             Ok(Value::Number(num_arg(args, 0).powf(num_arg(args, 1))))
         });
-        register_method(&math, "max", |args| {
+        register_method(&math, "max", |_rt, args|{
             let mut m = f64::NEG_INFINITY;
             for a in args {
                 let n = abstract_ops::to_number(a);
@@ -110,7 +112,7 @@ impl Runtime {
             }
             Ok(Value::Number(m))
         });
-        register_method(&math, "min", |args| {
+        register_method(&math, "min", |_rt, args|{
             let mut m = f64::INFINITY;
             for a in args {
                 let n = abstract_ops::to_number(a);
@@ -119,20 +121,20 @@ impl Runtime {
             }
             Ok(Value::Number(m))
         });
-        register_method(&math, "sign", |args| {
+        register_method(&math, "sign", |_rt, args|{
             let x = num_arg(args, 0);
             Ok(Value::Number(if x.is_nan() { f64::NAN } else if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { x }))
         });
-        register_method(&math, "exp", |args| Ok(Value::Number(num_arg(args, 0).exp())));
-        register_method(&math, "log", |args| Ok(Value::Number(num_arg(args, 0).ln())));
-        register_method(&math, "log2", |args| Ok(Value::Number(num_arg(args, 0).log2())));
-        register_method(&math, "log10", |args| Ok(Value::Number(num_arg(args, 0).log10())));
-        register_method(&math, "sin", |args| Ok(Value::Number(num_arg(args, 0).sin())));
-        register_method(&math, "cos", |args| Ok(Value::Number(num_arg(args, 0).cos())));
-        register_method(&math, "tan", |args| Ok(Value::Number(num_arg(args, 0).tan())));
-        register_method(&math, "atan", |args| Ok(Value::Number(num_arg(args, 0).atan())));
-        register_method(&math, "atan2", |args| Ok(Value::Number(num_arg(args, 0).atan2(num_arg(args, 1))))) ;
-        register_method(&math, "random", |_| {
+        register_method(&math, "exp", |_rt, args|Ok(Value::Number(num_arg(args, 0).exp())));
+        register_method(&math, "log", |_rt, args|Ok(Value::Number(num_arg(args, 0).ln())));
+        register_method(&math, "log2", |_rt, args|Ok(Value::Number(num_arg(args, 0).log2())));
+        register_method(&math, "log10", |_rt, args|Ok(Value::Number(num_arg(args, 0).log10())));
+        register_method(&math, "sin", |_rt, args|Ok(Value::Number(num_arg(args, 0).sin())));
+        register_method(&math, "cos", |_rt, args|Ok(Value::Number(num_arg(args, 0).cos())));
+        register_method(&math, "tan", |_rt, args|Ok(Value::Number(num_arg(args, 0).tan())));
+        register_method(&math, "atan", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan())));
+        register_method(&math, "atan2", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan2(num_arg(args, 1))))) ;
+        register_method(&math, "random", |_rt, _|{
             // v1: simple LCG-style PRNG seeded from time. Not crypto-grade.
             use std::time::{SystemTime, UNIX_EPOCH};
             let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
@@ -153,11 +155,11 @@ impl Runtime {
 
     fn install_json(&mut self) {
         let json = new_object();
-        register_method(&json, "stringify", |args| {
+        register_method(&json, "stringify", |_rt, args|{
             let v = args.first().cloned().unwrap_or(Value::Undefined);
             Ok(Value::String(Rc::new(json_stringify(&v))))
         });
-        register_method(&json, "parse", |args| {
+        register_method(&json, "parse", |_rt, args|{
             let s = if let Some(v) = args.first() { abstract_ops::to_string(v) } else {
                 return Err(RuntimeError::TypeError("JSON.parse requires a string".into()));
             };
@@ -166,9 +168,20 @@ impl Runtime {
         self.globals.insert("JSON".into(), Value::Object(json));
     }
 
+    fn install_test_record(&mut self) {
+        // __record(value) - testing-only intrinsic that stores its
+        // argument into runtime.globals["__last_recorded"]. Used by the
+        // test harness to verify side effects from microtask reactions.
+        register_global_fn(self, "__record", |rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            rt.globals.insert("__last_recorded".into(), v);
+            Ok(Value::Undefined)
+        });
+    }
+
     fn install_console(&mut self) {
         let console = new_object();
-        register_method(&console, "log", |args| {
+        register_method(&console, "log", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -177,7 +190,7 @@ impl Runtime {
             println!("{}", out);
             Ok(Value::Undefined)
         });
-        register_method(&console, "error", |args| {
+        register_method(&console, "error", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -186,7 +199,7 @@ impl Runtime {
             eprintln!("{}", out);
             Ok(Value::Undefined)
         });
-        register_method(&console, "warn", |args| {
+        register_method(&console, "warn", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -208,7 +221,7 @@ fn num_arg(args: &[Value], i: usize) -> f64 {
 }
 
 fn register_method<F>(host: &Rc<RefCell<Object>>, name: &str, f: F)
-where F: Fn(&[Value]) -> Result<Value, RuntimeError> + 'static {
+where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
     let fn_obj = Object {
         proto: None,
@@ -223,7 +236,7 @@ where F: Fn(&[Value]) -> Result<Value, RuntimeError> + 'static {
 }
 
 fn register_global_fn<F>(rt: &mut Runtime, name: &str, f: F)
-where F: Fn(&[Value]) -> Result<Value, RuntimeError> + 'static {
+where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
     let fn_obj = Object {
         proto: None,
@@ -383,8 +396,8 @@ fn json_parse_string(b: &[u8], p: &mut usize) -> Result<String, RuntimeError> {
                 b'b' => out.push('\u{0008}'),
                 b'f' => out.push('\u{000C}'),
                 b'u' if *p + 4 < b.len() => {
-                    let hex = std::str::from_utf8(&b[*p+1..*p+5]).map_err(|_| RuntimeError::TypeError("JSON.parse: bad \\u".into()))?;
-                    let cp = u32::from_str_radix(hex, 16).map_err(|_| RuntimeError::TypeError("JSON.parse: bad \\u".into()))?;
+                    let hex = std::str::from_utf8(&b[*p+1..*p+5]).map_err(|_|RuntimeError::TypeError("JSON.parse: bad \\u".into()))?;
+                    let cp = u32::from_str_radix(hex, 16).map_err(|_|RuntimeError::TypeError("JSON.parse: bad \\u".into()))?;
                     if let Some(ch) = char::from_u32(cp) { out.push(ch); }
                     *p += 4;
                 }
@@ -412,7 +425,7 @@ fn json_parse_number(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
         if *p < b.len() && (b[*p] == b'+' || b[*p] == b'-') { *p += 1; }
         while *p < b.len() && b[*p].is_ascii_digit() { *p += 1; }
     }
-    let s = std::str::from_utf8(&b[start..*p]).map_err(|_| RuntimeError::TypeError("JSON.parse: bad number".into()))?;
-    let n = s.parse::<f64>().map_err(|_| RuntimeError::TypeError("JSON.parse: bad number".into()))?;
+    let s = std::str::from_utf8(&b[start..*p]).map_err(|_|RuntimeError::TypeError("JSON.parse: bad number".into()))?;
+    let n = s.parse::<f64>().map_err(|_|RuntimeError::TypeError("JSON.parse: bad number".into()))?;
     Ok(Value::Number(n))
 }

@@ -184,6 +184,31 @@ pub enum InternalKind {
     BoundFunction(BoundFunctionInternals),
     Error,
     ModuleNamespace,
+    /// Promise per ECMA-262 §27.2. State + reactions stored directly;
+    /// resolution / rejection drains reactions as microtasks via the
+    /// engine's JobQueue (round 3.f.d).
+    Promise(PromiseState),
+}
+
+#[derive(Debug)]
+pub struct PromiseState {
+    pub status: PromiseStatus,
+    pub value: Value,
+    pub fulfill_reactions: Vec<PromiseReaction>,
+    pub reject_reactions: Vec<PromiseReaction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseStatus { Pending, Fulfilled, Rejected }
+
+#[derive(Debug)]
+pub struct PromiseReaction {
+    /// Handler function; None = pass-through identity (per spec when
+    /// .then has no onFulfilled / .catch has no onRejected for that
+    /// branch).
+    pub handler: Option<Value>,
+    /// Chained Promise to resolve with the handler's result.
+    pub chain: ObjectRef,
 }
 
 impl InternalKind {
@@ -192,6 +217,7 @@ impl InternalKind {
             InternalKind::Ordinary => "ordinary",
             InternalKind::Array => "array",
             InternalKind::Function(_) => "function",
+            InternalKind::Promise(_) => "promise",
             InternalKind::Closure(_) => "closure",
             InternalKind::BoundFunction(_) => "bound-function",
             InternalKind::Error => "error",
@@ -220,7 +246,11 @@ impl std::fmt::Debug for FunctionInternals {
     }
 }
 
-pub type NativeFn = std::rc::Rc<dyn Fn(&[Value]) -> Result<Value, crate::interp::RuntimeError>>;
+/// Native function signature. Takes a runtime reference for hooks like
+/// enqueue_microtask / heap.alloc that need runtime state. Round 3.f.d
+/// adds the runtime parameter; pre-3.f.d intrinsics that don't need it
+/// simply ignore the rt argument.
+pub type NativeFn = std::rc::Rc<dyn Fn(&mut crate::interp::Runtime, &[Value]) -> Result<Value, crate::interp::RuntimeError>>;
 
 #[derive(Debug)]
 pub struct BoundFunctionInternals {

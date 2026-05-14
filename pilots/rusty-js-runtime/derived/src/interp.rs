@@ -562,10 +562,10 @@ impl Runtime {
         let proto = match &obj_b.internal_kind {
             crate::value::InternalKind::Closure(c) => c.proto.clone(),
             crate::value::InternalKind::Function(f) => {
-                // Native function: invoke directly.
+                // Native function: invoke directly with the runtime reference.
                 let native = f.native.clone();
                 drop(obj_b);
-                return native(&args);
+                return native(self, &args);
             }
             _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
         };

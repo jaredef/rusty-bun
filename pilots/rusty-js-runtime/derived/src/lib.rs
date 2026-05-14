@@ -13,6 +13,7 @@ pub mod interp;
 pub mod intrinsics;
 pub mod module;
 pub mod job_queue;
+pub mod promise;
 
 pub use module::{HostHook, ModuleStatus};
 pub use job_queue::{Job, JobKind, JobQueue};

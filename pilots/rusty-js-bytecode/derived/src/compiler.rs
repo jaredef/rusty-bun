@@ -560,11 +560,8 @@ impl Compiler {
                 }
             }
             Expr::This { .. } => {
-                // v1: emit a global "this" reference. Round 3.c.d (functions)
-                // wires real this-binding.
-                let idx = self.constants.intern(Constant::String("this".into()));
-                encode_op(&mut self.bytecode, Op::LoadGlobal);
-                encode_u16(&mut self.bytecode, idx);
+                // Tier-Ω.5.a: this now threads through the frame.
+                encode_op(&mut self.bytecode, Op::PushThis);
             }
             Expr::Member { object, property, optional: _, .. } => {
                 self.compile_expr(object)?;
@@ -586,21 +583,62 @@ impl Compiler {
                 }
             }
             Expr::Call { callee, arguments, optional: _, .. } => {
-                self.compile_expr(callee)?;
                 let n = arguments.len();
                 if n > 255 {
                     return Err(self.err(e.span(), "too many call arguments (>255)"));
                 }
-                for a in arguments {
-                    match a {
-                        Argument::Expr(e) => self.compile_expr(e)?,
-                        Argument::Spread { .. } => {
-                            return Err(self.err(e.span(), "spread arguments not yet supported"));
+                // Tier-Ω.5.a: when callee is a MemberExpression, emit a
+                // method-call form so `this` threads as the receiver.
+                let is_method = matches!(callee.as_ref(), Expr::Member { .. });
+                if is_method {
+                    if let Expr::Member { object, property, optional: _, .. } = callee.as_ref() {
+                        // Push receiver, then method (looked up via GetProp /
+                        // GetIndex), then args, then CallMethod n.
+                        self.compile_expr(object)?;
+                        // Duplicate receiver so we can use it for the method
+                        // lookup without losing it for the CallMethod consumer.
+                        encode_op(&mut self.bytecode, Op::Dup);
+                        match property.as_ref() {
+                            MemberProperty::Identifier { name, .. } => {
+                                let idx = self.constants.intern(Constant::String(name.clone()));
+                                encode_op(&mut self.bytecode, Op::GetProp);
+                                encode_u16(&mut self.bytecode, idx);
+                            }
+                            MemberProperty::Computed { expr, .. } => {
+                                self.compile_expr(expr)?;
+                                encode_op(&mut self.bytecode, Op::GetIndex);
+                            }
+                            MemberProperty::Private { name, .. } => {
+                                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                                encode_op(&mut self.bytecode, Op::GetProp);
+                                encode_u16(&mut self.bytecode, idx);
+                            }
+                        }
+                        // Now stack: [receiver, method]. Compile args.
+                        for a in arguments {
+                            match a {
+                                Argument::Expr(e) => self.compile_expr(e)?,
+                                Argument::Spread { .. } => {
+                                    return Err(self.err(e.span(), "spread arguments not yet supported"));
+                                }
+                            }
+                        }
+                        encode_op(&mut self.bytecode, Op::CallMethod);
+                        encode_u8(&mut self.bytecode, n as u8);
+                    }
+                } else {
+                    self.compile_expr(callee)?;
+                    for a in arguments {
+                        match a {
+                            Argument::Expr(e) => self.compile_expr(e)?,
+                            Argument::Spread { .. } => {
+                                return Err(self.err(e.span(), "spread arguments not yet supported"));
+                            }
                         }
                     }
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, n as u8);
                 }
-                encode_op(&mut self.bytecode, Op::Call);
-                encode_u8(&mut self.bytecode, n as u8);
             }
             Expr::New { callee, arguments, .. } => {
                 self.compile_expr(callee)?;

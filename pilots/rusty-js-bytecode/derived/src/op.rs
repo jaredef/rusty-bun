@@ -97,6 +97,12 @@ pub enum Op {
     New = 0x71,
     Return = 0x72,
     ReturnUndef = 0x73,
+    /// CALL_METHOD <u8> — stack layout: [..., receiver, method, arg0..argN-1].
+    /// Pops args + method + receiver, invokes method with receiver as `this`.
+    /// Added Tier-Ω.5.a for prototype-chain instance-method dispatch.
+    CallMethod = 0x74,
+    /// PUSH_THIS — push the current frame's `this` value onto the operand stack.
+    PushThis = 0x75,
 
     // Member access
     /// GET_PROP <u16>
@@ -156,8 +162,8 @@ impl Op {
             | Typeof | Void | Delete
             | Throw | TryExit
             | IterInit | IterNext | IterClose
-            | Nop | Debugger => 0,
-            Call | New => 1,
+            | Nop | Debugger | PushThis => 0,
+            Call | New | CallMethod => 1,
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
             | DefineLocal | GetProp | SetProp | NewArray | InitProp
@@ -223,6 +229,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x60 => Jump, 0x61 => JumpIfTrue, 0x62 => JumpIfFalse,
         0x63 => JumpIfTrueKeep, 0x64 => JumpIfFalseKeep, 0x65 => JumpIfNullish,
         0x70 => Call, 0x71 => New, 0x72 => Return, 0x73 => ReturnUndef,
+        0x74 => CallMethod, 0x75 => PushThis,
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,
         0xA0 => Typeof, 0xA1 => Void, 0xA2 => Delete,

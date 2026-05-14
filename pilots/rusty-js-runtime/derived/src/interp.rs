@@ -39,6 +39,32 @@ pub struct Runtime {
     /// notified at end-of-job for any rejection still without a handler.
     /// Drained by `drain_unhandled_rejections()` after run_to_completion.
     pub pending_unhandled: HashSet<rusty_js_gc::ObjectId>,
+    /// `this` visible to a native function during its invocation. Set by
+    /// call_function before dispatching into a NativeFn; native handlers
+    /// read it via `rt.current_this()`. Tier-Ω.5.a: preserves the existing
+    /// `Fn(&mut Runtime, &[Value])` NativeFn signature (no cascade through
+    /// host-v2/* intrinsics) while still letting Function.prototype.call,
+    /// Array.prototype.map's callback dispatch, and the like see a real
+    /// receiver. Saved/restored across nested calls.
+    pub current_this: Value,
+    // ─── Intrinsic prototypes (Tier-Ω.5.a) ───
+    //
+    // Stashed ObjectIds for the canonical prototype objects. Each
+    // Object that ought to inherit from one of these has its `proto`
+    // field set at allocation time:
+    //   - Ordinary objects -> object_prototype
+    //   - Array objects    -> array_prototype
+    //   - Function/Closure/BoundFunction -> function_prototype
+    //   - Promise          -> promise_prototype
+    // Strings + Numbers + Booleans are primitives — their method dispatch
+    // routes through these stashes via `Runtime::lookup_method_on_value`
+    // without allocating a wrapper.
+    pub object_prototype: Option<rusty_js_gc::ObjectId>,
+    pub array_prototype: Option<rusty_js_gc::ObjectId>,
+    pub function_prototype: Option<rusty_js_gc::ObjectId>,
+    pub promise_prototype: Option<rusty_js_gc::ObjectId>,
+    pub string_prototype: Option<rusty_js_gc::ObjectId>,
+    pub number_prototype: Option<rusty_js_gc::ObjectId>,
 }
 
 impl Runtime {
@@ -50,8 +76,18 @@ impl Runtime {
             heap: rusty_js_gc::Heap::new(),
             job_queue: crate::job_queue::JobQueue::new(),
             pending_unhandled: HashSet::new(),
+            current_this: Value::Undefined,
+            object_prototype: None,
+            array_prototype: None,
+            function_prototype: None,
+            promise_prototype: None,
+            string_prototype: None,
+            number_prototype: None,
         }
     }
+
+    /// `this` for the active native call. Returns Undefined outside one.
+    pub fn current_this(&self) -> Value { self.current_this.clone() }
 
     /// Drain promises still rejected with no handler. Caller is the host;
     /// canonical action is print-to-stderr + exit nonzero. Idempotent.
@@ -100,8 +136,23 @@ impl Runtime {
     }
 
     /// Allocate an Object via the managed heap. Returns the ObjectId
-    /// handle.
-    pub fn alloc_object(&mut self, obj: crate::value::Object) -> rusty_js_gc::ObjectId {
+    /// handle. Tier-Ω.5.a: if the Object has no explicit proto and an
+    /// intrinsic prototype matching its InternalKind has been installed,
+    /// the proto is wired automatically. This is the seam through which
+    /// prototype-chain method dispatch works without retrofitting every
+    /// alloc call-site.
+    pub fn alloc_object(&mut self, mut obj: crate::value::Object) -> rusty_js_gc::ObjectId {
+        if obj.proto.is_none() {
+            obj.proto = match &obj.internal_kind {
+                crate::value::InternalKind::Ordinary => self.object_prototype,
+                crate::value::InternalKind::Array => self.array_prototype,
+                crate::value::InternalKind::Promise(_) => self.promise_prototype,
+                crate::value::InternalKind::Function(_)
+                | crate::value::InternalKind::Closure(_)
+                | crate::value::InternalKind::BoundFunction(_) => self.function_prototype,
+                _ => None,
+            };
+        }
         self.heap.alloc(obj)
     }
 
@@ -118,7 +169,29 @@ impl Runtime {
 
     /// OrdinaryGet with prototype walk. Returns Undefined if neither the
     /// object nor any prototype owns the key.
+    ///
+    /// Tier-Ω.5.a: special-case Array.length — computed from the highest
+    /// numeric-indexed own property + 1 (own-only, prototype walk skipped
+    /// for this synthetic key). Matches the spec semantics close enough
+    /// for the v1 surface without maintaining a separate length slot.
     pub fn object_get(&self, id: ObjectRef, key: &str) -> Value {
+        if key == "length" {
+            let o = self.obj(id);
+            if matches!(o.internal_kind, InternalKind::Array) {
+                // If explicit "length" property is set, prefer it; otherwise
+                // derive from max numeric index + 1.
+                if let Some(d) = o.properties.get("length") {
+                    return d.value.clone();
+                }
+                let mut max: i64 = -1;
+                for k in o.properties.keys() {
+                    if let Ok(i) = k.parse::<i64>() {
+                        if i > max { max = i; }
+                    }
+                }
+                return Value::Number((max + 1) as f64);
+            }
+        }
         let mut cur = Some(id);
         while let Some(c) = cur {
             let o = self.obj(c);
@@ -128,6 +201,14 @@ impl Runtime {
             cur = o.proto;
         }
         Value::Undefined
+    }
+
+    /// Array length helper used by Array.prototype.* methods.
+    pub fn array_length(&self, id: ObjectRef) -> usize {
+        match self.object_get(id, "length") {
+            Value::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
+            _ => 0,
+        }
     }
 
     /// OrdinaryDefineOwnProperty — own-key set on the named object.
@@ -496,6 +577,18 @@ impl Runtime {
                     let v = match &obj_v {
                         Value::Object(id) => self.object_get(*id, &key),
                         Value::String(s) if key == "length" => Value::Number(s.chars().count() as f64),
+                        Value::String(_) => {
+                            // Primitive string method auto-boxing: route to
+                            // %String.prototype% if installed.
+                            if let Some(proto) = self.string_prototype {
+                                self.object_get(proto, &key)
+                            } else { Value::Undefined }
+                        }
+                        Value::Number(_) => {
+                            if let Some(proto) = self.number_prototype {
+                                self.object_get(proto, &key)
+                            } else { Value::Undefined }
+                        }
                         Value::Undefined | Value::Null => {
                             return Err(RuntimeError::TypeError(
                                 format!("Cannot read property '{}' of {}", key,
@@ -590,6 +683,23 @@ impl Runtime {
                     let result = self.call_function(callee, Value::Undefined, args)?;
                     frame.push(result);
                 }
+                Op::CallMethod => {
+                    let n = frame.bytecode[frame.pc] as usize;
+                    frame.pc += 1;
+                    let mut args = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        args.push(frame.pop()?);
+                    }
+                    args.reverse();
+                    let method = frame.pop()?;
+                    let receiver = frame.pop()?;
+                    let result = self.call_function(method, receiver, args)?;
+                    frame.push(result);
+                }
+                Op::PushThis => {
+                    let t = frame.this_value.clone();
+                    frame.push(t);
+                }
                 Op::New => {
                     let n = frame.bytecode[frame.pc] as usize;
                     frame.pc += 1;
@@ -623,24 +733,45 @@ impl Runtime {
     /// Call a function value. Materializes a new Frame from the callee's
     /// FunctionProto, populates its locals slot 0..N with the arguments,
     /// runs the frame, returns the produced value (or Undefined on ReturnUndef).
-    pub fn call_function(&mut self, callee: Value, _this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    ///
+    /// Tier-Ω.5.a: `this` is now threaded — stashed onto
+    /// `Runtime::current_this` around NativeFn invocations (saved/restored
+    /// across nesting), and set as `Frame::this_value` for closure frames.
+    /// BoundFunction unwraps once, prepending bound args and overriding the
+    /// caller's `this` with the bound this.
+    pub fn call_function(&mut self, callee: Value, this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         let id = match callee {
             Value::Object(id) => id,
             _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
         };
         // Extract proto-or-native by inspecting the heap object once.
-        let (proto_opt, native_opt) = {
+        // BoundFunction: rewrite to its target, prepending bound args.
+        let (proto_opt, native_opt, effective_this, effective_args) = {
             let o = self.obj(id);
             match &o.internal_kind {
-                crate::value::InternalKind::Closure(c) => (Some(c.proto.clone()), None),
-                crate::value::InternalKind::Function(f) => (None, Some(f.native.clone())),
+                crate::value::InternalKind::Closure(c) => (Some(c.proto.clone()), None, this, args),
+                crate::value::InternalKind::Function(f) => (None, Some(f.native.clone()), this, args),
+                crate::value::InternalKind::BoundFunction(b) => {
+                    // One level of unwrap is sufficient for v1; nested
+                    // bindings recurse via tail-call into call_function.
+                    let target = b.target;
+                    let bound_this = b.this.clone();
+                    let mut bound_args = b.args.clone();
+                    bound_args.extend(args);
+                    return self.call_function(Value::Object(target), bound_this, bound_args);
+                }
                 _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
             }
         };
         if let Some(native) = native_opt {
-            return native(self, &args);
+            let saved = std::mem::replace(&mut self.current_this, effective_this);
+            let result = native(self, &effective_args);
+            self.current_this = saved;
+            return result;
         }
         let proto = proto_opt.expect("closure branch implies proto");
+        let args = effective_args;
+        let this = effective_this;
         // Build the inner frame's locals: arguments first, then space for
         // additional locals beyond params.
         let mut locals: Vec<Value> = Vec::new();
@@ -659,6 +790,7 @@ impl Runtime {
             operand_stack: Vec::with_capacity(32),
             pc: 0,
             try_stack: Vec::new(),
+            this_value: this,
         };
         self.run_frame(&mut inner)
     }
@@ -707,6 +839,9 @@ pub struct Frame<'a> {
     pub operand_stack: Vec<Value>,
     pub pc: usize,
     pub try_stack: Vec<TryFrame>,
+    /// `this` for the executing frame. Module frames default to Undefined;
+    /// method-call frames receive the receiver. Tier-Ω.5.a.
+    pub this_value: Value,
 }
 
 #[derive(Debug)]
@@ -726,6 +861,7 @@ impl<'a> Frame<'a> {
             operand_stack: Vec::with_capacity(32),
             pc: 0,
             try_stack: Vec::new(),
+            this_value: Value::Undefined,
         }
     }
 

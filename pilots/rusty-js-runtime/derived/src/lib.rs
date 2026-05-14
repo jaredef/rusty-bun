@@ -14,6 +14,7 @@ pub mod intrinsics;
 pub mod module;
 pub mod job_queue;
 pub mod promise;
+pub mod prototype;
 
 pub use module::{HostHook, ModuleStatus};
 pub use job_queue::{Job, JobKind, JobQueue};

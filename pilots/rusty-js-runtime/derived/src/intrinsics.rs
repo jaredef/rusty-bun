@@ -18,6 +18,10 @@ use std::rc::Rc;
 
 impl Runtime {
     pub fn install_intrinsics(&mut self) {
+        // Prototype intrinsics must install first so subsequent alloc_object
+        // calls (Math/JSON/console hosts, Promise) inherit from
+        // Object.prototype. Tier-Ω.5.a.
+        self.install_prototypes();
         self.install_globals();
         self.install_math();
         self.install_json();

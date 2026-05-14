@@ -33,6 +33,106 @@ impl Runtime {
         self.install_regexp();
         self.install_test_record();
         self.install_destructure_helpers();
+        self.install_spread_helpers();
+    }
+
+    /// Tier-Ω.5.k: helpers the compiler emits LoadGlobal+Call into for
+    /// object-literal spread and spread arguments. All return the target
+    /// (array or object) so they compose without extra stack juggling.
+    fn install_spread_helpers(&mut self) {
+        // __object_spread(target, src) → target. Copies own enumerable
+        // string-keyed properties from src to target, left-to-right.
+        register_global_fn(self, "__object_spread", |rt, args| {
+            let target = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError(
+                    "__object_spread: target must be an object".into())),
+            };
+            if let Some(Value::Object(sid)) = args.get(1) {
+                let entries: Vec<(String, Value)> = rt.obj(*sid).properties.iter()
+                    .filter(|(_, d)| d.enumerable)
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                for (k, v) in entries { rt.object_set(target, k, v); }
+            }
+            // Non-object sources (null/undefined) are a no-op per ECMA-262.
+            Ok(Value::Object(target))
+        });
+        // __array_push_single(arr, v) → arr. Appends one value.
+        register_global_fn(self, "__array_push_single", |rt, args| {
+            let arr = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError(
+                    "__array_push_single: target must be an array".into())),
+            };
+            let v = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let len = rt.array_length(arr);
+            rt.object_set(arr, len.to_string(), v);
+            rt.object_set(arr, "length".into(), Value::Number((len + 1) as f64));
+            Ok(Value::Object(arr))
+        });
+        // __array_extend(arr, iter) → arr. Iterates iter via @@iterator
+        // protocol and appends each yielded value.
+        register_global_fn(self, "__array_extend", |rt, args| {
+            let arr = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Err(RuntimeError::TypeError(
+                    "__array_extend: target must be an array".into())),
+            };
+            let src = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let values = collect_iterable(rt, src)?;
+            let mut len = rt.array_length(arr);
+            for v in values {
+                rt.object_set(arr, len.to_string(), v);
+                len += 1;
+            }
+            rt.object_set(arr, "length".into(), Value::Number(len as f64));
+            Ok(Value::Object(arr))
+        });
+        // __apply(callee, thisArg, argsArray) → callee.apply(thisArg, argsArray).
+        // Used by the compiler to lower spread-argument calls.
+        register_global_fn(self, "__apply", |rt, args| {
+            let callee = args.first().cloned().unwrap_or(Value::Undefined);
+            let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let arr = args.get(2).cloned().unwrap_or(Value::Undefined);
+            let collected = match arr {
+                Value::Object(id) => {
+                    let n = rt.array_length(id);
+                    (0..n).map(|i| rt.object_get(id, &i.to_string())).collect()
+                }
+                _ => Vec::new(),
+            };
+            rt.call_function(callee, this_arg, collected)
+        });
+        // __construct(callee, argsArray) → new callee(...argsArray).
+        // Mirrors the Op::New handler: consults callee.prototype for the
+        // new instance's [[Prototype]] and discards non-object returns.
+        register_global_fn(self, "__construct", |rt, args| {
+            let callee = args.first().cloned().unwrap_or(Value::Undefined);
+            let arr = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let collected: Vec<Value> = match arr {
+                Value::Object(id) => {
+                    let n = rt.array_length(id);
+                    (0..n).map(|i| rt.object_get(id, &i.to_string())).collect()
+                }
+                _ => Vec::new(),
+            };
+            let proto_override = if let Value::Object(cid) = &callee {
+                match rt.object_get(*cid, "prototype") {
+                    Value::Object(pid) => Some(pid),
+                    _ => None,
+                }
+            } else { None };
+            let mut ordinary = Object::new_ordinary();
+            if proto_override.is_some() { ordinary.proto = proto_override; }
+            let this_id = rt.alloc_object(ordinary);
+            let this_obj = Value::Object(this_id);
+            let ret = rt.call_function(callee, this_obj.clone(), collected)?;
+            Ok(match ret {
+                Value::Object(_) => ret,
+                _ => this_obj,
+            })
+        });
     }
 
     /// Tier-Ω.5.g.3: helpers the compiler emits LoadGlobal+Call into for

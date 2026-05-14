@@ -1277,50 +1277,99 @@ impl Compiler {
                 // Tier-Ω.5.a: when callee is a MemberExpression, emit a
                 // method-call form so `this` threads as the receiver.
                 let is_method = matches!(callee.as_ref(), Expr::Member { .. });
+                let has_spread = Self::args_has_spread(arguments);
                 if is_method {
                     if let Expr::Member { object, property, optional: _, .. } = callee.as_ref() {
-                        // Push receiver, then method (looked up via GetProp /
-                        // GetIndex), then args, then CallMethod n.
-                        self.compile_expr(object)?;
-                        // Duplicate receiver so we can use it for the method
-                        // lookup without losing it for the CallMethod consumer.
-                        encode_op(&mut self.bytecode, Op::Dup);
-                        match property.as_ref() {
-                            MemberProperty::Identifier { name, .. } => {
-                                let idx = self.constants.intern(Constant::String(name.clone()));
-                                encode_op(&mut self.bytecode, Op::GetProp);
-                                encode_u16(&mut self.bytecode, idx);
-                            }
-                            MemberProperty::Computed { expr, .. } => {
-                                self.compile_expr(expr)?;
-                                encode_op(&mut self.bytecode, Op::GetIndex);
-                            }
-                            MemberProperty::Private { name, .. } => {
-                                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
-                                encode_op(&mut self.bytecode, Op::GetProp);
-                                encode_u16(&mut self.bytecode, idx);
-                            }
-                        }
-                        // Now stack: [receiver, method]. Compile args.
-                        for a in arguments {
-                            match a {
-                                Argument::Expr(e) => self.compile_expr(e)?,
-                                Argument::Spread { .. } => {
-                                    return Err(self.err(e.span(), "spread arguments not yet supported"));
+                        if has_spread {
+                            // Tier-Ω.5.k: lower `obj.f(...args)` as
+                            //   __apply(method, receiver, argsArray)
+                            // Stack:
+                            //   LoadGlobal __apply        [__apply]
+                            //   <object>                  [__apply, recv]
+                            //   Dup                       [__apply, recv, recv]
+                            //   GetProp/GetIndex name     [__apply, recv, method]
+                            //   Swap                      [__apply, method, recv]
+                            //   <argsArray>               [__apply, method, recv, arr]
+                            //   Call 3                    [result]
+                            let apply_name = self.constants.intern(
+                                Constant::String("__apply".to_string()));
+                            encode_op(&mut self.bytecode, Op::LoadGlobal);
+                            encode_u16(&mut self.bytecode, apply_name);
+                            self.compile_expr(object)?;
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            match property.as_ref() {
+                                MemberProperty::Identifier { name, .. } => {
+                                    let idx = self.constants.intern(Constant::String(name.clone()));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, idx);
+                                }
+                                MemberProperty::Computed { expr, .. } => {
+                                    self.compile_expr(expr)?;
+                                    encode_op(&mut self.bytecode, Op::GetIndex);
+                                }
+                                MemberProperty::Private { name, .. } => {
+                                    let idx = self.constants.intern(
+                                        Constant::String(format!("#{}", name)));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, idx);
                                 }
                             }
+                            encode_op(&mut self.bytecode, Op::Swap);
+                            self.emit_args_array(arguments)?;
+                            encode_op(&mut self.bytecode, Op::Call);
+                            encode_u8(&mut self.bytecode, 3);
+                        } else {
+                            // Push receiver, then method (looked up via GetProp /
+                            // GetIndex), then args, then CallMethod n.
+                            self.compile_expr(object)?;
+                            // Duplicate receiver so we can use it for the method
+                            // lookup without losing it for the CallMethod consumer.
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            match property.as_ref() {
+                                MemberProperty::Identifier { name, .. } => {
+                                    let idx = self.constants.intern(Constant::String(name.clone()));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, idx);
+                                }
+                                MemberProperty::Computed { expr, .. } => {
+                                    self.compile_expr(expr)?;
+                                    encode_op(&mut self.bytecode, Op::GetIndex);
+                                }
+                                MemberProperty::Private { name, .. } => {
+                                    let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, idx);
+                                }
+                            }
+                            // Now stack: [receiver, method]. Compile args.
+                            for a in arguments {
+                                match a {
+                                    Argument::Expr(e) => self.compile_expr(e)?,
+                                    Argument::Spread { .. } => unreachable!(),
+                                }
+                            }
+                            encode_op(&mut self.bytecode, Op::CallMethod);
+                            encode_u8(&mut self.bytecode, n as u8);
                         }
-                        encode_op(&mut self.bytecode, Op::CallMethod);
-                        encode_u8(&mut self.bytecode, n as u8);
                     }
+                } else if has_spread {
+                    // Tier-Ω.5.k: lower `f(...args)` as
+                    //   __apply(callee, undefined, argsArray)
+                    let apply_name = self.constants.intern(
+                        Constant::String("__apply".to_string()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, apply_name);
+                    self.compile_expr(callee)?;
+                    encode_op(&mut self.bytecode, Op::PushUndef);
+                    self.emit_args_array(arguments)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 3);
                 } else {
                     self.compile_expr(callee)?;
                     for a in arguments {
                         match a {
                             Argument::Expr(e) => self.compile_expr(e)?,
-                            Argument::Spread { .. } => {
-                                return Err(self.err(e.span(), "spread arguments not yet supported"));
-                            }
+                            Argument::Spread { .. } => unreachable!(),
                         }
                     }
                     encode_op(&mut self.bytecode, Op::Call);
@@ -1328,21 +1377,32 @@ impl Compiler {
                 }
             }
             Expr::New { callee, arguments, .. } => {
-                self.compile_expr(callee)?;
                 let n = arguments.len();
                 if n > 255 {
                     return Err(self.err(e.span(), "too many new arguments (>255)"));
                 }
-                for a in arguments {
-                    match a {
-                        Argument::Expr(e) => self.compile_expr(e)?,
-                        Argument::Spread { .. } => {
-                            return Err(self.err(e.span(), "spread arguments not yet supported"));
+                if Self::args_has_spread(arguments) {
+                    // Tier-Ω.5.k: lower `new C(...args)` as
+                    //   __construct(callee, argsArray)
+                    let ctor_name = self.constants.intern(
+                        Constant::String("__construct".to_string()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, ctor_name);
+                    self.compile_expr(callee)?;
+                    self.emit_args_array(arguments)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 2);
+                } else {
+                    self.compile_expr(callee)?;
+                    for a in arguments {
+                        match a {
+                            Argument::Expr(e) => self.compile_expr(e)?,
+                            Argument::Spread { .. } => unreachable!(),
                         }
                     }
+                    encode_op(&mut self.bytecode, Op::New);
+                    encode_u8(&mut self.bytecode, n as u8);
                 }
-                encode_op(&mut self.bytecode, Op::New);
-                encode_u8(&mut self.bytecode, n as u8);
             }
             Expr::Array { elements, .. } => {
                 let len = elements.len();
@@ -1389,8 +1449,23 @@ impl Compiler {
                                 }
                             }
                         }
-                        ObjectProperty::Spread { .. } => {
-                            return Err(self.err(e.span(), "spread in object literal not yet supported"));
+                        ObjectProperty::Spread { expr, .. } => {
+                            // Tier-Ω.5.k: lower `{...src}` as
+                            //   Dup; LoadGlobal __object_spread; Swap;
+                            //   <compile src>; Call 2; Pop
+                            // Pre: [target]. Post: [target]. The helper
+                            // copies own-enumerable props of src into
+                            // target left-to-right and returns target.
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            let helper = self.constants.intern(
+                                Constant::String("__object_spread".to_string()));
+                            encode_op(&mut self.bytecode, Op::LoadGlobal);
+                            encode_u16(&mut self.bytecode, helper);
+                            encode_op(&mut self.bytecode, Op::Swap);
+                            self.compile_expr(expr)?;
+                            encode_op(&mut self.bytecode, Op::Call);
+                            encode_u8(&mut self.bytecode, 2);
+                            encode_op(&mut self.bytecode, Op::Pop);
                         }
                     }
                 }
@@ -1608,6 +1683,49 @@ impl Compiler {
 
     fn err(&self, span: Span, msg: &str) -> CompileError {
         CompileError { span, message: msg.to_string() }
+    }
+
+    // ───────────────── Tier-Ω.5.k: spread-argument lowering ─────────────────
+
+    /// True if any argument is a spread (`...x`). Drives the choice between
+    /// the direct Op::Call/Op::CallMethod/Op::New emit path and the
+    /// __apply / __construct helper path.
+    fn args_has_spread(arguments: &[Argument]) -> bool {
+        arguments.iter().any(|a| matches!(a, Argument::Spread { .. }))
+    }
+
+    /// Emit code that builds a fresh Array containing the call arguments,
+    /// with spread elements expanded via @@iterator. Stack delta: pushes
+    /// one Array.
+    fn emit_args_array(&mut self, arguments: &[Argument]) -> Result<(), CompileError> {
+        encode_op(&mut self.bytecode, Op::NewArray);
+        encode_u16(&mut self.bytecode, 0);
+        let push_name = self.constants.intern(
+            Constant::String("__array_push_single".to_string()));
+        let extend_name = self.constants.intern(
+            Constant::String("__array_extend".to_string()));
+        for a in arguments {
+            match a {
+                Argument::Expr(expr) => {
+                    // Pre: [.., arr]. Post: [.., arr].
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, push_name);
+                    encode_op(&mut self.bytecode, Op::Swap);
+                    self.compile_expr(expr)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 2);
+                }
+                Argument::Spread { expr, .. } => {
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, extend_name);
+                    encode_op(&mut self.bytecode, Op::Swap);
+                    self.compile_expr(expr)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 2);
+                }
+            }
+        }
+        Ok(())
     }
 
     // ───────────────── Tier-Ω.5.d: compound assignment + update ─────────────────
@@ -2379,20 +2497,31 @@ impl Compiler {
         if n > 255 {
             return Err(self.err(span, "too many super-call arguments (>255)"));
         }
-        // Receiver = current `this`.
-        encode_op(&mut self.bytecode, Op::PushThis);
-        // Method = parent constructor.
-        self.emit_load_ident(&super_ctor_name);
-        for a in arguments {
-            match a {
-                Argument::Expr(e) => self.compile_expr(e)?,
-                Argument::Spread { .. } => {
-                    return Err(self.err(span, "spread arguments not yet supported"));
+        if Self::args_has_spread(arguments) {
+            // Tier-Ω.5.k: spread super(...) → __apply(super_ctor, this, args).
+            let apply_name = self.constants.intern(
+                Constant::String("__apply".to_string()));
+            encode_op(&mut self.bytecode, Op::LoadGlobal);
+            encode_u16(&mut self.bytecode, apply_name);
+            self.emit_load_ident(&super_ctor_name);
+            encode_op(&mut self.bytecode, Op::PushThis);
+            self.emit_args_array(arguments)?;
+            encode_op(&mut self.bytecode, Op::Call);
+            encode_u8(&mut self.bytecode, 3);
+        } else {
+            // Receiver = current `this`.
+            encode_op(&mut self.bytecode, Op::PushThis);
+            // Method = parent constructor.
+            self.emit_load_ident(&super_ctor_name);
+            for a in arguments {
+                match a {
+                    Argument::Expr(e) => self.compile_expr(e)?,
+                    Argument::Spread { .. } => unreachable!(),
                 }
             }
+            encode_op(&mut self.bytecode, Op::CallMethod);
+            encode_u8(&mut self.bytecode, n as u8);
         }
-        encode_op(&mut self.bytecode, Op::CallMethod);
-        encode_u8(&mut self.bytecode, n as u8);
         Ok(())
     }
 
@@ -2445,20 +2574,31 @@ impl Compiler {
         if n > 255 {
             return Err(self.err(span, "too many super-call arguments (>255)"));
         }
-        // Receiver = current `this`.
-        encode_op(&mut self.bytecode, Op::PushThis);
-        // Method = (parent prototype | parent ctor) [.property].
-        self.compile_super_member_load(span, property)?;
-        for a in arguments {
-            match a {
-                Argument::Expr(e) => self.compile_expr(e)?,
-                Argument::Spread { .. } => {
-                    return Err(self.err(span, "spread arguments not yet supported"));
+        if Self::args_has_spread(arguments) {
+            // Tier-Ω.5.k: spread super.m(...) → __apply(method, this, args).
+            let apply_name = self.constants.intern(
+                Constant::String("__apply".to_string()));
+            encode_op(&mut self.bytecode, Op::LoadGlobal);
+            encode_u16(&mut self.bytecode, apply_name);
+            self.compile_super_member_load(span, property)?;
+            encode_op(&mut self.bytecode, Op::PushThis);
+            self.emit_args_array(arguments)?;
+            encode_op(&mut self.bytecode, Op::Call);
+            encode_u8(&mut self.bytecode, 3);
+        } else {
+            // Receiver = current `this`.
+            encode_op(&mut self.bytecode, Op::PushThis);
+            // Method = (parent prototype | parent ctor) [.property].
+            self.compile_super_member_load(span, property)?;
+            for a in arguments {
+                match a {
+                    Argument::Expr(e) => self.compile_expr(e)?,
+                    Argument::Spread { .. } => unreachable!(),
                 }
             }
+            encode_op(&mut self.bytecode, Op::CallMethod);
+            encode_u8(&mut self.bytecode, n as u8);
         }
-        encode_op(&mut self.bytecode, Op::CallMethod);
-        encode_u8(&mut self.bytecode, n as u8);
         Ok(())
     }
 }

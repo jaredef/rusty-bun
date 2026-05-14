@@ -31,6 +31,7 @@ members = [
     "pilots/rusty-js-ast",
     "pilots/rusty-js-bytecode/derived",
     "pilots/rusty-js-parser/derived",
+    "pilots/rusty-js-runtime/derived",
     "pilots/streams/derived",
     "pilots/structured-clone/derived",
     "pilots/textencoder/derived",

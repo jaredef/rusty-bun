@@ -451,6 +451,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-js-runtime"
+version = "0.1.0"
+dependencies = [
+ "rusty-js-ast",
+ "rusty-js-bytecode",
+ "rusty-js-parser",
+]
+
+[[package]]
 name = "rusty-node-fs"
 version = "0.1.0"
 

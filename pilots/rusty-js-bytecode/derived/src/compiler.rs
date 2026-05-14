@@ -239,6 +239,10 @@ struct LoopFrame {
     continue_patches: Vec<usize>,
     /// Operand-byte offsets of unresolved break forward-jumps.
     break_patches: Vec<usize>,
+    /// Tier-Ω.5.m: true for switch frames. `break` still targets this
+    /// frame, but `continue` skips past it to the enclosing loop —
+    /// switch is a break-only construct per ECMA-262 §14.12.4.
+    is_switch: bool,
 }
 
 impl Compiler {
@@ -535,7 +539,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: loop_start, continue_pending: false,
-                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
                 });
                 self.compile_expr(test)?;
                 let jump_if_false = self.emit_jump(Op::JumpIfFalse);
@@ -549,7 +553,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: true,
-                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
                 });
                 self.compile_stmt(body)?;
                 let test_pos = self.bytecode.len();
@@ -581,7 +585,7 @@ impl Compiler {
                 let test_pos = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: true,
-                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
                 });
                 let jump_if_false = if let Some(t) = test {
                     self.compile_expr(t)?;
@@ -692,7 +696,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: loop_start, continue_pending: false,
-                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
                 });
                 // result = iter.next()
                 encode_op(&mut self.bytecode, Op::LoadLocal);
@@ -810,18 +814,21 @@ impl Compiler {
                 if label.is_some() {
                     return Err(self.err(span, "labelled continue not yet supported"));
                 }
-                if self.loop_stack.is_empty() {
+                // Find the innermost enclosing *loop* frame, skipping any
+                // switch frames. Per ECMA-262, `continue` inside a switch
+                // applies to the enclosing iteration statement, not the
+                // switch itself. Tier-Ω.5.m.
+                let loop_idx = self.loop_stack.iter().rposition(|f| !f.is_switch);
+                let Some(idx) = loop_idx else {
                     return Err(self.err(span, "continue outside of loop"));
-                }
-                let pending = self.loop_stack.last().unwrap().continue_pending;
+                };
+                let pending = self.loop_stack[idx].continue_pending;
                 if pending {
-                    // Record patch site; will be filled when continue_target
-                    // is finalized.
                     let patch_site = encode_op(&mut self.bytecode, Op::Jump);
                     encode_i32(&mut self.bytecode, 0);
-                    self.loop_stack.last_mut().unwrap().continue_patches.push(patch_site);
+                    self.loop_stack[idx].continue_patches.push(patch_site);
                 } else {
-                    let target = self.loop_stack.last().unwrap().continue_target;
+                    let target = self.loop_stack[idx].continue_target;
                     self.emit_back_jump(target);
                 }
             }
@@ -841,10 +848,212 @@ impl Compiler {
                     encode_op(&mut self.bytecode, Op::Pop);
                 }
             }
+            Stmt::Switch { discriminant, cases, .. } => {
+                // Tier-Ω.5.m: switch lowering per ECMA-262 §14.12.4.
+                // 1. Spill the discriminant into a hidden local so the
+                //    per-case StrictEq compares always use the same value.
+                let disc_slot = self.alloc_temp("<switch.disc>");
+                self.compile_expr(discriminant)?;
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, disc_slot);
+
+                // 2. Dispatch chain. For each non-default case, emit a
+                //    StrictEq test that conditionally jumps to that case's
+                //    body. Record one patch site per case (None for the
+                //    default — its body label is patched via default_jump).
+                let mut case_body_patches: Vec<Option<usize>> = Vec::with_capacity(cases.len());
+                let mut default_idx: Option<usize> = None;
+                for (i, case) in cases.iter().enumerate() {
+                    match &case.test {
+                        Some(val) => {
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, disc_slot);
+                            self.compile_expr(val)?;
+                            encode_op(&mut self.bytecode, Op::StrictEq);
+                            let j = self.emit_jump(Op::JumpIfTrue);
+                            case_body_patches.push(Some(j));
+                        }
+                        None => {
+                            if default_idx.is_some() {
+                                return Err(self.err(span, "switch has more than one default clause"));
+                            }
+                            default_idx = Some(i);
+                            // Body label patched after default fall-through
+                            // jump below.
+                            case_body_patches.push(None);
+                        }
+                    }
+                }
+
+                // 3. If no case matched: jump to default body (if any) or
+                //    past the switch end.
+                let default_jump = self.emit_jump(Op::Jump);
+
+                // 4. Push a switch frame so `break` targets the end. We
+                //    leave continue_pending=false and continue_target=0:
+                //    Continue handling skips switch frames explicitly.
+                self.loop_stack.push(LoopFrame {
+                    continue_target: 0, continue_pending: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    is_switch: true,
+                });
+
+                // 5. Emit each case body in textual order. Patch its
+                //    dispatch site (or default_jump for the default case)
+                //    to the body start so fall-through flows naturally
+                //    into the next body.
+                for (i, case) in cases.iter().enumerate() {
+                    let body_start = self.bytecode.len();
+                    match case_body_patches[i] {
+                        Some(p) => self.patch_jump_to(p, body_start),
+                        None => self.patch_jump_to(default_jump, body_start),
+                    }
+                    for s in &case.consequent {
+                        self.compile_stmt(s)?;
+                    }
+                }
+
+                // 6. End label. If no default clause existed, the
+                //    default_jump still needs a target — wire it to here.
+                if default_idx.is_none() {
+                    self.patch_jump(default_jump);
+                }
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
+            Stmt::ForIn { left, right, body, .. } => {
+                // Tier-Ω.5.m: for-in lowering. Spec deviations:
+                //  - Own enumerable string keys only (no proto-chain walk).
+                //  - No Symbol-key exclusion (we don't ship real Symbols).
+                //  - Enumeration order matches Object.keys (integer-like
+                //    indices in ascending order, then string keys in
+                //    insertion order, per ECMA-262 §7.3.22).
+                //
+                // Lower as: keys = Object.keys(obj); for (i=0; i<keys.length; i++)
+                //   bind = keys[i]; body.
+                let keys_slot = self.alloc_temp("<forin.keys>");
+                let len_slot = self.alloc_temp("<forin.len>");
+                let idx_slot = self.alloc_temp("<forin.idx>");
+
+                // Decide the per-iteration binding slot (and per_iter_fresh
+                // for let/const heads, mirroring Ω.5.g.1 for-of semantics).
+                // ForBinding::Pattern with non-Identifier is deferred.
+                let (bind_slot, per_iter_fresh): (u16, bool) = match left {
+                    rusty_js_ast::ForBinding::Decl { kind, target, .. } => {
+                        match target {
+                            rusty_js_ast::BindingPattern::Identifier(id) => {
+                                let s = self.alloc_local(LocalDescriptor {
+                                    name: id.name.clone(), kind: *kind, depth: 0,
+                                });
+                                let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
+                                (s, fresh)
+                            }
+                            _ => return Err(self.err(
+                                span,
+                                "for-in with destructure head not yet supported",
+                            )),
+                        }
+                    }
+                    rusty_js_ast::ForBinding::Pattern(pat) => {
+                        match pat {
+                            rusty_js_ast::BindingPattern::Identifier(id) => {
+                                if let Some(s) = self.resolve_local(&id.name) { (s, false) }
+                                else {
+                                    let s = self.alloc_local(LocalDescriptor {
+                                        name: id.name.clone(), kind: VariableKind::Let, depth: 0,
+                                    });
+                                    (s, false)
+                                }
+                            }
+                            _ => return Err(self.err(
+                                span,
+                                "for-in with destructure head not yet supported",
+                            )),
+                        }
+                    }
+                };
+
+                // keys = Object.keys(<right>)
+                let obj_name = self.constants.intern(Constant::String("Object".into()));
+                encode_op(&mut self.bytecode, Op::LoadGlobal);
+                encode_u16(&mut self.bytecode, obj_name);
+                encode_op(&mut self.bytecode, Op::Dup);
+                let keys_key = self.constants.intern(Constant::String("keys".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, keys_key);
+                self.compile_expr(right)?;
+                encode_op(&mut self.bytecode, Op::CallMethod);
+                encode_u8(&mut self.bytecode, 1);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, keys_slot);
+
+                // len = keys.length
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, keys_slot);
+                let len_key = self.constants.intern(Constant::String("length".into()));
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, len_key);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, len_slot);
+
+                // i = 0
+                encode_op(&mut self.bytecode, Op::PushI32);
+                encode_i32(&mut self.bytecode, 0);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, idx_slot);
+
+                // loop_start: if (i >= len) break
+                let loop_start = self.bytecode.len();
+                self.loop_stack.push(LoopFrame {
+                    continue_target: 0, continue_pending: true,
+                    continue_patches: Vec::new(), break_patches: Vec::new(),
+                    is_switch: false,
+                });
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, idx_slot);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, len_slot);
+                encode_op(&mut self.bytecode, Op::Lt);
+                let j_done = self.emit_jump(Op::JumpIfFalse);
+
+                // bind = keys[i]
+                if per_iter_fresh {
+                    encode_op(&mut self.bytecode, Op::ResetLocalCell);
+                    encode_u16(&mut self.bytecode, bind_slot);
+                }
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, keys_slot);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, idx_slot);
+                encode_op(&mut self.bytecode, Op::GetIndex);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, bind_slot);
+
+                self.compile_stmt(body)?;
+
+                // continue target: i++
+                let cont_pos = self.bytecode.len();
+                {
+                    let frame = self.loop_stack.last_mut().unwrap();
+                    frame.continue_target = cont_pos;
+                    frame.continue_pending = false;
+                }
+                let patches = std::mem::take(&mut self.loop_stack.last_mut().unwrap().continue_patches);
+                for site in patches { self.patch_jump_at(site); }
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, idx_slot);
+                encode_op(&mut self.bytecode, Op::PushI32);
+                encode_i32(&mut self.bytecode, 1);
+                encode_op(&mut self.bytecode, Op::Add);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, idx_slot);
+                self.emit_back_jump(loop_start);
+                self.patch_jump(j_done);
+                let frame = self.loop_stack.pop().unwrap();
+                for site in frame.break_patches { self.patch_jump_at(site); }
+            }
             other => {
                 let tag = match other {
-                    Stmt::ForIn { .. } => "ForIn",
-                    Stmt::Switch { .. } => "Switch",
                     Stmt::Labelled { .. } => "Labelled",
                     Stmt::Opaque { .. } => "Opaque",
                     _ => "<other>",

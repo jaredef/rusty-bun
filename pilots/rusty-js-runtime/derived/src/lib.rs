@@ -10,15 +10,17 @@
 pub mod value;
 pub mod abstract_ops;
 pub mod interp;
+pub mod intrinsics;
 
 pub use value::{Value, Object, ObjectRef, PropertyDescriptor, InternalKind};
 pub use interp::{Runtime, RuntimeError};
 
-/// Convenience: parse + compile + run a module source string. Returns the
-/// terminal stack value (or undefined for ReturnUndef-terminated modules).
+/// Convenience: parse + compile + run a module source string, with v1
+/// intrinsics pre-installed.
 pub fn run_module(src: &str) -> Result<Value, RuntimeError> {
     let module = rusty_js_bytecode::compile_module(src)
         .map_err(|e| RuntimeError::CompileError(format!("{}", e.message)))?;
     let mut rt = Runtime::new();
+    rt.install_intrinsics();
     rt.run_module(&module)
 }

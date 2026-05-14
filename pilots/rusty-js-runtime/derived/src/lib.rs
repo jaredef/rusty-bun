@@ -12,8 +12,10 @@ pub mod abstract_ops;
 pub mod interp;
 pub mod intrinsics;
 pub mod module;
+pub mod job_queue;
 
 pub use module::{HostHook, ModuleStatus};
+pub use job_queue::{Job, JobKind, JobQueue};
 
 pub use value::{Value, Object, ObjectRef, PropertyDescriptor, InternalKind};
 pub use interp::{Runtime, RuntimeError};

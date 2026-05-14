@@ -31,6 +31,10 @@ pub struct Runtime {
     /// ObjectId, at which point this heap becomes the storage for every
     /// allocated Object.
     pub heap: rusty_js_gc::Heap<crate::value::Object>,
+    /// Event-loop job queue per ECMA-262 §9.4 + WHATWG HTML §8.
+    /// Engine-owned; replaces the pre-Ω rusty-bun-host's mio + JS-side
+    /// __keepAlive + __tickKeepAlive split. Per Doc 714 §VI Consequence 5.
+    pub job_queue: crate::job_queue::JobQueue,
 }
 
 impl Runtime {
@@ -40,6 +44,7 @@ impl Runtime {
             last_value: Value::Undefined,
             host_hooks: crate::module::HostHooks::default(),
             heap: rusty_js_gc::Heap::new(),
+            job_queue: crate::job_queue::JobQueue::new(),
         }
     }
 

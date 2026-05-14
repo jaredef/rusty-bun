@@ -686,49 +686,7 @@ impl Compiler {
                 self.patch_jump(j_end);
             }
             Expr::Assign { operator, target, value, .. } => {
-                if !matches!(operator, AssignOp::Assign) {
-                    return Err(self.err(e.span(), "compound assignment not yet supported"));
-                }
-                match target.as_ref() {
-                    Expr::Identifier { name, .. } => {
-                        self.compile_expr(value)?;
-                        encode_op(&mut self.bytecode, Op::Dup);
-                        if let Some(slot) = self.resolve_local(name) {
-                            encode_op(&mut self.bytecode, Op::StoreLocal);
-                            encode_u16(&mut self.bytecode, slot);
-                        } else if let Some(up) = self.resolve_upvalue(name) {
-                            encode_op(&mut self.bytecode, Op::StoreUpvalue);
-                            encode_u16(&mut self.bytecode, up);
-                        } else {
-                            let idx = self.constants.intern(Constant::String(name.clone()));
-                            encode_op(&mut self.bytecode, Op::StoreGlobal);
-                            encode_u16(&mut self.bytecode, idx);
-                        }
-                    }
-                    Expr::Member { object, property, .. } => {
-                        self.compile_expr(object)?;
-                        match property.as_ref() {
-                            MemberProperty::Identifier { name, .. } => {
-                                self.compile_expr(value)?;
-                                let idx = self.constants.intern(Constant::String(name.clone()));
-                                encode_op(&mut self.bytecode, Op::SetProp);
-                                encode_u16(&mut self.bytecode, idx);
-                            }
-                            MemberProperty::Computed { expr, .. } => {
-                                self.compile_expr(expr)?;
-                                self.compile_expr(value)?;
-                                encode_op(&mut self.bytecode, Op::SetIndex);
-                            }
-                            MemberProperty::Private { name, .. } => {
-                                self.compile_expr(value)?;
-                                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
-                                encode_op(&mut self.bytecode, Op::SetProp);
-                                encode_u16(&mut self.bytecode, idx);
-                            }
-                        }
-                    }
-                    _ => return Err(self.err(e.span(), "complex assignment target not yet supported")),
-                }
+                self.compile_assign(e.span(), *operator, target, value)?;
             }
             Expr::This { .. } => {
                 // Tier-Ω.5.a: this now threads through the frame.
@@ -903,41 +861,7 @@ impl Compiler {
                 emit_captures(&mut self.bytecode, &captures);
             }
             Expr::Update { operator, argument, prefix, .. } => {
-                // v1: support identifier-target updates only.
-                let name = match argument.as_ref() {
-                    Expr::Identifier { name, .. } => name.clone(),
-                    _ => return Err(self.err(e.span(), "update on non-identifier not yet supported")),
-                };
-                enum Tgt { Local(u16), Up(u16), Global(u16) }
-                let slot = self.resolve_local(&name);
-                let target = if let Some(s) = slot { Tgt::Local(s) }
-                    else if let Some(u) = self.resolve_upvalue(&name) { Tgt::Up(u) }
-                    else { Tgt::Global(self.constants.intern(Constant::String(name.clone()))) };
-                // Load current value
-                match &target {
-                    Tgt::Local(s)  => { encode_op(&mut self.bytecode, Op::LoadLocal);  encode_u16(&mut self.bytecode, *s); }
-                    Tgt::Up(u)     => { encode_op(&mut self.bytecode, Op::LoadUpvalue); encode_u16(&mut self.bytecode, *u); }
-                    Tgt::Global(i) => { encode_op(&mut self.bytecode, Op::LoadGlobal); encode_u16(&mut self.bytecode, *i); }
-                }
-                if !prefix {
-                    encode_op(&mut self.bytecode, Op::Dup);
-                }
-                encode_op(&mut self.bytecode, match operator {
-                    UpdateOp::Inc => Op::Inc,
-                    UpdateOp::Dec => Op::Dec,
-                });
-                // Store back
-                if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
-                match &target {
-                    Tgt::Local(s)  => { encode_op(&mut self.bytecode, Op::StoreLocal);  encode_u16(&mut self.bytecode, *s); }
-                    Tgt::Up(u)     => { encode_op(&mut self.bytecode, Op::StoreUpvalue); encode_u16(&mut self.bytecode, *u); }
-                    Tgt::Global(i) => { encode_op(&mut self.bytecode, Op::StoreGlobal); encode_u16(&mut self.bytecode, *i); }
-                }
-                if !prefix {
-                    // Result is the prior value already on the stack (from
-                    // the Dup before Inc/Dec); the Store consumed the new
-                    // value, leaving the old.
-                }
+                self.compile_update(e.span(), *operator, argument, *prefix)?;
             }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
@@ -1017,5 +941,548 @@ impl Compiler {
 
     fn err(&self, span: Span, msg: &str) -> CompileError {
         CompileError { span, message: msg.to_string() }
+    }
+
+    // ───────────────── Tier-Ω.5.d: compound assignment + update ─────────────────
+
+    /// Map a compound AssignOp (e.g. AddAssign) to its arithmetic/bitwise
+    /// binary opcode. Returns None for the plain `=` form and for the three
+    /// short-circuit logical/nullish variants, which are lowered separately.
+    fn assign_op_binop(op: AssignOp) -> Option<Op> {
+        Some(match op {
+            AssignOp::AddAssign    => Op::Add,
+            AssignOp::SubAssign    => Op::Sub,
+            AssignOp::MulAssign    => Op::Mul,
+            AssignOp::DivAssign    => Op::Div,
+            AssignOp::ModAssign    => Op::Mod,
+            AssignOp::PowAssign    => Op::Pow,
+            AssignOp::ShlAssign    => Op::Shl,
+            AssignOp::ShrAssign    => Op::Shr,
+            AssignOp::UShrAssign   => Op::UShr,
+            AssignOp::BitAndAssign => Op::BitAnd,
+            AssignOp::BitOrAssign  => Op::BitOr,
+            AssignOp::BitXorAssign => Op::BitXor,
+            AssignOp::Assign
+            | AssignOp::LogicalAndAssign
+            | AssignOp::LogicalOrAssign
+            | AssignOp::NullishAssign => return None,
+        })
+    }
+
+    fn alloc_temp(&mut self, name: &str) -> u16 {
+        self.alloc_local(LocalDescriptor {
+            name: name.to_string(),
+            kind: VariableKind::Let,
+            depth: 0,
+        })
+    }
+
+    /// Emit load/store for a bare identifier resolved against locals,
+    /// upvalues, then globals (in that order).
+    fn emit_load_ident(&mut self, name: &str) {
+        if let Some(s) = self.resolve_local(name) {
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, s);
+        } else if let Some(u) = self.resolve_upvalue(name) {
+            encode_op(&mut self.bytecode, Op::LoadUpvalue);
+            encode_u16(&mut self.bytecode, u);
+        } else {
+            let idx = self.constants.intern(Constant::String(name.to_string()));
+            encode_op(&mut self.bytecode, Op::LoadGlobal);
+            encode_u16(&mut self.bytecode, idx);
+        }
+    }
+
+    fn emit_store_ident(&mut self, name: &str) {
+        if let Some(s) = self.resolve_local(name) {
+            encode_op(&mut self.bytecode, Op::StoreLocal);
+            encode_u16(&mut self.bytecode, s);
+        } else if let Some(u) = self.resolve_upvalue(name) {
+            encode_op(&mut self.bytecode, Op::StoreUpvalue);
+            encode_u16(&mut self.bytecode, u);
+        } else {
+            let idx = self.constants.intern(Constant::String(name.to_string()));
+            encode_op(&mut self.bytecode, Op::StoreGlobal);
+            encode_u16(&mut self.bytecode, idx);
+        }
+    }
+
+    fn compile_assign(
+        &mut self,
+        span: Span,
+        operator: AssignOp,
+        target: &Expr,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        // ── Plain assignment: pre-existing semantics, fast path. ──
+        if matches!(operator, AssignOp::Assign) {
+            return self.compile_plain_assign(span, target, value);
+        }
+
+        // ── Logical / nullish: short-circuit lowering. ──
+        if matches!(operator, AssignOp::LogicalAndAssign
+                            | AssignOp::LogicalOrAssign
+                            | AssignOp::NullishAssign) {
+            return self.compile_logical_assign(span, operator, target, value);
+        }
+
+        // ── Arithmetic / bitwise compound: read-modify-write. ──
+        let binop = Self::assign_op_binop(operator)
+            .expect("non-logical compound assign must map to a binop");
+
+        match target {
+            Expr::Identifier { name, .. } => {
+                self.emit_load_ident(name);          // [old]
+                self.compile_expr(value)?;            // [old, v]
+                encode_op(&mut self.bytecode, binop); // [new]
+                encode_op(&mut self.bytecode, Op::Dup); // [new, new]
+                self.emit_store_ident(name);          // [new]
+            }
+            Expr::Member { object, property, .. } => {
+                self.compile_compound_member(span, &**object, property, value, binop)?;
+            }
+            _ => return Err(self.err(span, "complex assignment target not yet supported")),
+        }
+        Ok(())
+    }
+
+    fn compile_plain_assign(
+        &mut self,
+        span: Span,
+        target: &Expr,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expr::Identifier { name, .. } => {
+                self.compile_expr(value)?;
+                encode_op(&mut self.bytecode, Op::Dup);
+                self.emit_store_ident(name);
+            }
+            Expr::Member { object, property, .. } => {
+                self.compile_expr(object)?;
+                match property.as_ref() {
+                    MemberProperty::Identifier { name, .. } => {
+                        self.compile_expr(value)?;
+                        let idx = self.constants.intern(Constant::String(name.clone()));
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                    MemberProperty::Computed { expr, .. } => {
+                        self.compile_expr(expr)?;
+                        self.compile_expr(value)?;
+                        encode_op(&mut self.bytecode, Op::SetIndex);
+                    }
+                    MemberProperty::Private { name, .. } => {
+                        self.compile_expr(value)?;
+                        let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                }
+            }
+            _ => return Err(self.err(span, "complex assignment target not yet supported")),
+        }
+        Ok(())
+    }
+
+    /// Compound assignment with a `MemberExpression` target. Spills the
+    /// object (and, for computed/index, the key) into temporary locals so
+    /// each sub-expression is evaluated exactly once.
+    fn compile_compound_member(
+        &mut self,
+        span: Span,
+        object: &Expr,
+        property: &MemberProperty,
+        value: &Expr,
+        binop: Op,
+    ) -> Result<(), CompileError> {
+        let tmp_obj = self.alloc_temp("<compound.obj>");
+        self.compile_expr(object)?;
+        encode_op(&mut self.bytecode, Op::StoreLocal);
+        encode_u16(&mut self.bytecode, tmp_obj);
+
+        match property {
+            MemberProperty::Identifier { name, .. } => {
+                let key_idx = self.constants.intern(Constant::String(name.clone()));
+                // read old
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, key_idx);
+                // compute new
+                self.compile_expr(value)?;
+                encode_op(&mut self.bytecode, binop);
+                // write: [obj, new] then SetProp → [new]
+                let tmp_new = self.alloc_temp("<compound.new>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                encode_op(&mut self.bytecode, Op::SetProp);
+                encode_u16(&mut self.bytecode, key_idx);
+            }
+            MemberProperty::Computed { expr, .. } => {
+                let tmp_key = self.alloc_temp("<compound.key>");
+                self.compile_expr(expr)?;
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_key);
+                // read old
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_key);
+                encode_op(&mut self.bytecode, Op::GetIndex);
+                // compute new
+                self.compile_expr(value)?;
+                encode_op(&mut self.bytecode, binop);
+                let tmp_new = self.alloc_temp("<compound.new>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                // write
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_key);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                encode_op(&mut self.bytecode, Op::SetIndex);
+            }
+            MemberProperty::Private { name, .. } => {
+                let key_idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, key_idx);
+                self.compile_expr(value)?;
+                encode_op(&mut self.bytecode, binop);
+                let tmp_new = self.alloc_temp("<compound.new>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_new);
+                encode_op(&mut self.bytecode, Op::SetProp);
+                encode_u16(&mut self.bytecode, key_idx);
+            }
+        }
+        let _ = span;
+        Ok(())
+    }
+
+    /// Logical / nullish compound assignment. Short-circuits: only
+    /// evaluates the RHS and performs the store when the LHS reads as
+    /// (truthy / falsy / nullish) appropriate for the operator.
+    fn compile_logical_assign(
+        &mut self,
+        span: Span,
+        operator: AssignOp,
+        target: &Expr,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        // For an identifier target the lowering is:
+        //
+        //   LoadX                 [x]
+        //   Dup                   [x, x]
+        //   J<short-circuit> end  (pops top; keeps the other x as result on the
+        //                          short-circuit branch)
+        //   Pop                   []      (drop the kept copy; we'll replace)
+        //   <eval value>          [v]
+        //   Dup                   [v, v]
+        //   StoreX                [v]
+        //   end:                  [result]
+        //
+        // The trick: the `keep` jump opcodes (JumpIfTrueKeep/JumpIfFalseKeep)
+        // keep on jump-taken and pop on fall-through. JumpIfNullish always
+        // pops; for ??= we instead route via an unconditional Jump on the
+        // not-nullish branch (matching the existing ?? lowering above).
+
+        match target {
+            Expr::Identifier { name, .. } => {
+                self.emit_load_ident(name);
+                encode_op(&mut self.bytecode, Op::Dup);
+                let j_end = match operator {
+                    AssignOp::LogicalAndAssign => {
+                        // assign if truthy → short-circuit-end on falsy
+                        Some(self.emit_jump(Op::JumpIfFalseKeep))
+                    }
+                    AssignOp::LogicalOrAssign => {
+                        // assign if falsy → short-circuit-end on truthy
+                        Some(self.emit_jump(Op::JumpIfTrueKeep))
+                    }
+                    AssignOp::NullishAssign => None, // handled below with custom flow
+                    _ => unreachable!(),
+                };
+
+                if let Some(j) = j_end {
+                    // assign branch
+                    encode_op(&mut self.bytecode, Op::Pop);
+                    self.compile_expr(value)?;
+                    encode_op(&mut self.bytecode, Op::Dup);
+                    self.emit_store_ident(name);
+                    self.patch_jump(j);
+                } else {
+                    // NullishAssign: pattern matches the `??` operator in compile_expr.
+                    //   [x, x] JumpIfNullish do_assign  (pops top)  → [x]
+                    //   Jump end
+                    //   do_assign: Pop → []; eval v; Dup; Store     → [v]
+                    //   end:                                         → [result]
+                    let j_assign = self.emit_jump(Op::JumpIfNullish);
+                    let j_end2 = self.emit_jump(Op::Jump);
+                    self.patch_jump(j_assign);
+                    encode_op(&mut self.bytecode, Op::Pop);
+                    self.compile_expr(value)?;
+                    encode_op(&mut self.bytecode, Op::Dup);
+                    self.emit_store_ident(name);
+                    self.patch_jump(j_end2);
+                }
+            }
+            Expr::Member { object, property, .. } => {
+                self.compile_logical_assign_member(span, operator, object, property, value)?;
+            }
+            _ => return Err(self.err(span, "complex assignment target not yet supported")),
+        }
+        Ok(())
+    }
+
+    fn compile_logical_assign_member(
+        &mut self,
+        span: Span,
+        operator: AssignOp,
+        object: &Expr,
+        property: &MemberProperty,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        // Spill object (and key) once, read old, branch, then write iff
+        // the short-circuit predicate selects the assign path.
+        let tmp_obj = self.alloc_temp("<lcompound.obj>");
+        self.compile_expr(object)?;
+        encode_op(&mut self.bytecode, Op::StoreLocal);
+        encode_u16(&mut self.bytecode, tmp_obj);
+
+        // After this block, the old-value is on the stack as the result
+        // on the short-circuit (keep-old) path. We'll then branch.
+        enum Key { Static(u16), Computed(u16), Private(u16) }
+        let key = match property {
+            MemberProperty::Identifier { name, .. } => {
+                let idx = self.constants.intern(Constant::String(name.clone()));
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, idx);
+                Key::Static(idx)
+            }
+            MemberProperty::Computed { expr, .. } => {
+                let tmp_key = self.alloc_temp("<lcompound.key>");
+                self.compile_expr(expr)?;
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_key);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_key);
+                encode_op(&mut self.bytecode, Op::GetIndex);
+                Key::Computed(tmp_key)
+            }
+            MemberProperty::Private { name, .. } => {
+                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+                encode_op(&mut self.bytecode, Op::GetProp);
+                encode_u16(&mut self.bytecode, idx);
+                Key::Private(idx)
+            }
+        };
+        // stack: [old]
+        encode_op(&mut self.bytecode, Op::Dup);
+        // stack: [old, old]
+
+        let j_skip_assign = match operator {
+            AssignOp::LogicalAndAssign => Some(self.emit_jump(Op::JumpIfFalseKeep)),
+            AssignOp::LogicalOrAssign  => Some(self.emit_jump(Op::JumpIfTrueKeep)),
+            AssignOp::NullishAssign    => None,
+            _ => unreachable!(),
+        };
+
+        // Emit one "assign branch": pop the kept old copy, eval RHS, write
+        // through the member. Leaves the new value on the stack.
+        let emit_assign_branch = |c: &mut Self, value: &Expr, key: &Key, tmp_obj: u16| -> Result<(), CompileError> {
+            encode_op(&mut c.bytecode, Op::Pop);
+            c.compile_expr(value)?;
+            let tmp_new = c.alloc_temp("<lcompound.new>");
+            encode_op(&mut c.bytecode, Op::StoreLocal);
+            encode_u16(&mut c.bytecode, tmp_new);
+            match key {
+                Key::Static(idx) => {
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_obj);
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_new);
+                    encode_op(&mut c.bytecode, Op::SetProp);
+                    encode_u16(&mut c.bytecode, *idx);
+                }
+                Key::Computed(tmp_key) => {
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_obj);
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, *tmp_key);
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_new);
+                    encode_op(&mut c.bytecode, Op::SetIndex);
+                }
+                Key::Private(idx) => {
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_obj);
+                    encode_op(&mut c.bytecode, Op::LoadLocal);
+                    encode_u16(&mut c.bytecode, tmp_new);
+                    encode_op(&mut c.bytecode, Op::SetProp);
+                    encode_u16(&mut c.bytecode, *idx);
+                }
+            }
+            Ok(())
+        };
+
+        if let Some(j) = j_skip_assign {
+            emit_assign_branch(self, value, &key, tmp_obj)?;
+            self.patch_jump(j);
+        } else {
+            let j_assign = self.emit_jump(Op::JumpIfNullish);
+            let j_end = self.emit_jump(Op::Jump);
+            self.patch_jump(j_assign);
+            emit_assign_branch(self, value, &key, tmp_obj)?;
+            self.patch_jump(j_end);
+        }
+        let _ = span;
+        Ok(())
+    }
+
+    /// Compile a prefix or postfix update expression. Handles identifier,
+    /// static member, computed member, and private member targets.
+    fn compile_update(
+        &mut self,
+        span: Span,
+        operator: UpdateOp,
+        argument: &Expr,
+        prefix: bool,
+    ) -> Result<(), CompileError> {
+        let op = match operator {
+            UpdateOp::Inc => Op::Inc,
+            UpdateOp::Dec => Op::Dec,
+        };
+        match argument {
+            Expr::Identifier { name, .. } => {
+                self.emit_load_ident(name);              // [old]
+                if !prefix {
+                    encode_op(&mut self.bytecode, Op::Dup); // [old, old]
+                }
+                encode_op(&mut self.bytecode, op);        // prefix:[new]  postfix:[old, new]
+                if prefix {
+                    encode_op(&mut self.bytecode, Op::Dup); // [new, new]
+                }
+                // Store consumes top: prefix leaves [new]; postfix leaves [old].
+                self.emit_store_ident(name);
+            }
+            Expr::Member { object, property, .. } => {
+                let tmp_obj = self.alloc_temp("<update.obj>");
+                self.compile_expr(object)?;
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_obj);
+
+                match property.as_ref() {
+                    MemberProperty::Identifier { name, .. } => {
+                        let key_idx = self.constants.intern(Constant::String(name.clone()));
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::GetProp);
+                        encode_u16(&mut self.bytecode, key_idx);
+                        // [old]
+                        let tmp_old = self.alloc_temp("<update.old>");
+                        if !prefix {
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, tmp_old);
+                        }
+                        encode_op(&mut self.bytecode, op); // [new]
+                        let tmp_new = self.alloc_temp("<update.new>");
+                        encode_op(&mut self.bytecode, Op::StoreLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        // write through member
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, key_idx);
+                        // SetProp pushes new; drop it and load expression result.
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, if prefix { tmp_new } else { tmp_old });
+                    }
+                    MemberProperty::Computed { expr, .. } => {
+                        let tmp_key = self.alloc_temp("<update.key>");
+                        self.compile_expr(expr)?;
+                        encode_op(&mut self.bytecode, Op::StoreLocal);
+                        encode_u16(&mut self.bytecode, tmp_key);
+
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_key);
+                        encode_op(&mut self.bytecode, Op::GetIndex);
+                        // [old]
+                        let tmp_old = self.alloc_temp("<update.old>");
+                        if !prefix {
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, tmp_old);
+                        }
+                        encode_op(&mut self.bytecode, op);
+                        let tmp_new = self.alloc_temp("<update.new>");
+                        encode_op(&mut self.bytecode, Op::StoreLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_key);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        encode_op(&mut self.bytecode, Op::SetIndex);
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, if prefix { tmp_new } else { tmp_old });
+                    }
+                    MemberProperty::Private { name, .. } => {
+                        let key_idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::GetProp);
+                        encode_u16(&mut self.bytecode, key_idx);
+                        let tmp_old = self.alloc_temp("<update.old>");
+                        if !prefix {
+                            encode_op(&mut self.bytecode, Op::Dup);
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, tmp_old);
+                        }
+                        encode_op(&mut self.bytecode, op);
+                        let tmp_new = self.alloc_temp("<update.new>");
+                        encode_op(&mut self.bytecode, Op::StoreLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_obj);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_new);
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, key_idx);
+                        encode_op(&mut self.bytecode, Op::Pop);
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, if prefix { tmp_new } else { tmp_old });
+                    }
+                }
+            }
+            _ => return Err(self.err(span, "update on non-identifier non-member target not yet supported")),
+        }
+        Ok(())
     }
 }

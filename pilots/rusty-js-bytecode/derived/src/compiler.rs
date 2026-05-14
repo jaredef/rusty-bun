@@ -841,8 +841,15 @@ impl Compiler {
                     encode_op(&mut self.bytecode, Op::Pop);
                 }
             }
-            _ => {
-                return Err(self.err(span, "statement form not yet supported in compiler v1"));
+            other => {
+                let tag = match other {
+                    Stmt::ForIn { .. } => "ForIn",
+                    Stmt::Switch { .. } => "Switch",
+                    Stmt::Labelled { .. } => "Labelled",
+                    Stmt::Opaque { .. } => "Opaque",
+                    _ => "<other>",
+                };
+                return Err(self.err(span, &format!("statement form not yet supported in compiler v1: {}", tag)));
             }
         }
         Ok(())

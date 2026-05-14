@@ -200,23 +200,46 @@ impl Compiler {
             }
             Stmt::Variable(v) => {
                 for d in &v.declarators {
-                    let name = match &d.target {
-                        rusty_js_ast::BindingPattern::Identifier(id) => id,
-                        _ => return Err(self.err(d.span, "compile: destructure declarators not yet supported (Ω.5.g.3)")),
-                    };
-                    // Allocate a local slot for the binding.
-                    let slot = self.alloc_local(LocalDescriptor {
-                        name: name.name.clone(),
-                        kind: v.kind,
-                        depth: 0,
-                    });
-                    if let Some(init) = &d.init {
-                        self.compile_expr(init)?;
-                    } else {
-                        encode_op(&mut self.bytecode, Op::PushUndef);
+                    match &d.target {
+                        rusty_js_ast::BindingPattern::Identifier(id) => {
+                            // Allocate a local slot for the binding.
+                            let slot = self.alloc_local(LocalDescriptor {
+                                name: id.name.clone(),
+                                kind: v.kind,
+                                depth: 0,
+                            });
+                            if let Some(init) = &d.init {
+                                self.compile_expr(init)?;
+                            } else {
+                                encode_op(&mut self.bytecode, Op::PushUndef);
+                            }
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, slot);
+                        }
+                        pat @ (rusty_js_ast::BindingPattern::Array(_)
+                              | rusty_js_ast::BindingPattern::Object(_)) => {
+                            // Tier-Ω.5.g.3: destructure declarator. Evaluate
+                            // init into a hidden source slot, allocate every
+                            // bound name as a local under v.kind, then walk
+                            // the pattern.
+                            for id in pat.collect_names() {
+                                self.alloc_local(LocalDescriptor {
+                                    name: id.name.clone(),
+                                    kind: v.kind,
+                                    depth: 0,
+                                });
+                            }
+                            let src_slot = self.alloc_temp("<destr.src>");
+                            if let Some(init) = &d.init {
+                                self.compile_expr(init)?;
+                            } else {
+                                encode_op(&mut self.bytecode, Op::PushUndef);
+                            }
+                            encode_op(&mut self.bytecode, Op::StoreLocal);
+                            encode_u16(&mut self.bytecode, src_slot);
+                            self.emit_destructure(pat, src_slot)?;
+                        }
                     }
-                    encode_op(&mut self.bytecode, Op::StoreLocal);
-                    encode_u16(&mut self.bytecode, slot);
                 }
             }
             Stmt::Throw { argument, .. } => {
@@ -329,29 +352,60 @@ impl Compiler {
                 // with `per_iter_fresh`: when true, emit Op::ResetLocalCell at
                 // iteration entry so closures captured in iteration N keep
                 // their handle to that iteration's cell. Tier-Ω.5.g.1.
-                let (bind_slot, _bind_name, per_iter_fresh) = match left {
-                    rusty_js_ast::ForBinding::Decl { kind, target, span } => {
-                        let name = match target {
-                            rusty_js_ast::BindingPattern::Identifier(id) => id,
-                            _ => return Err(self.err(*span, "compile: destructure in for-of head not yet supported (Ω.5.g.3)")),
-                        };
-                        let s = self.alloc_local(LocalDescriptor {
-                            name: name.name.clone(), kind: *kind, depth: 0,
-                        });
-                        let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
-                        (s, name.name.clone(), fresh)
+                // Returns (slot_to_store_value_into, destructure_pattern_or_none, per_iter_fresh).
+                // When destructure_pattern is Some, the body prologue will
+                // run the pattern lowering using slot_to_store_value_into
+                // as the hidden source.
+                let (bind_slot, destr_pat, per_iter_fresh): (u16, Option<rusty_js_ast::BindingPattern>, bool) = match left {
+                    rusty_js_ast::ForBinding::Decl { kind, target, .. } => {
+                        match target {
+                            rusty_js_ast::BindingPattern::Identifier(id) => {
+                                let s = self.alloc_local(LocalDescriptor {
+                                    name: id.name.clone(), kind: *kind, depth: 0,
+                                });
+                                let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
+                                (s, None, fresh)
+                            }
+                            pat @ (rusty_js_ast::BindingPattern::Array(_)
+                                  | rusty_js_ast::BindingPattern::Object(_)) => {
+                                // Allocate every bound name as a local under kind,
+                                // then a hidden source slot for the per-iter value.
+                                for id in pat.collect_names() {
+                                    self.alloc_local(LocalDescriptor {
+                                        name: id.name.clone(), kind: *kind, depth: 0,
+                                    });
+                                }
+                                let s = self.alloc_temp("<forof.src>");
+                                let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
+                                (s, Some(pat.clone()), fresh)
+                            }
+                        }
                     }
                     rusty_js_ast::ForBinding::Pattern(pat) => {
-                        let id = match pat {
-                            rusty_js_ast::BindingPattern::Identifier(id) => id,
-                            _ => return Err(self.err(span, "compile: destructure in for-of head not yet supported (Ω.5.g.3)")),
-                        };
-                        if let Some(s) = self.resolve_local(&id.name) { (s, id.name.clone(), false) }
-                        else {
-                            let s = self.alloc_local(LocalDescriptor {
-                                name: id.name.clone(), kind: VariableKind::Let, depth: 0,
-                            });
-                            (s, id.name.clone(), false)
+                        match pat {
+                            rusty_js_ast::BindingPattern::Identifier(id) => {
+                                if let Some(s) = self.resolve_local(&id.name) { (s, None, false) }
+                                else {
+                                    let s = self.alloc_local(LocalDescriptor {
+                                        name: id.name.clone(), kind: VariableKind::Let, depth: 0,
+                                    });
+                                    (s, None, false)
+                                }
+                            }
+                            other => {
+                                // Standalone pattern in for-of head (no var/let/const).
+                                // Bound names assumed to already exist or are
+                                // freshly let-allocated here.
+                                for id in other.collect_names() {
+                                    if self.resolve_local(&id.name).is_none() {
+                                        self.alloc_local(LocalDescriptor {
+                                            name: id.name.clone(), kind: VariableKind::Let, depth: 0,
+                                        });
+                                    }
+                                }
+                                let s = self.alloc_temp("<forof.src>");
+                                (s, Some(other.clone()), false)
+                            }
                         }
                     }
                 };
@@ -401,6 +455,9 @@ impl Compiler {
                 }
                 encode_op(&mut self.bytecode, Op::StoreLocal);
                 encode_u16(&mut self.bytecode, bind_slot);
+                if let Some(pat) = &destr_pat {
+                    self.emit_destructure(pat, bind_slot)?;
+                }
                 self.compile_stmt(body)?;
                 self.emit_back_jump(loop_start);
                 self.patch_jump(j_done);
@@ -517,6 +574,153 @@ impl Compiler {
             }
             _ => {
                 return Err(self.err(span, "statement form not yet supported in compiler v1"));
+            }
+        }
+        Ok(())
+    }
+
+    // ───────────────── Tier-Ω.5.g.3: destructuring lowering ─────────────────
+
+    /// Emit bytecode that destructures the value currently in `src_slot`
+    /// into the bindings named by `pat`. Pattern leaves (Identifier) emit
+    /// LoadLocal+StoreLocal into the leaf binding's slot, which was
+    /// pre-allocated by the caller via pat.collect_names().
+    fn emit_destructure(
+        &mut self,
+        pat: &rusty_js_ast::BindingPattern,
+        src_slot: u16,
+    ) -> Result<(), CompileError> {
+        match pat {
+            rusty_js_ast::BindingPattern::Identifier(id) => {
+                let slot = self.resolve_local(&id.name)
+                    .expect("destructure leaf: binding slot pre-allocated by caller");
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, src_slot);
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, slot);
+            }
+            rusty_js_ast::BindingPattern::Array(arr) => {
+                for (i, slot_opt) in arr.elements.iter().enumerate() {
+                    let Some(elem) = slot_opt else { continue; };
+                    // value = src[i]
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, src_slot);
+                    encode_op(&mut self.bytecode, Op::PushI32);
+                    encode_i32(&mut self.bytecode, i as i32);
+                    encode_op(&mut self.bytecode, Op::GetIndex);
+                    self.emit_element_with_default(&elem.target, elem.default.as_ref())?;
+                }
+                if let Some(rest_pat) = &arr.rest {
+                    // value = __destr_array_rest(src, start)
+                    let name_idx = self.constants.intern(Constant::String("__destr_array_rest".into()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, name_idx);
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, src_slot);
+                    encode_op(&mut self.bytecode, Op::PushI32);
+                    encode_i32(&mut self.bytecode, arr.elements.len() as i32);
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 2);
+                    // No default for rest.
+                    self.emit_element_with_default(rest_pat, None)?;
+                }
+            }
+            rusty_js_ast::BindingPattern::Object(obj) => {
+                let mut static_excluded: Vec<String> = Vec::new();
+                for prop in &obj.properties {
+                    // Push src on stack and get the property.
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, src_slot);
+                    match &prop.key {
+                        rusty_js_ast::PropertyKey::Identifier(id) => {
+                            let k = self.constants.intern(Constant::String(id.name.clone()));
+                            encode_op(&mut self.bytecode, Op::GetProp);
+                            encode_u16(&mut self.bytecode, k);
+                            static_excluded.push(id.name.clone());
+                        }
+                        rusty_js_ast::PropertyKey::String(s) => {
+                            let k = self.constants.intern(Constant::String((**s).clone()));
+                            encode_op(&mut self.bytecode, Op::GetProp);
+                            encode_u16(&mut self.bytecode, k);
+                            static_excluded.push((**s).clone());
+                        }
+                        rusty_js_ast::PropertyKey::Number(n) => {
+                            let name = if n.fract() == 0.0 { format!("{}", *n as i64) } else { format!("{}", n) };
+                            let k = self.constants.intern(Constant::String(name.clone()));
+                            encode_op(&mut self.bytecode, Op::GetProp);
+                            encode_u16(&mut self.bytecode, k);
+                            static_excluded.push(name);
+                        }
+                        rusty_js_ast::PropertyKey::Computed(expr) => {
+                            // src[expr]
+                            self.compile_expr(expr)?;
+                            encode_op(&mut self.bytecode, Op::GetIndex);
+                            // Computed key excludes nothing reliably; rest
+                            // pattern with computed keys above it isn't
+                            // well-supported in our subset.
+                        }
+                    }
+                    self.emit_element_with_default(&prop.value.target, prop.value.default.as_ref())?;
+                }
+                if let Some(rest_id) = &obj.rest {
+                    // Call shape: [callee, src, excluded_array]
+                    let name_idx = self.constants.intern(Constant::String("__destr_object_rest".into()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, name_idx);
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, src_slot);
+                    encode_op(&mut self.bytecode, Op::NewArray);
+                    encode_u16(&mut self.bytecode, static_excluded.len() as u16);
+                    for (i, k) in static_excluded.iter().enumerate() {
+                        let idx = self.constants.intern(Constant::String(k.clone()));
+                        encode_op(&mut self.bytecode, Op::PushConst);
+                        encode_u16(&mut self.bytecode, idx);
+                        encode_op(&mut self.bytecode, Op::InitIndex);
+                        encode_u32(&mut self.bytecode, i as u32);
+                    }
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 2);
+                    let slot = self.resolve_local(&rest_id.name)
+                        .expect("object-rest binding slot pre-allocated by caller");
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, slot);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume the value currently on top of the operand stack, apply an
+    /// optional default if it is === undefined, then bind it into `target`.
+    /// For non-Identifier targets, spills into a fresh hidden local and
+    /// recurses.
+    fn emit_element_with_default(
+        &mut self,
+        target: &rusty_js_ast::BindingPattern,
+        default: Option<&Expr>,
+    ) -> Result<(), CompileError> {
+        if let Some(def_expr) = default {
+            // Dup; PushUndef; StrictEq; JumpIfFalse skip_default; Pop; <default>; skip:
+            encode_op(&mut self.bytecode, Op::Dup);
+            encode_op(&mut self.bytecode, Op::PushUndef);
+            encode_op(&mut self.bytecode, Op::StrictEq);
+            let j_skip = self.emit_jump(Op::JumpIfFalse);
+            encode_op(&mut self.bytecode, Op::Pop);
+            self.compile_expr(def_expr)?;
+            self.patch_jump(j_skip);
+        }
+        match target {
+            rusty_js_ast::BindingPattern::Identifier(id) => {
+                let slot = self.resolve_local(&id.name)
+                    .expect("destructure leaf: binding slot pre-allocated by caller");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, slot);
+            }
+            nested => {
+                let tmp = self.alloc_temp("<destr.tmp>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp);
+                self.emit_destructure(nested, tmp)?;
             }
         }
         Ok(())
@@ -967,8 +1171,24 @@ impl Compiler {
                 return Err(self.err(*span,
                     "bare `super` reference is only valid as `super(...)` or `super.method(...)`"));
             }
-            Expr::TemplateLiteral { span, .. } => {
-                return Err(self.err(*span, "compile: template literal substitution not yet supported (Ω.5.g.3)"));
+            Expr::TemplateLiteral { quasis, expressions, .. } => {
+                // Tier-Ω.5.g.3: lower to left-to-right Add chain. op_add
+                // coerces non-string operands when the LHS is a String, so
+                // explicit ToString is unnecessary: the first quasi (a
+                // String constant) seeds the chain, after which every Add
+                // produces a String result.
+                debug_assert_eq!(quasis.len(), expressions.len() + 1);
+                let first = self.constants.intern(Constant::String((**quasis.first().unwrap()).clone()));
+                encode_op(&mut self.bytecode, Op::PushConst);
+                encode_u16(&mut self.bytecode, first);
+                for (i, expr) in expressions.iter().enumerate() {
+                    self.compile_expr(expr)?;
+                    encode_op(&mut self.bytecode, Op::Add);
+                    let q = self.constants.intern(Constant::String((*quasis[i + 1]).clone()));
+                    encode_op(&mut self.bytecode, Op::PushConst);
+                    encode_u16(&mut self.bytecode, q);
+                    encode_op(&mut self.bytecode, Op::Add);
+                }
             }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
@@ -1010,7 +1230,13 @@ impl Compiler {
             class_seq: self.class_seq,
         };
         let param_count = params.len() as u16;
-        for p in params {
+        // Allocate one local per parameter position (slots 0..N receive
+        // the args at call time per Runtime::call_function). For destructure
+        // params, the param slot is the hidden source and additional locals
+        // for inner names are allocated below; a prologue then runs the
+        // pattern lowering at function entry.
+        let mut destr_prologue: Vec<(rusty_js_ast::BindingPattern, u16, Option<Expr>)> = Vec::new();
+        for (i, p) in params.iter().enumerate() {
             match &p.target {
                 rusty_js_ast::BindingPattern::Identifier(n) => {
                     sub.alloc_local(LocalDescriptor {
@@ -1018,8 +1244,50 @@ impl Compiler {
                         kind: VariableKind::Let,
                         depth: 0,
                     });
+                    if p.default.is_some() {
+                        destr_prologue.push((
+                            rusty_js_ast::BindingPattern::Identifier(n.clone()),
+                            i as u16,
+                            p.default.clone(),
+                        ));
+                    }
                 }
-                _ => return Err(self.err(p.span, "compile: destructure declarators not yet supported (Ω.5.g.3)")),
+                pat @ (rusty_js_ast::BindingPattern::Array(_)
+                      | rusty_js_ast::BindingPattern::Object(_)) => {
+                    // Hidden source slot in the param position.
+                    sub.alloc_local(LocalDescriptor {
+                        name: format!("<param${}>", i),
+                        kind: VariableKind::Let,
+                        depth: 0,
+                    });
+                    // Inner names.
+                    for id in pat.collect_names() {
+                        sub.alloc_local(LocalDescriptor {
+                            name: id.name.clone(),
+                            kind: VariableKind::Let,
+                            depth: 0,
+                        });
+                    }
+                    destr_prologue.push((pat.clone(), i as u16, p.default.clone()));
+                }
+            }
+        }
+        // Emit per-parameter default-application + destructure prologue.
+        for (pat, slot, default) in &destr_prologue {
+            if let Some(def_expr) = default {
+                // if args[slot] === undefined: args[slot] = default
+                encode_op(&mut sub.bytecode, Op::LoadLocal);
+                encode_u16(&mut sub.bytecode, *slot);
+                encode_op(&mut sub.bytecode, Op::PushUndef);
+                encode_op(&mut sub.bytecode, Op::StrictEq);
+                let j_skip = sub.emit_jump(Op::JumpIfFalse);
+                sub.compile_expr(def_expr)?;
+                encode_op(&mut sub.bytecode, Op::StoreLocal);
+                encode_u16(&mut sub.bytecode, *slot);
+                sub.patch_jump(j_skip);
+            }
+            if !matches!(pat, rusty_js_ast::BindingPattern::Identifier(_)) {
+                sub.emit_destructure(pat, *slot)?;
             }
         }
         for s in body { sub.compile_stmt(s)?; }

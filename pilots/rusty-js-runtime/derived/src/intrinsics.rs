@@ -31,6 +31,61 @@ impl Runtime {
         self.install_console();
         self.install_promise();
         self.install_test_record();
+        self.install_destructure_helpers();
+    }
+
+    /// Tier-Ω.5.g.3: helpers the compiler emits LoadGlobal+Call into for
+    /// rest-collection during destructure. Installed as plain globals
+    /// under `__`-prefixed names so user JS sees them.
+    fn install_destructure_helpers(&mut self) {
+        register_global_fn(self, "__destr_array_rest", |rt, args| {
+            let src = args.first().cloned().unwrap_or(Value::Undefined);
+            let start = abstract_ops::to_number(args.get(1).unwrap_or(&Value::Undefined)) as usize;
+            let out_id = rt.alloc_object(Object::new_array());
+            let src_id = match src {
+                Value::Object(id) => id,
+                _ => return Ok(Value::Object(out_id)),
+            };
+            let len = rt.array_length(src_id);
+            let mut write_idx: usize = 0;
+            for i in start..len {
+                let v = rt.object_get(src_id, &i.to_string());
+                rt.object_set(out_id, write_idx.to_string(), v);
+                write_idx += 1;
+            }
+            Ok(Value::Object(out_id))
+        });
+        register_global_fn(self, "__destr_object_rest", |rt, args| {
+            let src = args.first().cloned().unwrap_or(Value::Undefined);
+            let excluded = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let out_id = rt.alloc_object(Object::new_ordinary());
+            let src_id = match src {
+                Value::Object(id) => id,
+                _ => return Ok(Value::Object(out_id)),
+            };
+            // Build excluded-set from the array-arg.
+            let mut excluded_keys: Vec<String> = Vec::new();
+            if let Value::Object(ex_id) = excluded {
+                let n = rt.array_length(ex_id);
+                for i in 0..n {
+                    let v = rt.object_get(ex_id, &i.to_string());
+                    excluded_keys.push(abstract_ops::to_string(&v).as_str().to_string());
+                }
+            }
+            // Snapshot own enumerable property keys from src.
+            let entries: Vec<(String, Value)> = {
+                let o = rt.obj(src_id);
+                o.properties.iter()
+                    .filter(|(_, d)| d.enumerable)
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect()
+            };
+            for (k, v) in entries {
+                if excluded_keys.iter().any(|e| e == &k) { continue; }
+                rt.object_set(out_id, k, v);
+            }
+            Ok(Value::Object(out_id))
+        });
     }
 
     fn install_globals(&mut self) {

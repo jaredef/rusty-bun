@@ -433,6 +433,66 @@ impl<'src> Parser<'src> {
             };
             let kw_span = self.lookahead_span();
             self.bump()?;
+            // Destructure head: `for (const [a, b] of …)` or `for (const {a} of …)`.
+            // Parse one BindingPattern then look for `in`/`of`. Tier-Ω.5.g.3.
+            if matches!(self.current_kind(),
+                TokenKind::Punct(Punct::LBracket) | TokenKind::Punct(Punct::LBrace))
+            {
+                let pat_start = self.lookahead_span().start;
+                let target = self.parse_binding_target()?;
+                let pat_end = self.last_span_end();
+                if self.is_ident("in") || self.is_ident("of") {
+                    let is_of = self.is_ident("of");
+                    self.bump()?;
+                    let right = self.parse_expression()?;
+                    self.expect_punct(Punct::RParen)?;
+                    let body = self.parse_statement()?;
+                    let end = self.last_span_end();
+                    let left = ForBinding::Decl {
+                        kind, target, span: Span::new(pat_start, pat_end),
+                    };
+                    return if is_of {
+                        Ok(Stmt::ForOf { left, right, body: Box::new(body), await_: await_form, span: Span::new(start, end) })
+                    } else {
+                        Ok(Stmt::ForIn { left, right, body: Box::new(body), span: Span::new(start, end) })
+                    };
+                }
+                // C-style for with destructure declarator initializer.
+                let init = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                    self.bump()?;
+                    Some(self.parse_assignment_expression()?)
+                } else { None };
+                let mut declarators = vec![VariableDeclarator {
+                    target, init, span: Span::new(pat_start, self.last_span_end()),
+                }];
+                while matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
+                    self.bump()?;
+                    let d_start = self.lookahead_span().start;
+                    let dt = self.parse_binding_target()?;
+                    let di = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                        self.bump()?;
+                        Some(self.parse_assignment_expression()?)
+                    } else { None };
+                    declarators.push(VariableDeclarator {
+                        target: dt, init: di, span: Span::new(d_start, self.last_span_end()),
+                    });
+                }
+                self.expect_punct(Punct::Semicolon)?;
+                let test = if !matches!(self.current_kind(), TokenKind::Punct(Punct::Semicolon)) {
+                    Some(self.parse_expression()?)
+                } else { None };
+                self.expect_punct(Punct::Semicolon)?;
+                let update = if !matches!(self.current_kind(), TokenKind::Punct(Punct::RParen)) {
+                    Some(self.parse_expression()?)
+                } else { None };
+                self.expect_punct(Punct::RParen)?;
+                let body = self.parse_statement()?;
+                let end = self.last_span_end();
+                let init_st = ForInit::Variable(VariableStatement {
+                    kind, declarators, span: Span::new(kw_span.start, kw_span.end),
+                });
+                return Ok(Stmt::For { init: Some(init_st), test, update, body: Box::new(body), span: Span::new(start, end) });
+            }
             if let TokenKind::Ident(n) = self.current_kind().clone() {
                 let id_span = self.lookahead_span();
                 self.bump()?;

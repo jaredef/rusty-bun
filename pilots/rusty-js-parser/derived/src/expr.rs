@@ -555,11 +555,25 @@ impl<'src> Parser<'src> {
                         key, value, shorthand: false, span: Span::new(prop_start, end),
                     });
                 } else if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
-                    // Method shorthand — opaque-fallback for v1.
-                    let expr = self.opaque_until_top_terminator_within_braces()?;
-                    let end = expr.span().end;
+                    // Tier-Ω.5.l: method shorthand `{ name(params) { body } }` —
+                    // lower to `{ name: function(params) { body } }`. The parser
+                    // reads parameters + body identically to a function
+                    // expression; the synthesized FunctionExpression carries
+                    // an anonymous name (the method name is the property key,
+                    // not the function's [[Name]] in v1).
+                    let params = self.parse_function_parameters()?;
+                    let body = self.parse_function_body()?;
+                    let end = self.last_span_end();
+                    let func = Expr::Function {
+                        name: None,
+                        is_async: false,
+                        is_generator: false,
+                        params,
+                        body,
+                        span: Span::new(prop_start, end),
+                    };
                     properties.push(ObjectProperty::Property {
-                        key, value: expr, shorthand: false, span: Span::new(prop_start, end),
+                        key, value: func, shorthand: false, span: Span::new(prop_start, end),
                     });
                 } else {
                     // Bare shorthand `{ x }` — value is Identifier with same name.

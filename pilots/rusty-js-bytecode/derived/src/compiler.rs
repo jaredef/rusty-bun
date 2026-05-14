@@ -41,6 +41,11 @@ pub struct FunctionProto {
     pub params: u16,
     pub locals: Vec<LocalDescriptor>,
     pub upvalues: Vec<UpvalueDescriptor>,
+    /// Tier-Ω.5.l: if the last parameter is a rest parameter (`...name`),
+    /// this is its local slot index. The runtime collects all arguments
+    /// from this index onward into a single Array bound to this slot.
+    /// None for ordinary parameter lists.
+    pub rest_param_slot: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -1405,21 +1410,58 @@ impl Compiler {
                 }
             }
             Expr::Array { elements, .. } => {
-                let len = elements.len();
-                encode_op(&mut self.bytecode, Op::NewArray);
-                encode_u16(&mut self.bytecode, len.min(u16::MAX as usize) as u16);
-                let mut idx = 0u32;
-                for el in elements {
-                    match el {
-                        ArrayElement::Elision { .. } => { idx += 1; }
-                        ArrayElement::Expr(ex) => {
-                            self.compile_expr(ex)?;
-                            encode_op(&mut self.bytecode, Op::InitIndex);
-                            encode_u32(&mut self.bytecode, idx);
-                            idx += 1;
+                let has_spread = elements.iter().any(|el| matches!(el, ArrayElement::Spread { .. }));
+                if !has_spread {
+                    let len = elements.len();
+                    encode_op(&mut self.bytecode, Op::NewArray);
+                    encode_u16(&mut self.bytecode, len.min(u16::MAX as usize) as u16);
+                    let mut idx = 0u32;
+                    for el in elements {
+                        match el {
+                            ArrayElement::Elision { .. } => { idx += 1; }
+                            ArrayElement::Expr(ex) => {
+                                self.compile_expr(ex)?;
+                                encode_op(&mut self.bytecode, Op::InitIndex);
+                                encode_u32(&mut self.bytecode, idx);
+                                idx += 1;
+                            }
+                            ArrayElement::Spread { .. } => unreachable!(),
                         }
-                        ArrayElement::Spread { .. } => {
-                            return Err(self.err(e.span(), "spread in array literal not yet supported"));
+                    }
+                } else {
+                    // Tier-Ω.5.l: array literal with spread. Build incrementally
+                    // via __array_push_single / __array_extend, matching the
+                    // shape of emit_args_array (Ω.5.k).
+                    encode_op(&mut self.bytecode, Op::NewArray);
+                    encode_u16(&mut self.bytecode, 0);
+                    let push_name = self.constants.intern(Constant::String("__array_push_single".to_string()));
+                    let extend_name = self.constants.intern(Constant::String("__array_extend".to_string()));
+                    for el in elements {
+                        match el {
+                            ArrayElement::Elision { .. } => {
+                                encode_op(&mut self.bytecode, Op::LoadGlobal);
+                                encode_u16(&mut self.bytecode, push_name);
+                                encode_op(&mut self.bytecode, Op::Swap);
+                                encode_op(&mut self.bytecode, Op::PushUndef);
+                                encode_op(&mut self.bytecode, Op::Call);
+                                encode_u8(&mut self.bytecode, 2);
+                            }
+                            ArrayElement::Expr(ex) => {
+                                encode_op(&mut self.bytecode, Op::LoadGlobal);
+                                encode_u16(&mut self.bytecode, push_name);
+                                encode_op(&mut self.bytecode, Op::Swap);
+                                self.compile_expr(ex)?;
+                                encode_op(&mut self.bytecode, Op::Call);
+                                encode_u8(&mut self.bytecode, 2);
+                            }
+                            ArrayElement::Spread { expr, .. } => {
+                                encode_op(&mut self.bytecode, Op::LoadGlobal);
+                                encode_u16(&mut self.bytecode, extend_name);
+                                encode_op(&mut self.bytecode, Op::Swap);
+                                self.compile_expr(expr)?;
+                                encode_op(&mut self.bytecode, Op::Call);
+                                encode_u8(&mut self.bytecode, 2);
+                            }
                         }
                     }
                 }
@@ -1592,6 +1634,10 @@ impl Compiler {
             pending_named_exports: Vec::new(),
         };
         let param_count = params.len() as u16;
+        // Tier-Ω.5.l: track the rest-parameter slot. Per spec only the
+        // last parameter can be a rest parameter; the runtime uses this
+        // to collect `args[slot..]` into an Array at call time.
+        let mut rest_param_slot: Option<u16> = None;
         // Allocate one local per parameter position (slots 0..N receive
         // the args at call time per Runtime::call_function). For destructure
         // params, the param slot is the hidden source and additional locals
@@ -1601,11 +1647,14 @@ impl Compiler {
         for (i, p) in params.iter().enumerate() {
             match &p.target {
                 rusty_js_ast::BindingPattern::Identifier(n) => {
-                    sub.alloc_local(LocalDescriptor {
+                    let slot = sub.alloc_local(LocalDescriptor {
                         name: n.name.clone(),
                         kind: VariableKind::Let,
                         depth: 0,
                     });
+                    if p.rest {
+                        rest_param_slot = Some(slot);
+                    }
                     if p.default.is_some() {
                         destr_prologue.push((
                             rusty_js_ast::BindingPattern::Identifier(n.clone()),
@@ -1671,6 +1720,7 @@ impl Compiler {
             params: param_count,
             locals: sub.locals,
             upvalues: sub.upvalues,
+            rest_param_slot,
         })
     }
 

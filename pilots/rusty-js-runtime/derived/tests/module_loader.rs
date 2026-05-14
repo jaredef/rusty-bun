@@ -334,6 +334,10 @@ fn t13_bare_specifier_errors() {
 #[test]
 fn t14_extension_probe_js() {
     let dir = fixture_dir("probe-js");
+    // Ω.5.j.cjs: .js files default to CJS unless a nearby package.json
+    // declares `"type": "module"`. The fixture is ESM-shaped, so the
+    // marker is required.
+    write_file(&dir, "package.json", r#"{"type":"module"}"#);
     write_file(&dir, "util.js",
         "const tag = \"js-mode\";\nexport { tag };\n");
     write_file(&dir, "main.mjs", r#"

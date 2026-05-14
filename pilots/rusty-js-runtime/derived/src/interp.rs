@@ -937,9 +937,25 @@ impl Runtime {
                 _ => Vec::new(),
             }
         };
+        // Tier-Ω.5.l: rest parameter — collect args[rest_slot..] into an
+        // Array bound to the rest slot. The Array carries InternalKind::Array
+        // so alloc_object auto-wires %Array.prototype%.
         let mut locals: Vec<Value> = Vec::new();
+        let rest_slot = proto.rest_param_slot;
         for (i, _) in proto.locals.iter().enumerate() {
-            if i < args.len() {
+            let slot = i as u16;
+            if Some(slot) == rest_slot {
+                let mut rest = crate::value::Object::new_array();
+                let tail: Vec<Value> = if (i as usize) < args.len() {
+                    args[i as usize..].to_vec()
+                } else { Vec::new() };
+                rest.set_own("length".into(), Value::Number(tail.len() as f64));
+                for (k, v) in tail.into_iter().enumerate() {
+                    rest.set_own(k.to_string(), v);
+                }
+                let id = self.alloc_object(rest);
+                locals.push(Value::Object(id));
+            } else if i < args.len() {
                 locals.push(args[i].clone());
             } else {
                 locals.push(Value::Undefined);

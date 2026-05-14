@@ -140,6 +140,14 @@ pub struct Compiler {
     /// jumps and the bytecode offset of the loop's continue target.
     /// Push on loop entry, pop on loop exit.
     loop_stack: Vec<LoopFrame>,
+    /// Tier-Ω.5.o: frames for LabelledStatement wrapping non-loop bodies
+    /// (e.g. `outer: { ... break outer; }`). Loop labels live on the
+    /// LoopFrame's `label` field instead.
+    label_stack: Vec<LabelFrame>,
+    /// Tier-Ω.5.o: pending label name to attach to the next pushed
+    /// LoopFrame. Set by compile_stmt(Stmt::Labelled { body: <loop> })
+    /// and cleared at frame-push by the loop's compile site.
+    pending_label: Option<String>,
     /// Tier-Ω.5.c: each enclosing-function level's locals + accumulated
     /// upvalues, walked when resolving identifiers inside nested functions.
     /// Innermost outer is at the back. Empty at the top-level module.
@@ -243,6 +251,18 @@ struct LoopFrame {
     /// frame, but `continue` skips past it to the enclosing loop —
     /// switch is a break-only construct per ECMA-262 §14.12.4.
     is_switch: bool,
+    /// Tier-Ω.5.o: label name attached to this frame by an enclosing
+    /// LabelledStatement. `break LABEL` / `continue LABEL` match the
+    /// innermost frame with this label. None for unlabelled loops.
+    label: Option<String>,
+}
+
+/// Tier-Ω.5.o: frame for a LabelledStatement wrapping a non-loop body.
+/// Only `break LABEL` targets it; `continue LABEL` matches loop frames.
+#[derive(Debug)]
+struct LabelFrame {
+    label: String,
+    break_patches: Vec<usize>,
 }
 
 impl Compiler {
@@ -252,7 +272,7 @@ impl Compiler {
             constants: ConstantsPool::new(),
             locals: Vec::new(),
             source_map: Vec::new(),
-            loop_stack: Vec::new(),
+            loop_stack: Vec::new(), label_stack: Vec::new(), pending_label: None,
             enclosing: Vec::new(),
             upvalues: Vec::new(),
             class_stack: Vec::new(),
@@ -539,7 +559,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: loop_start, continue_pending: false,
-                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false, label: self.pending_label.take(),
                 });
                 self.compile_expr(test)?;
                 let jump_if_false = self.emit_jump(Op::JumpIfFalse);
@@ -553,7 +573,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: true,
-                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false, label: self.pending_label.take(),
                 });
                 self.compile_stmt(body)?;
                 let test_pos = self.bytecode.len();
@@ -585,7 +605,7 @@ impl Compiler {
                 let test_pos = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: true,
-                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false, label: self.pending_label.take(),
                 });
                 let jump_if_false = if let Some(t) = test {
                     self.compile_expr(t)?;
@@ -696,7 +716,7 @@ impl Compiler {
                 let loop_start = self.bytecode.len();
                 self.loop_stack.push(LoopFrame {
                     continue_target: loop_start, continue_pending: false,
-                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false,
+                    continue_patches: Vec::new(), break_patches: Vec::new(), is_switch: false, label: self.pending_label.take(),
                 });
                 // result = iter.next()
                 encode_op(&mut self.bytecode, Op::LoadLocal);
@@ -740,15 +760,38 @@ impl Compiler {
                 for site in frame.break_patches { self.patch_jump_at(site); }
             }
             Stmt::Break { label, .. } => {
-                if label.is_some() {
-                    return Err(self.err(span, "labelled break not yet supported"));
-                }
-                if let Some(frame) = self.loop_stack.last_mut() {
-                    let patch_site = encode_op(&mut self.bytecode, Op::Jump);
-                    encode_i32(&mut self.bytecode, 0);
-                    frame.break_patches.push(patch_site);
-                } else {
-                    return Err(self.err(span, "break outside of loop"));
+                match label {
+                    None => {
+                        if let Some(frame) = self.loop_stack.last_mut() {
+                            let patch_site = encode_op(&mut self.bytecode, Op::Jump);
+                            encode_i32(&mut self.bytecode, 0);
+                            frame.break_patches.push(patch_site);
+                        } else {
+                            return Err(self.err(span, "break outside of loop"));
+                        }
+                    }
+                    Some(name) => {
+                        // Tier-Ω.5.o: labelled break — walk loop_stack
+                        // top-down for a frame whose `label` matches, then
+                        // fall back to label_stack (labelled non-loop).
+                        let needle = name.name.clone();
+                        if let Some(idx) = self.loop_stack.iter()
+                            .rposition(|f| f.label.as_deref() == Some(needle.as_str()))
+                        {
+                            let patch_site = encode_op(&mut self.bytecode, Op::Jump);
+                            encode_i32(&mut self.bytecode, 0);
+                            self.loop_stack[idx].break_patches.push(patch_site);
+                        } else if let Some(idx) = self.label_stack.iter()
+                            .rposition(|f| f.label == needle)
+                        {
+                            let patch_site = encode_op(&mut self.bytecode, Op::Jump);
+                            encode_i32(&mut self.bytecode, 0);
+                            self.label_stack[idx].break_patches.push(patch_site);
+                        } else {
+                            return Err(self.err(span,
+                                &format!("break label '{}' not found in enclosing scopes", needle)));
+                        }
+                    }
                 }
             }
             Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. } => {
@@ -811,14 +854,25 @@ impl Compiler {
                 }
             }
             Stmt::Continue { label, .. } => {
-                if label.is_some() {
-                    return Err(self.err(span, "labelled continue not yet supported"));
-                }
-                // Find the innermost enclosing *loop* frame, skipping any
-                // switch frames. Per ECMA-262, `continue` inside a switch
-                // applies to the enclosing iteration statement, not the
-                // switch itself. Tier-Ω.5.m.
-                let loop_idx = self.loop_stack.iter().rposition(|f| !f.is_switch);
+                // Find the target loop frame (skipping switch frames per
+                // §14.12.4). Unlabelled: innermost loop. Labelled: nearest
+                // loop frame whose `label` matches — switch frames are
+                // skipped on the way up; labelled non-loop frames cannot
+                // be `continue`d into and are skipped silently (a label
+                // attached to a block doesn't support continue).
+                let loop_idx = match label {
+                    None => self.loop_stack.iter().rposition(|f| !f.is_switch),
+                    Some(name) => {
+                        let needle = name.name.clone();
+                        let r = self.loop_stack.iter()
+                            .rposition(|f| !f.is_switch && f.label.as_deref() == Some(needle.as_str()));
+                        if r.is_none() {
+                            return Err(self.err(span,
+                                &format!("continue label '{}' does not match an enclosing loop", needle)));
+                        }
+                        r
+                    }
+                };
                 let Some(idx) = loop_idx else {
                     return Err(self.err(span, "continue outside of loop"));
                 };
@@ -895,7 +949,7 @@ impl Compiler {
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: false,
                     continue_patches: Vec::new(), break_patches: Vec::new(),
-                    is_switch: true,
+                    is_switch: true, label: None,
                 });
 
                 // 5. Emit each case body in textual order. Patch its
@@ -1007,7 +1061,7 @@ impl Compiler {
                 self.loop_stack.push(LoopFrame {
                     continue_target: 0, continue_pending: true,
                     continue_patches: Vec::new(), break_patches: Vec::new(),
-                    is_switch: false,
+                    is_switch: false, label: self.pending_label.take(),
                 });
                 encode_op(&mut self.bytecode, Op::LoadLocal);
                 encode_u16(&mut self.bytecode, idx_slot);
@@ -1052,9 +1106,32 @@ impl Compiler {
                 let frame = self.loop_stack.pop().unwrap();
                 for site in frame.break_patches { self.patch_jump_at(site); }
             }
+            Stmt::Labelled { label, body, .. } => {
+                // Tier-Ω.5.o: LabelledStatement. If the body is a loop,
+                // the label rides on the loop's LoopFrame (via
+                // pending_label) and break/continue resolve there. For a
+                // non-loop body, push a LabelFrame so labelled `break`
+                // still works; labelled `continue` is rejected at the
+                // continue site.
+                let is_loop_body = matches!(&**body,
+                    Stmt::While { .. } | Stmt::DoWhile { .. }
+                    | Stmt::For { .. } | Stmt::ForIn { .. } | Stmt::ForOf { .. });
+                if is_loop_body {
+                    self.pending_label = Some(label.name.clone());
+                    self.compile_stmt(body)?;
+                    // pending_label is consumed by the loop's frame-push.
+                } else {
+                    self.label_stack.push(LabelFrame {
+                        label: label.name.clone(),
+                        break_patches: Vec::new(),
+                    });
+                    self.compile_stmt(body)?;
+                    let frame = self.label_stack.pop().unwrap();
+                    for site in frame.break_patches { self.patch_jump_at(site); }
+                }
+            }
             other => {
                 let tag = match other {
-                    Stmt::Labelled { .. } => "Labelled",
                     Stmt::Opaque { .. } => "Opaque",
                     _ => "<other>",
                 };
@@ -1702,23 +1779,34 @@ impl Compiler {
                 for p in properties {
                     match p {
                         ObjectProperty::Property { key, value, .. } => {
-                            self.compile_expr(value)?;
                             match key {
                                 ObjectKey::Identifier { name, .. } | ObjectKey::String { value: name, .. } => {
+                                    self.compile_expr(value)?;
                                     let idx = self.constants.intern(Constant::String(name.clone()));
                                     encode_op(&mut self.bytecode, Op::InitProp);
                                     encode_u16(&mut self.bytecode, idx);
                                 }
-                                ObjectKey::Number { value, .. } => {
-                                    let name = if value.fract() == 0.0 {
-                                        format!("{}", *value as i64)
-                                    } else { format!("{}", value) };
+                                ObjectKey::Number { value: num, .. } => {
+                                    self.compile_expr(value)?;
+                                    let name = if num.fract() == 0.0 {
+                                        format!("{}", *num as i64)
+                                    } else { format!("{}", num) };
                                     let idx = self.constants.intern(Constant::String(name));
                                     encode_op(&mut self.bytecode, Op::InitProp);
                                     encode_u16(&mut self.bytecode, idx);
                                 }
-                                ObjectKey::Computed { .. } => {
-                                    return Err(self.err(e.span(), "computed object key not yet supported"));
+                                ObjectKey::Computed { expr: key_expr, .. } => {
+                                    // Tier-Ω.5.o: computed object key `{[k]: v}`.
+                                    // Stack: [target] -> Dup -> [target, target]
+                                    // -> compile key -> [target, target, key]
+                                    // -> compile value -> [target, target, key, value]
+                                    // -> SetIndex -> [target, value]
+                                    // -> Pop -> [target].
+                                    encode_op(&mut self.bytecode, Op::Dup);
+                                    self.compile_expr(key_expr)?;
+                                    self.compile_expr(value)?;
+                                    encode_op(&mut self.bytecode, Op::SetIndex);
+                                    encode_op(&mut self.bytecode, Op::Pop);
                                 }
                             }
                         }
@@ -1865,7 +1953,7 @@ impl Compiler {
             constants: ConstantsPool::new(),
             locals: Vec::new(),
             source_map: Vec::new(),
-            loop_stack: Vec::new(),
+            loop_stack: Vec::new(), label_stack: Vec::new(), pending_label: None,
             enclosing: sub_enclosing,
             upvalues: Vec::new(),
             class_stack: self.class_stack.clone(),
@@ -2640,12 +2728,92 @@ impl Compiler {
         // Find an explicit `constructor` member, else synthesize a no-op.
         let mut ctor_params: Vec<Parameter> = Vec::new();
         let mut ctor_body: Vec<Stmt> = Vec::new();
+        let mut has_explicit_ctor = false;
         for m in members {
             if let ClassMember::Method { kind: MethodKind::Constructor, params, body, .. } = m {
                 ctor_params = params.clone();
                 ctor_body = body.clone();
+                has_explicit_ctor = true;
                 break;
             }
+        }
+
+        // Tier-Ω.5.o: synthesize `this.<name> = <init>` statements from
+        // instance Field members. Insert at the START of the constructor
+        // body. For derived classes without an explicit constructor, also
+        // synthesize `super(...args)` ahead of field inits so the parent
+        // constructor (and its own field inits) runs first.
+        let mut field_init_stmts: Vec<Stmt> = Vec::new();
+        for m in members {
+            if let ClassMember::Field { name: f_name, is_static, init, span: f_span } = m {
+                if *is_static { continue; }
+                let key_expr_prop: MemberProperty = match f_name {
+                    ClassMemberName::Identifier { name, span } =>
+                        MemberProperty::Identifier { name: name.clone(), span: *span },
+                    ClassMemberName::String { value, span } =>
+                        MemberProperty::Computed {
+                            expr: Expr::StringLiteral { value: value.clone(), span: *span },
+                            span: *span,
+                        },
+                    ClassMemberName::Number { value, span } =>
+                        MemberProperty::Computed {
+                            expr: Expr::NumberLiteral { value: *value, span: *span },
+                            span: *span,
+                        },
+                    ClassMemberName::Computed { expr, span } =>
+                        MemberProperty::Computed { expr: expr.clone(), span: *span },
+                    ClassMemberName::Private { span, .. } => {
+                        return Err(self.err(*span,
+                            "private class fields (#x) not yet supported (deferred from Tier-Ω.5.f scope ceiling; see private-fields v1 substrate task)"));
+                    }
+                };
+                let target = Expr::Member {
+                    object: Box::new(Expr::This { span: *f_span }),
+                    property: Box::new(key_expr_prop),
+                    optional: false,
+                    span: *f_span,
+                };
+                let value = match init {
+                    Some(e) => e.clone(),
+                    None => Expr::Identifier { name: "undefined".to_string(), span: *f_span },
+                };
+                let assign = Expr::Assign {
+                    operator: AssignOp::Assign,
+                    target: Box::new(target),
+                    value: Box::new(value),
+                    span: *f_span,
+                };
+                field_init_stmts.push(Stmt::Expression { expr:assign, span: *f_span });
+            }
+        }
+        if !has_explicit_ctor && super_class.is_some() {
+            // Synthesize `constructor(...__args) { super(...__args); <fields>; }`.
+            let s = span;
+            let args_id = BindingIdentifier { name: "__args".to_string(), span: s };
+            ctor_params = vec![Parameter {
+                target: BindingPattern::Identifier(args_id.clone()),
+                default: None,
+                rest: true,
+                span: s,
+            }];
+            let super_call = Expr::Call {
+                callee: Box::new(Expr::Super { span: s }),
+                arguments: vec![Argument::Spread {
+                    expr: Expr::Identifier { name: "__args".to_string(), span: s },
+                    span: s,
+                }],
+                optional: false,
+                span: s,
+            };
+            let mut synth: Vec<Stmt> = Vec::new();
+            synth.push(Stmt::Expression { expr:super_call, span: s });
+            synth.extend(field_init_stmts.clone());
+            ctor_body = synth;
+        } else if !field_init_stmts.is_empty() {
+            // Prepend field inits to existing (or empty) body.
+            let mut new_body: Vec<Stmt> = field_init_stmts.clone();
+            new_body.extend(ctor_body.into_iter());
+            ctor_body = new_body;
         }
 
         // Push class context for the constructor body.
@@ -2748,9 +2916,46 @@ impl Compiler {
                     encode_u16(&mut self.bytecode, key_idx);
                     encode_op(&mut self.bytecode, Op::Pop);
                 }
-                ClassMember::Field { span: f_span, .. } => {
-                    return Err(self.err(*f_span,
-                        "class fields not yet supported (Tier-Ω.5.f scope ceiling)"));
+                ClassMember::Field { name: f_name, is_static, init, span: f_span } => {
+                    // Tier-Ω.5.o: instance fields were folded into the
+                    // constructor body above. Static fields run once at
+                    // class-definition time: lower as `ctor.<key> = init`.
+                    if !*is_static { continue; }
+                    // Reject private static fields with the same clearer
+                    // error as instance private fields.
+                    if let ClassMemberName::Private { span: p_span, .. } = f_name {
+                        return Err(self.err(*p_span,
+                            "private class fields (#x) not yet supported (deferred from Tier-Ω.5.f scope ceiling; see private-fields v1 substrate task)"));
+                    }
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, ctor_slot);
+                    match init {
+                        Some(e) => self.compile_expr(e)?,
+                        None => { encode_op(&mut self.bytecode, Op::PushUndef); }
+                    }
+                    match f_name {
+                        ClassMemberName::Identifier { name, .. }
+                        | ClassMemberName::String { value: name, .. } => {
+                            let idx = self.constants.intern(Constant::String(name.clone()));
+                            encode_op(&mut self.bytecode, Op::SetProp);
+                            encode_u16(&mut self.bytecode, idx);
+                        }
+                        ClassMemberName::Number { value, .. } => {
+                            let name = if value.fract() == 0.0 {
+                                format!("{}", *value as i64)
+                            } else { format!("{}", value) };
+                            let idx = self.constants.intern(Constant::String(name));
+                            encode_op(&mut self.bytecode, Op::SetProp);
+                            encode_u16(&mut self.bytecode, idx);
+                        }
+                        ClassMemberName::Computed { span: c_span, .. } => {
+                            return Err(self.err(*c_span,
+                                "computed class field names not yet supported"));
+                        }
+                        ClassMemberName::Private { .. } => unreachable!(),
+                    }
+                    encode_op(&mut self.bytecode, Op::Pop);
+                    let _ = f_span;
                 }
                 ClassMember::StaticBlock { span: b_span, .. } => {
                     return Err(self.err(*b_span,

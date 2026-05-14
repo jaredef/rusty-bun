@@ -25,6 +25,12 @@ pub struct Runtime {
     pub globals: HashMap<String, Value>,
     pub last_value: Value,
     pub host_hooks: crate::module::HostHooks,
+    /// Tier-Ω.5.b: ESM module cache keyed by resolved URL
+    /// (`file://...` for disk-backed modules, `node:foo` for built-ins).
+    /// Interior mutability lets `evaluate_module` insert a Linking record
+    /// before recursing into imports, so cyclic loads observe the partial
+    /// namespace rather than re-entering parse/compile.
+    pub modules: HashMap<String, std::rc::Rc<std::cell::RefCell<crate::module::ModuleRecord>>>,
     /// Managed heap. Wired but not yet authoritative for Value::Object;
     /// round 3.e.d migrates Value::Object from Rc<RefCell<Object>> to
     /// ObjectId, at which point this heap becomes the storage for every
@@ -73,6 +79,7 @@ impl Runtime {
             globals: HashMap::new(),
             last_value: Value::Undefined,
             host_hooks: crate::module::HostHooks::default(),
+            modules: HashMap::new(),
             heap: rusty_js_gc::Heap::new(),
             job_queue: crate::job_queue::JobQueue::new(),
             pending_unhandled: HashSet::new(),

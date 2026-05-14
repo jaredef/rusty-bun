@@ -12,7 +12,7 @@ pub mod disasm;
 
 pub use op::{Op, encode_op};
 pub use constants::{Constant, ConstantsPool};
-pub use compiler::{CompiledModule, Compiler, CompileError, LocalDescriptor, UpvalueDescriptor, UpvalueSource};
+pub use compiler::{CompiledModule, Compiler, CompileError, LocalDescriptor, UpvalueDescriptor, UpvalueSource, ImportBinding, ImportBindingKind, ExportBinding};
 pub use disasm::disassemble;
 
 /// Convenience: parse + compile a module source string.

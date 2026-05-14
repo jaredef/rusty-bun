@@ -49,6 +49,45 @@ pub struct CompiledModule {
     pub constants: ConstantsPool,
     pub locals: Vec<LocalDescriptor>,
     pub source_map: Vec<(usize, Span)>,
+    /// Tier-Ω.5.b: ESM static imports. Each entry binds a local slot to a
+    /// value drawn from another module's namespace. The runtime resolves
+    /// `module_request` and populates `slot` BEFORE running the module body.
+    pub imports: Vec<ImportBinding>,
+    /// Tier-Ω.5.b: ESM static exports. After running the module body, the
+    /// runtime reads each `local` slot and writes it to namespace[`exported`].
+    /// `default` exports use the synthetic local "<module.default>".
+    pub exports: Vec<ExportBinding>,
+}
+
+/// One ESM import binding. Compiled from ImportDeclaration entries.
+#[derive(Debug, Clone)]
+pub struct ImportBinding {
+    /// Local-slot index this binding writes to.
+    pub slot: u16,
+    /// Specifier from `from "..."`. Either `node:*` or a relative path
+    /// after Tier-Ω.5.b's resolver.
+    pub module_request: String,
+    /// What to read from the imported module's namespace.
+    pub kind: ImportBindingKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportBindingKind {
+    /// `import x from "..."` — read namespace["default"].
+    Default,
+    /// `import * as x from "..."` — bind the namespace object itself.
+    Namespace,
+    /// `import { name } from "..."` — read namespace[name].
+    Named(String),
+}
+
+/// One ESM export binding. Compiled from ExportDeclaration entries.
+#[derive(Debug, Clone)]
+pub struct ExportBinding {
+    /// Name as it appears in the namespace.
+    pub exported: String,
+    /// Local-slot index whose value populates namespace[`exported`].
+    pub local: u16,
 }
 
 pub struct Compiler {
@@ -76,6 +115,21 @@ pub struct Compiler {
     class_stack: Vec<ClassFrame>,
     /// Counter for synthesizing unique local names across nested classes.
     class_seq: u32,
+    /// Tier-Ω.5.b: ESM import bindings collected from the module's
+    /// ImportDeclarations. Each binding allocates a local slot at the
+    /// pre-body lowering step; references to the local name resolve to
+    /// that slot via resolve_local. The runtime populates these slots
+    /// from the imported module's namespace before run_frame_module.
+    imports: Vec<ImportBinding>,
+    /// Tier-Ω.5.b: ESM export bindings populated as ExportDeclarations are
+    /// lowered. Filled lazily at compile time (Named export specifiers
+    /// resolve their `local` -> slot at end-of-module).
+    exports: Vec<ExportBinding>,
+    /// Tier-Ω.5.b: snapshot of named local-or-default exports seen so far,
+    /// pending slot lookup. For `export { name }` the slot is the local
+    /// previously declared by `const name = ...` / `function name() {}`.
+    /// Resolved at the end of compile_module.
+    pending_named_exports: Vec<(String, String)>, // (exported, local_name)
 }
 
 #[derive(Debug, Clone)]
@@ -156,26 +210,157 @@ impl Compiler {
             upvalues: Vec::new(),
             class_stack: Vec::new(),
             class_seq: 0,
+            imports: Vec::new(),
+            exports: Vec::new(),
+            pending_named_exports: Vec::new(),
         }
     }
 
     pub fn compile_module(&mut self, m: &Module) -> Result<CompiledModule, CompileError> {
+        // Tier-Ω.5.b phase A: pre-allocate locals for every import binding
+        // so references to imported names in the body resolve to LoadLocal
+        // (not LoadGlobal). The runtime populates these slots before
+        // run_frame_module by reading from each module-request's namespace.
         for item in &m.body {
-            match item {
-                ModuleItem::Import(_) | ModuleItem::Export(_) => {
-                    // Import/export entries are recorded at link time; the
-                    // bytecode unit doesn't emit linkage opcodes in v1.
+            if let ModuleItem::Import(imp) = item {
+                let module_request = imp.specifier.value.clone();
+                if let Some(def) = &imp.default_binding {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: def.name.clone(), kind: VariableKind::Const, depth: 0,
+                    });
+                    self.imports.push(ImportBinding {
+                        slot, module_request: module_request.clone(),
+                        kind: ImportBindingKind::Default,
+                    });
                 }
-                ModuleItem::Statement(s) => self.compile_stmt(s)?,
+                if let Some(ns) = &imp.namespace_binding {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: ns.name.clone(), kind: VariableKind::Const, depth: 0,
+                    });
+                    self.imports.push(ImportBinding {
+                        slot, module_request: module_request.clone(),
+                        kind: ImportBindingKind::Namespace,
+                    });
+                }
+                for spec in &imp.named_imports {
+                    let imported_name = match &spec.imported {
+                        ModuleExportName::Ident(b) => b.name.clone(),
+                        ModuleExportName::String { value, .. } => value.clone(),
+                    };
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: spec.local.name.clone(), kind: VariableKind::Const, depth: 0,
+                    });
+                    self.imports.push(ImportBinding {
+                        slot, module_request: module_request.clone(),
+                        kind: ImportBindingKind::Named(imported_name),
+                    });
+                }
             }
         }
+
+        // Phase B: walk the body in order. Imports already lowered.
+        // Statements compile normally. Exports are recorded for phase C
+        // (default-export expressions are lowered inline into a synthetic
+        // "<module.default>" local).
+        for item in &m.body {
+            match item {
+                ModuleItem::Import(_) => { /* lowered in phase A */ }
+                ModuleItem::Statement(s) => self.compile_stmt(s)?,
+                ModuleItem::Export(e) => self.compile_export(e)?,
+            }
+        }
+
+        // Phase C: resolve pending named-export specifiers to slot indices.
+        // For `export { name }` after a local declaration, the slot is the
+        // local previously bound by the declaration.
+        for (exported, local_name) in std::mem::take(&mut self.pending_named_exports) {
+            if let Some(slot) = self.resolve_local(&local_name) {
+                self.exports.push(ExportBinding { exported, local: slot });
+            }
+            // Silently drop unresolved names; the namespace builder yields
+            // Undefined for missing exports.
+        }
+
         encode_op(&mut self.bytecode, Op::ReturnUndef);
         Ok(CompiledModule {
             bytecode: std::mem::take(&mut self.bytecode),
             constants: std::mem::take(&mut self.constants),
             locals: std::mem::take(&mut self.locals),
             source_map: std::mem::take(&mut self.source_map),
+            imports: std::mem::take(&mut self.imports),
+            exports: std::mem::take(&mut self.exports),
         })
+    }
+
+    /// Tier-Ω.5.b: lower one ExportDeclaration. Named local exports are
+    /// recorded for end-of-module slot resolution. Default exports lower
+    /// the underlying expression / hoistable-function / class to bytecode
+    /// and store the result in the synthetic "<module.default>" local.
+    /// Re-export forms (StarFrom / StarAsFrom / Named-with-source) are
+    /// deferred to a follow-on round per the scope ceiling.
+    fn compile_export(&mut self, e: &ExportDeclaration) -> Result<(), CompileError> {
+        match e {
+            ExportDeclaration::Named { specifiers, source: None, .. } => {
+                for spec in specifiers {
+                    let local_name = match &spec.local {
+                        ModuleExportName::Ident(b) => b.name.clone(),
+                        ModuleExportName::String { value, .. } => value.clone(),
+                    };
+                    let exported_name = match &spec.exported {
+                        ModuleExportName::Ident(b) => b.name.clone(),
+                        ModuleExportName::String { value, .. } => value.clone(),
+                    };
+                    self.pending_named_exports.push((exported_name, local_name));
+                }
+            }
+            ExportDeclaration::Named { source: Some(_), span, .. }
+            | ExportDeclaration::StarFrom { span, .. }
+            | ExportDeclaration::StarAsFrom { span, .. } => {
+                return Err(self.err(*span, "re-export forms (export ... from) not yet supported"));
+            }
+            ExportDeclaration::Default { body, span } => {
+                // Synthesize a local slot for the default binding. Reuse
+                // across modules with multiple defaults isn't legal ECMAScript,
+                // but we accept duplicate slot allocation (the last write wins).
+                let slot = self.alloc_local(LocalDescriptor {
+                    name: "<module.default>".to_string(),
+                    kind: VariableKind::Const, depth: 0,
+                });
+                match body {
+                    DefaultExportBody::Expression { expr } => {
+                        self.compile_expr(expr)?;
+                    }
+                    DefaultExportBody::HoistableFunction { name, is_async, is_generator, params, body } => {
+                        let proto = self.compile_function_proto(name.clone(), *is_async, *is_generator, params, body)?;
+                        let captures = proto.upvalues.clone();
+                        let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                        encode_op(&mut self.bytecode, Op::MakeClosure);
+                        encode_u16(&mut self.bytecode, idx);
+                        emit_captures(&mut self.bytecode, &captures);
+                    }
+                    DefaultExportBody::Class { .. } => {
+                        return Err(self.err(*span, "export default class not yet supported"));
+                    }
+                }
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, slot);
+                self.exports.push(ExportBinding {
+                    exported: "default".to_string(), local: slot,
+                });
+            }
+            ExportDeclaration::Declaration { names, .. } => {
+                // The decl's body was already consumed by the parser, but
+                // its names are recorded. Since the parser currently skips
+                // the decl's bytecode (only its declarator names are kept),
+                // these slots may not exist. Try to resolve; silently drop
+                // unresolved entries — they manifest as Undefined in the
+                // namespace, which mirrors the parser's body-opaque mode.
+                for n in names {
+                    self.pending_named_exports.push((n.name.clone(), n.name.clone()));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn compile_stmt(&mut self, s: &Stmt) -> Result<(), CompileError> {
@@ -1228,6 +1413,9 @@ impl Compiler {
             upvalues: Vec::new(),
             class_stack: self.class_stack.clone(),
             class_seq: self.class_seq,
+            imports: Vec::new(),
+            exports: Vec::new(),
+            pending_named_exports: Vec::new(),
         };
         let param_count = params.len() as u16;
         // Allocate one local per parameter position (slots 0..N receive

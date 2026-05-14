@@ -12,7 +12,7 @@ pub mod os;
 pub mod process;
 pub mod register;
 
-use rusty_js_runtime::Runtime;
+use rusty_js_runtime::{HostHook, Runtime, Value};
 
 /// Install the Bun-host surface onto the engine. Call after
 /// `rt.install_intrinsics()` (which installs Math / JSON / console /
@@ -27,4 +27,31 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     process::install(rt, argv);
     fs::install(rt);
     fs::install_poll_io(rt);
+    install_builtin_module_resolver(rt);
+}
+
+/// Tier-Ω.5.b: install the ResolveBuiltinModule host hook that maps
+/// `node:fs`, `node:path`, `node:os`, `node:process` to the intrinsic
+/// objects already registered on `rt.globals` by the install_* functions
+/// above. The hook is consulted by `Runtime::evaluate_module` whenever
+/// an import specifier starts with `node:`.
+///
+/// Reuse rationale: the intrinsic install_* functions already build the
+/// namespace shape we want (`fs` has `existsSync` / `readFileSync` /
+/// `writeFileSync` / ...; `path` has `join` / `basename` / ...). Treating
+/// the global as the namespace object is the cleanest closure point.
+pub fn install_builtin_module_resolver(rt: &mut Runtime) {
+    rt.install_host_hook(HostHook::ResolveBuiltinModule(Box::new(|rt, specifier| {
+        let global_name = match specifier {
+            "node:fs" => "fs",
+            "node:path" => "path",
+            "node:os" => "os",
+            "node:process" => "process",
+            _ => return Ok(None),
+        };
+        match rt.globals.get(global_name) {
+            Some(Value::Object(id)) => Ok(Some(*id)),
+            _ => Ok(None),
+        }
+    })));
 }

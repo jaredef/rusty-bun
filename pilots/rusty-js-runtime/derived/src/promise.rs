@@ -98,6 +98,9 @@ impl Runtime {
             }
             Ok(Value::Object(chain))
         });
+        if let Some(proto) = self.promise_prototype {
+            self.object_set(promise_obj, "prototype".into(), Value::Object(proto));
+        }
         self.globals.insert("Promise".into(), Value::Object(promise_obj));
     }
 }

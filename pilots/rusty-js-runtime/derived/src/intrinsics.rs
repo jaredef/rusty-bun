@@ -35,6 +35,32 @@ impl Runtime {
         self.install_test_record();
         self.install_destructure_helpers();
         self.install_spread_helpers();
+        self.install_global_this();
+    }
+
+    /// Tier-Ω.5.t: install `globalThis` as a synthetic object mirroring
+    /// the current globals map. Self-references via `globalThis.globalThis`.
+    /// Read-only snapshot at install time — subsequent writes to globals
+    /// do NOT propagate. Acceptable v1 deviation: real spec has globalThis
+    /// be the *actual* global object, but our globals are a HashMap, not
+    /// an Object. Most consumer code reads from globalThis rather than
+    /// writes; the snapshot is sufficient for shape probes.
+    ///
+    /// Hosts that add globals after install_intrinsics should call
+    /// `install_global_this_refresh` once their wiring is complete so the
+    /// snapshot picks up host-added bindings.
+    pub fn install_global_this_refresh(&mut self) { self.install_global_this(); }
+
+    fn install_global_this(&mut self) {
+        let gt = self.alloc_object(Object::new_ordinary());
+        let entries: Vec<(String, Value)> = self.globals.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (k, v) in entries {
+            self.object_set(gt, k, v);
+        }
+        self.object_set(gt, "globalThis".into(), Value::Object(gt));
+        self.globals.insert("globalThis".into(), Value::Object(gt));
     }
 
     /// Tier-Ω.5.k: helpers the compiler emits LoadGlobal+Call into for
@@ -579,6 +605,14 @@ impl Runtime {
             rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
             Ok(Value::Object(arr))
         });
+        // Tier-Ω.5.t: wire `Object.prototype` to the intrinsic %Object.prototype%
+        // so consumers can read `Object.prototype.hasOwnProperty` etc.
+        // Without this, `var has = Object.prototype.hasOwnProperty` (a dense
+        // dequal/acorn/fast-equals idiom) errors "Cannot read property
+        // 'hasOwnProperty' of undefined".
+        if let Some(proto) = self.object_prototype {
+            self.object_set(obj_ctor, "prototype".into(), Value::Object(proto));
+        }
         self.globals.insert("Object".into(), Value::Object(obj_ctor));
     }
 
@@ -625,6 +659,9 @@ impl Runtime {
             rt.object_set(out, "length".into(), Value::Number(len as f64));
             Ok(Value::Object(out))
         });
+        if let Some(proto) = self.array_prototype {
+            self.object_set(arr_ctor, "prototype".into(), Value::Object(proto));
+        }
         self.globals.insert("Array".into(), Value::Object(arr_ctor));
     }
 
@@ -680,6 +717,9 @@ impl Runtime {
         }
         if let Some(pf) = self.globals.get("parseFloat").cloned() {
             self.object_set(num, "parseFloat".into(), pf);
+        }
+        if let Some(proto) = self.number_prototype {
+            self.object_set(num, "prototype".into(), Value::Object(proto));
         }
         self.globals.insert("Number".into(), Value::Object(num));
     }

@@ -43,6 +43,12 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     url::install(rt);
     util::install(rt);
     install_builtin_module_resolver(rt);
+    // Tier-Ω.5.t: re-snapshot globalThis so host-v2's added globals
+    // (path/os/process/fs/...) become visible on globalThis. install_intrinsics
+    // ran globalThis-install before host-v2 wired its globals, so its initial
+    // snapshot missed them. Re-running it produces a fresh snapshot that
+    // includes everything currently in globals.
+    rt.install_global_this_refresh();
 }
 
 /// Tier-Ω.5.b: install the ResolveBuiltinModule host hook that maps

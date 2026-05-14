@@ -710,7 +710,17 @@ impl Runtime {
                     if let Value::Object(id) = &obj_v {
                         self.object_set(*id, key, value.clone());
                     } else {
-                        return Err(RuntimeError::TypeError("SetProp on non-object".into()));
+                        return Err(RuntimeError::TypeError(
+                            format!("SetProp '{}' on non-object ({})", key,
+                                match &obj_v {
+                                    Value::Undefined => "undefined",
+                                    Value::Null => "null",
+                                    Value::Boolean(_) => "boolean",
+                                    Value::Number(_) => "number",
+                                    Value::String(_) => "string",
+                                    _ => "other",
+                                })
+                        ));
                     }
                     frame.push(value);
                 }

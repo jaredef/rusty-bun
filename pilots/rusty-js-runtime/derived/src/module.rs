@@ -193,15 +193,18 @@ impl Runtime {
     /// Tier-Ω.5.b: resolve a module specifier relative to a parent URL.
     /// Returns either a `file://` URL or a `node:*` built-in marker.
     ///
-    /// Algorithm (locked by Tier-Ω.5.b design):
+    /// This is the relative / built-in / absolute path. Bare specifier
+    /// resolution requires `&mut self` (for the package.json cache) and
+    /// lives on `resolve_module_full`. Callers that don't have a Runtime
+    /// in hand can still use this for the non-bare paths.
+    ///
+    /// Algorithm:
     ///   1. `node:foo` → returned unchanged; caller dispatches via the
     ///      ResolveBuiltinModule host hook.
     ///   2. `./`, `../` → resolved relative to dirname(parent path).
-    ///      Probes the candidate in order: exact, +.mjs, +.js,
-    ///      +/index.mjs, +/index.js. First existing file wins.
-    ///   3. `file://...` → already-absolute; probes the same extension list.
-    ///   4. Otherwise (bare specifier) → TypeError; node_modules walk is
-    ///      deferred to a follow-on round.
+    ///   3. `file://...` → already-absolute; probes the extension list.
+    ///   4. Otherwise (bare specifier) → TypeError pointing callers at
+    ///      `resolve_module_full`.
     pub fn resolve_module(parent_url: &str, specifier: &str) -> Result<String, RuntimeError> {
         if specifier.starts_with("node:") {
             return Ok(specifier.to_string());
@@ -223,10 +226,130 @@ impl Runtime {
             return probe_with_extensions(&candidate, specifier);
         }
         Err(RuntimeError::TypeError(format!(
-            "bare specifier '{}' is not supported in v1 \
-             (node_modules walk and package.json resolution are deferred)",
+            "bare specifier '{}' requires resolve_module_full (caller did not thread the Runtime)",
             specifier
         )))
+    }
+
+    /// Tier-Ω.5.q: full resolver including bare-specifier node_modules
+    /// walk-up and package.json `exports` / `main` / `module` / `index.js`
+    /// resolution. Caches parsed package.json on the Runtime.
+    ///
+    /// Algorithm (locked):
+    ///   1. `node:`, relative, `file://` → delegate to `resolve_module`.
+    ///   2. Bare specifier `pkg[/subpath]`:
+    ///      a. Split into pkg_name (one segment, or two for `@scope/pkg`)
+    ///         + subpath.
+    ///      b. Walk up from `dirname(parent_url)` looking for
+    ///         `node_modules/<pkg_name>`. The first hit is the package
+    ///         directory.
+    ///      c. Read + parse `package.json` (cached on Runtime).
+    ///      d. If subpath empty: try `exports."."` (conditional resolve
+    ///         per importer_kind), else `module`, else `main`, else
+    ///         probe `index.js` family in the package root.
+    ///      e. If subpath `./X`: try `exports."./X"` then wildcard
+    ///         patterns (`./fp/*` matching `./fp/get`), else probe the
+    ///         literal subpath relative to the package root using the
+    ///         extension-probe chain.
+    ///   3. Anything else → TypeError naming the unresolvable specifier.
+    pub fn resolve_module_full(
+        &mut self,
+        parent_url: &str,
+        specifier: &str,
+        importer_kind: ModuleKind,
+    ) -> Result<String, RuntimeError> {
+        // Non-bare paths reuse the existing logic.
+        if specifier.starts_with("node:")
+            || specifier.starts_with("./")
+            || specifier.starts_with("../")
+            || specifier.starts_with("file://")
+        {
+            return Runtime::resolve_module(parent_url, specifier);
+        }
+        // Bare specifier — extract pkg_name + subpath.
+        let (pkg_name, subpath) = split_bare_specifier(specifier).ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "bare specifier '{}' is malformed (empty or invalid scope/name)",
+                specifier
+            ))
+        })?;
+
+        // Determine the directory to start walking from.
+        let parent_path_str = parent_url.strip_prefix("file://").unwrap_or(parent_url);
+        let parent_path = std::path::Path::new(parent_path_str);
+        let start_dir = if parent_path.is_dir() {
+            parent_path.to_path_buf()
+        } else {
+            parent_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("/"))
+                .to_path_buf()
+        };
+
+        // Walk up looking for node_modules/<pkg_name>.
+        let pkg_dir = walk_up_for_pkg(&start_dir, &pkg_name).ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "bare specifier '{}' not found: walked up from '{}' looking for node_modules/{}",
+                specifier,
+                start_dir.display(),
+                pkg_name
+            ))
+        })?;
+
+        // Read + parse package.json (cached).
+        let pkg_json_path = pkg_dir.join("package.json");
+        let pkg = self.read_package_json(&pkg_json_path)?;
+
+        // Resolve to a candidate path inside the package.
+        let candidate = resolve_within_package(&pkg_dir, &pkg, &subpath, importer_kind)
+            .ok_or_else(|| {
+                RuntimeError::TypeError(format!(
+                    "bare specifier '{}' resolved to package '{}' but no entry matched subpath '{}'",
+                    specifier,
+                    pkg_dir.display(),
+                    subpath
+                ))
+            })?;
+
+        // JSON modules deferred: surface a clear message.
+        if candidate.extension().and_then(|s| s.to_str()) == Some("json") {
+            return Err(RuntimeError::TypeError(format!(
+                "bare specifier '{}' resolved to a .json file ('{}'): JSON modules are not yet supported (deferred from Tier-Ω.5.q scope ceiling)",
+                specifier,
+                candidate.display()
+            )));
+        }
+
+        probe_with_extensions(&candidate, specifier)
+    }
+
+    /// Tier-Ω.5.q: read+parse package.json with caching. Returns an Rc so
+    /// repeated callers share the parsed view without cloning the map.
+    pub fn read_package_json(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<Rc<ParsedPackageJson>, RuntimeError> {
+        let key = path.to_path_buf();
+        if let Some(p) = self.pkg_json_cache.get(&key) {
+            return Ok(p.clone());
+        }
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            RuntimeError::TypeError(format!(
+                "package.json read failed at '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        let parsed = parse_package_json(&text).map_err(|e| {
+            RuntimeError::TypeError(format!(
+                "package.json parse failed at '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        let rc = Rc::new(parsed);
+        self.pkg_json_cache.insert(key, rc.clone());
+        Ok(rc)
     }
 
     /// Tier-Ω.5.b: load + evaluate a module from disk, with caching and
@@ -354,7 +477,7 @@ impl Runtime {
         // CompiledModule retains the original specifier strings.
         let mut reexport_namespaces: HashMap<String, ObjectRef> = HashMap::new();
         for spec in &bytecode_rc.reexport_sources {
-            let resolved = Runtime::resolve_module(url, spec)?;
+            let resolved = self.resolve_module_full(url, spec, ModuleKind::ESM)?;
             let is_builtin = resolved.starts_with("node:");
             let ns = if is_builtin {
                 self.resolve_builtin_namespace(&resolved)?
@@ -370,7 +493,7 @@ impl Runtime {
         let mut import_values: Vec<(u16, Value)> =
             Vec::with_capacity(bytecode_rc.imports.len());
         for ib in &bytecode_rc.imports {
-            let resolved = Runtime::resolve_module(url, &ib.module_request)?;
+            let resolved = self.resolve_module_full(url, &ib.module_request, ModuleKind::ESM)?;
             let is_builtin = resolved.starts_with("node:");
             let ns = if is_builtin {
                 self.resolve_builtin_namespace(&resolved)?
@@ -695,31 +818,24 @@ impl Runtime {
                 return Ok(Value::Object(ns));
             }
         }
-        // (2) Disk resolution.
-        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("file://") {
-            let resolved = Runtime::resolve_module(parent_url, spec)?;
-            // Cache check first.
-            if let Some(rec) = self.modules.get(&resolved) {
-                let r = rec.borrow();
-                if let Some(raw) = r.cjs_exports.clone() {
-                    return Ok(raw);
-                }
-                if let Some(ns) = r.namespace {
-                    return Ok(Value::Object(ns));
-                }
+        // (2) Disk resolution — relative, absolute, OR bare via Ω.5.q.
+        let resolved = self.resolve_module_full(parent_url, spec, ModuleKind::CJS)?;
+        // Cache check first.
+        if let Some(rec) = self.modules.get(&resolved) {
+            let r = rec.borrow();
+            if let Some(raw) = r.cjs_exports.clone() {
+                return Ok(raw);
             }
-            // Load. For CJS the return is module.exports; for ESM,
-            // the namespace object.
-            let ns = self.load_module(&resolved)?;
-            match self.cjs_exports_of(&resolved) {
-                Some(v) => Ok(v),
-                None => Ok(Value::Object(ns)),
+            if let Some(ns) = r.namespace {
+                return Ok(Value::Object(ns));
             }
-        } else {
-            Err(RuntimeError::TypeError(format!(
-                "require('{}'): bare specifier resolution (node_modules) is not supported in v1",
-                spec
-            )))
+        }
+        // Load. For CJS the return is module.exports; for ESM,
+        // the namespace object.
+        let ns = self.load_module(&resolved)?;
+        match self.cjs_exports_of(&resolved) {
+            Some(v) => Ok(v),
+            None => Ok(Value::Object(ns)),
         }
     }
 
@@ -836,4 +952,221 @@ fn with_suffix(p: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(suffix);
     std::path::PathBuf::from(s)
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Tier-Ω.5.q: bare-specifier resolution helpers.
+// ────────────────────────────────────────────────────────────────────────
+
+/// Parsed view of a package.json sufficient for module resolution.
+/// Fields are extracted lazily-but-once via serde_json::Value; we keep
+/// the raw Value around so resolvers can walk the conditional-exports
+/// tree without re-parsing.
+pub struct ParsedPackageJson {
+    pub raw: serde_json::Value,
+    pub name: Option<String>,
+    pub main: Option<String>,
+    pub module_field: Option<String>,
+    pub type_field: Option<String>,
+}
+
+fn parse_package_json(text: &str) -> Result<ParsedPackageJson, String> {
+    let raw: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("JSON parse: {}", e))?;
+    let name = raw.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let main = raw.get("main").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let module_field = raw.get("module").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let type_field = raw.get("type").and_then(|v| v.as_str()).map(|s| s.to_string());
+    Ok(ParsedPackageJson { raw, name, main, module_field, type_field })
+}
+
+/// Split a bare specifier into (pkg_name, subpath). Returns None on
+/// empty / malformed input.
+///
+/// Examples:
+///   "react"          → ("react", "")
+///   "lodash/fp/get"  → ("lodash", "./fp/get")
+///   "@org/pkg"       → ("@org/pkg", "")
+///   "@org/pkg/sub"   → ("@org/pkg", "./sub")
+fn split_bare_specifier(specifier: &str) -> Option<(String, String)> {
+    if specifier.is_empty() { return None; }
+    if specifier.starts_with('@') {
+        let mut parts = specifier.splitn(3, '/');
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        if scope.len() < 2 || name.is_empty() { return None; }
+        let pkg = format!("{}/{}", scope, name);
+        let subpath = match parts.next() {
+            Some(rest) if !rest.is_empty() => format!("./{}", rest),
+            _ => String::new(),
+        };
+        Some((pkg, subpath))
+    } else {
+        let mut parts = specifier.splitn(2, '/');
+        let name = parts.next()?;
+        if name.is_empty() { return None; }
+        let subpath = match parts.next() {
+            Some(rest) if !rest.is_empty() => format!("./{}", rest),
+            _ => String::new(),
+        };
+        Some((name.to_string(), subpath))
+    }
+}
+
+/// Walk up from `start_dir` (inclusive) looking for
+/// `node_modules/<pkg_name>` as a directory. Returns the package
+/// directory if found.
+fn walk_up_for_pkg(start_dir: &std::path::Path, pkg_name: &str) -> Option<std::path::PathBuf> {
+    let mut cur: Option<&std::path::Path> = Some(start_dir);
+    while let Some(d) = cur {
+        let candidate = d.join("node_modules").join(pkg_name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// Resolve a subpath inside a package's directory using the
+/// package.json fields. Returns the candidate path (without extension
+/// probing — caller runs `probe_with_extensions`).
+fn resolve_within_package(
+    pkg_dir: &std::path::Path,
+    pkg: &ParsedPackageJson,
+    subpath: &str,
+    importer_kind: ModuleKind,
+) -> Option<std::path::PathBuf> {
+    let exports = pkg.raw.get("exports");
+
+    // ── Empty subpath: main entry ────────────────────────────────────
+    if subpath.is_empty() {
+        if let Some(exp) = exports {
+            // exports may be a string, an array, or a map keyed by "."
+            // or by conditions.
+            // If it's a string/array, treat as the "." target.
+            if exp.is_string() || exp.is_array() {
+                if let Some(rel) = resolve_exports_target(exp, "", importer_kind) {
+                    return Some(pkg_dir.join(strip_dot_slash(&rel)));
+                }
+            } else if let Some(map) = exp.as_object() {
+                // If the map's keys look like subpaths (start with "."),
+                // look up ".". Otherwise the map is a top-level
+                // conditional-exports object for ".".
+                let keys_are_subpath_style = map.keys().any(|k| k.starts_with('.'));
+                if keys_are_subpath_style {
+                    if let Some(target) = map.get(".") {
+                        if let Some(rel) = resolve_exports_target(target, "", importer_kind) {
+                            return Some(pkg_dir.join(strip_dot_slash(&rel)));
+                        }
+                    }
+                } else if let Some(rel) = resolve_exports_target(exp, "", importer_kind) {
+                    return Some(pkg_dir.join(strip_dot_slash(&rel)));
+                }
+            }
+        }
+        // ESM importer prefers `module` field for dual packages, CJS
+        // prefers `main`. Either way fall back to `main` then index.
+        if matches!(importer_kind, ModuleKind::ESM) {
+            if let Some(m) = &pkg.module_field {
+                return Some(pkg_dir.join(strip_dot_slash(m)));
+            }
+        }
+        if let Some(m) = &pkg.main {
+            return Some(pkg_dir.join(strip_dot_slash(m)));
+        }
+        return Some(pkg_dir.join("index"));
+    }
+
+    // ── Subpath import: subpath looks like "./X" ─────────────────────
+    if let Some(exp) = exports {
+        if let Some(map) = exp.as_object() {
+            // Direct match.
+            if let Some(target) = map.get(subpath) {
+                if let Some(rel) = resolve_exports_target(target, "", importer_kind) {
+                    return Some(pkg_dir.join(strip_dot_slash(&rel)));
+                }
+            }
+            // Wildcard pattern match: find any key with a single '*'.
+            for (k, v) in map.iter() {
+                if let Some(star_pos) = k.find('*') {
+                    let prefix = &k[..star_pos];
+                    let suffix = &k[star_pos + 1..];
+                    if subpath.starts_with(prefix) && subpath.ends_with(suffix)
+                        && subpath.len() >= prefix.len() + suffix.len()
+                    {
+                        let captured = &subpath[prefix.len()..subpath.len() - suffix.len()];
+                        if let Some(rel) = resolve_exports_target(v, captured, importer_kind) {
+                            return Some(pkg_dir.join(strip_dot_slash(&rel)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: literal subpath relative to package root.
+    Some(pkg_dir.join(strip_dot_slash(subpath)))
+}
+
+/// Strip a leading "./" from a relative path so PathBuf::join treats
+/// it as truly relative to the package directory.
+fn strip_dot_slash(s: &str) -> &str {
+    s.strip_prefix("./").unwrap_or(s)
+}
+
+/// Resolve a single `exports` target value against an optional
+/// wildcard capture and the importer's module kind. Returns the
+/// relative path (e.g. "./dist/index.js") or None if no condition
+/// matched.
+///
+/// Conditions checked in priority order for ESM:  import, default.
+/// For CJS:  require, default.
+/// Conditions ignored:  browser, types, react-native, deno, worker.
+fn resolve_exports_target(
+    target: &serde_json::Value,
+    capture: &str,
+    importer_kind: ModuleKind,
+) -> Option<String> {
+    match target {
+        serde_json::Value::String(s) => {
+            Some(substitute_wildcard(s, capture))
+        }
+        serde_json::Value::Array(arr) => {
+            // First entry that resolves wins (per Node spec).
+            for item in arr {
+                if let Some(r) = resolve_exports_target(item, capture, importer_kind) {
+                    return Some(r);
+                }
+            }
+            None
+        }
+        serde_json::Value::Object(map) => {
+            // Conditional-exports map. Priority: importer-specific then
+            // generic conditions.
+            let priority: &[&str] = match importer_kind {
+                ModuleKind::ESM => &["import", "node", "default"],
+                ModuleKind::CJS => &["require", "node", "default"],
+            };
+            for cond in priority {
+                if let Some(v) = map.get(*cond) {
+                    if let Some(r) = resolve_exports_target(v, capture, importer_kind) {
+                        return Some(r);
+                    }
+                }
+            }
+            None
+        }
+        serde_json::Value::Null => None,
+        _ => None,
+    }
+}
+
+/// Substitute the wildcard capture into a target path. The target's
+/// single `*` (if any) is replaced with `capture`. Targets with no `*`
+/// are returned verbatim.
+fn substitute_wildcard(target: &str, capture: &str) -> String {
+    if capture.is_empty() || !target.contains('*') {
+        return target.to_string();
+    }
+    target.replacen('*', capture, 1)
 }

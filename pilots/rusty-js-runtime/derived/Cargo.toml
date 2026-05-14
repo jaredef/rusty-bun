@@ -12,6 +12,7 @@ rusty-js-parser = { path = "../../rusty-js-parser/derived" }
 rusty-js-bytecode = { path = "../../rusty-js-bytecode/derived" }
 rusty-js-gc = { path = "../../rusty-js-gc/derived" }
 regex = "1"
+serde_json = "1"
 
 [dev-dependencies]
 # Tier-Ω.5.b module loader tests exercise the node:* built-in dispatch

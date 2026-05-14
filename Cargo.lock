@@ -474,6 +474,7 @@ dependencies = [
  "rusty-js-bytecode",
  "rusty-js-gc",
  "rusty-js-parser",
+ "serde_json",
 ]
 
 [[package]]

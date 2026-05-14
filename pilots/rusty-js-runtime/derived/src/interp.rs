@@ -31,6 +31,12 @@ pub struct Runtime {
     /// before recursing into imports, so cyclic loads observe the partial
     /// namespace rather than re-entering parse/compile.
     pub modules: HashMap<String, std::rc::Rc<std::cell::RefCell<crate::module::ModuleRecord>>>,
+    /// Tier-Ω.5.q: parsed package.json cache keyed by absolute package.json
+    /// path. Bare-specifier resolution walks node_modules; without caching,
+    /// a single import re-reads and re-parses package.json once per call.
+    /// Inserted on first read; never invalidated (filesystem changes during
+    /// runtime are out-of-scope for v1).
+    pub pkg_json_cache: HashMap<std::path::PathBuf, std::rc::Rc<crate::module::ParsedPackageJson>>,
     /// Managed heap. Wired but not yet authoritative for Value::Object;
     /// round 3.e.d migrates Value::Object from Rc<RefCell<Object>> to
     /// ObjectId, at which point this heap becomes the storage for every
@@ -83,6 +89,7 @@ impl Runtime {
             last_value: Value::Undefined,
             host_hooks: crate::module::HostHooks::default(),
             modules: HashMap::new(),
+            pkg_json_cache: HashMap::new(),
             heap: rusty_js_gc::Heap::new(),
             job_queue: crate::job_queue::JobQueue::new(),
             pending_unhandled: HashSet::new(),

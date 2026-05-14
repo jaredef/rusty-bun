@@ -12,8 +12,7 @@
 
 use crate::abstract_ops;
 use crate::interp::{Runtime, RuntimeError};
-use crate::value::{FunctionInternals, InternalKind, NativeFn, Object, Value};
-use std::cell::RefCell;
+use crate::value::{FunctionInternals, InternalKind, NativeFn, Object, ObjectRef, PropertyDescriptor, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -87,23 +86,23 @@ impl Runtime {
     }
 
     fn install_math(&mut self) {
-        let math = new_object();
-        register_method(&math, "abs", |_rt, args|Ok(Value::Number(num_arg(args, 0).abs())));
-        register_method(&math, "floor", |_rt, args|Ok(Value::Number(num_arg(args, 0).floor())));
-        register_method(&math, "ceil", |_rt, args|Ok(Value::Number(num_arg(args, 0).ceil())));
-        register_method(&math, "round", |_rt, args|{
+        let math = self.alloc_object(Object::new_ordinary());
+        register_method(self, math, "abs", |_rt, args|Ok(Value::Number(num_arg(args, 0).abs())));
+        register_method(self, math, "floor", |_rt, args|Ok(Value::Number(num_arg(args, 0).floor())));
+        register_method(self, math, "ceil", |_rt, args|Ok(Value::Number(num_arg(args, 0).ceil())));
+        register_method(self, math, "round", |_rt, args|{
             // JS Math.round rounds half-to-positive-infinity, not Rust's
             // half-to-even. Reimplement.
             let x = num_arg(args, 0);
             Ok(Value::Number((x + 0.5).floor()))
         });
-        register_method(&math, "trunc", |_rt, args|Ok(Value::Number(num_arg(args, 0).trunc())));
-        register_method(&math, "sqrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).sqrt())));
-        register_method(&math, "cbrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).cbrt())));
-        register_method(&math, "pow", |_rt, args|{
+        register_method(self, math,"trunc", |_rt, args|Ok(Value::Number(num_arg(args, 0).trunc())));
+        register_method(self, math,"sqrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).sqrt())));
+        register_method(self, math,"cbrt", |_rt, args|Ok(Value::Number(num_arg(args, 0).cbrt())));
+        register_method(self, math,"pow", |_rt, args|{
             Ok(Value::Number(num_arg(args, 0).powf(num_arg(args, 1))))
         });
-        register_method(&math, "max", |_rt, args|{
+        register_method(self, math,"max", |_rt, args|{
             let mut m = f64::NEG_INFINITY;
             for a in args {
                 let n = abstract_ops::to_number(a);
@@ -112,7 +111,7 @@ impl Runtime {
             }
             Ok(Value::Number(m))
         });
-        register_method(&math, "min", |_rt, args|{
+        register_method(self, math,"min", |_rt, args|{
             let mut m = f64::INFINITY;
             for a in args {
                 let n = abstract_ops::to_number(a);
@@ -121,20 +120,20 @@ impl Runtime {
             }
             Ok(Value::Number(m))
         });
-        register_method(&math, "sign", |_rt, args|{
+        register_method(self, math,"sign", |_rt, args|{
             let x = num_arg(args, 0);
             Ok(Value::Number(if x.is_nan() { f64::NAN } else if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { x }))
         });
-        register_method(&math, "exp", |_rt, args|Ok(Value::Number(num_arg(args, 0).exp())));
-        register_method(&math, "log", |_rt, args|Ok(Value::Number(num_arg(args, 0).ln())));
-        register_method(&math, "log2", |_rt, args|Ok(Value::Number(num_arg(args, 0).log2())));
-        register_method(&math, "log10", |_rt, args|Ok(Value::Number(num_arg(args, 0).log10())));
-        register_method(&math, "sin", |_rt, args|Ok(Value::Number(num_arg(args, 0).sin())));
-        register_method(&math, "cos", |_rt, args|Ok(Value::Number(num_arg(args, 0).cos())));
-        register_method(&math, "tan", |_rt, args|Ok(Value::Number(num_arg(args, 0).tan())));
-        register_method(&math, "atan", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan())));
-        register_method(&math, "atan2", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan2(num_arg(args, 1))))) ;
-        register_method(&math, "random", |_rt, _|{
+        register_method(self, math,"exp", |_rt, args|Ok(Value::Number(num_arg(args, 0).exp())));
+        register_method(self, math,"log", |_rt, args|Ok(Value::Number(num_arg(args, 0).ln())));
+        register_method(self, math,"log2", |_rt, args|Ok(Value::Number(num_arg(args, 0).log2())));
+        register_method(self, math,"log10", |_rt, args|Ok(Value::Number(num_arg(args, 0).log10())));
+        register_method(self, math,"sin", |_rt, args|Ok(Value::Number(num_arg(args, 0).sin())));
+        register_method(self, math,"cos", |_rt, args|Ok(Value::Number(num_arg(args, 0).cos())));
+        register_method(self, math,"tan", |_rt, args|Ok(Value::Number(num_arg(args, 0).tan())));
+        register_method(self, math,"atan", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan())));
+        register_method(self, math,"atan2", |_rt, args|Ok(Value::Number(num_arg(args, 0).atan2(num_arg(args, 1))))) ;
+        register_method(self, math,"random", |_rt, _|{
             // v1: simple LCG-style PRNG seeded from time. Not crypto-grade.
             use std::time::{SystemTime, UNIX_EPOCH};
             let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
@@ -142,28 +141,28 @@ impl Runtime {
             Ok(Value::Number((pseudo / u64::MAX as f64).abs().fract()))
         });
         // Constants
-        math.borrow_mut().set_own("PI".into(), Value::Number(std::f64::consts::PI));
-        math.borrow_mut().set_own("E".into(), Value::Number(std::f64::consts::E));
-        math.borrow_mut().set_own("LN2".into(), Value::Number(std::f64::consts::LN_2));
-        math.borrow_mut().set_own("LN10".into(), Value::Number(std::f64::consts::LN_10));
-        math.borrow_mut().set_own("LOG2E".into(), Value::Number(std::f64::consts::LOG2_E));
-        math.borrow_mut().set_own("LOG10E".into(), Value::Number(std::f64::consts::LOG10_E));
-        math.borrow_mut().set_own("SQRT2".into(), Value::Number(std::f64::consts::SQRT_2));
+        self.object_set(math, "PI".into(), Value::Number(std::f64::consts::PI));
+        self.object_set(math, "E".into(), Value::Number(std::f64::consts::E));
+        self.object_set(math, "LN2".into(), Value::Number(std::f64::consts::LN_2));
+        self.object_set(math, "LN10".into(), Value::Number(std::f64::consts::LN_10));
+        self.object_set(math, "LOG2E".into(), Value::Number(std::f64::consts::LOG2_E));
+        self.object_set(math, "LOG10E".into(), Value::Number(std::f64::consts::LOG10_E));
+        self.object_set(math, "SQRT2".into(), Value::Number(std::f64::consts::SQRT_2));
 
         self.globals.insert("Math".into(), Value::Object(math));
     }
 
     fn install_json(&mut self) {
-        let json = new_object();
-        register_method(&json, "stringify", |_rt, args|{
+        let json = self.alloc_object(Object::new_ordinary());
+        register_method(self, json, "stringify", |rt, args|{
             let v = args.first().cloned().unwrap_or(Value::Undefined);
-            Ok(Value::String(Rc::new(json_stringify(&v))))
+            Ok(Value::String(Rc::new(json_stringify(rt, &v))))
         });
-        register_method(&json, "parse", |_rt, args|{
+        register_method(self, json, "parse", |rt, args|{
             let s = if let Some(v) = args.first() { abstract_ops::to_string(v) } else {
                 return Err(RuntimeError::TypeError("JSON.parse requires a string".into()));
             };
-            json_parse(s.as_str())
+            json_parse(rt, s.as_str())
         });
         self.globals.insert("JSON".into(), Value::Object(json));
     }
@@ -180,8 +179,8 @@ impl Runtime {
     }
 
     fn install_console(&mut self) {
-        let console = new_object();
-        register_method(&console, "log", |_rt, args|{
+        let console = self.alloc_object(Object::new_ordinary());
+        register_method(self, console, "log", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -190,7 +189,7 @@ impl Runtime {
             println!("{}", out);
             Ok(Value::Undefined)
         });
-        register_method(&console, "error", |_rt, args|{
+        register_method(self, console,"error", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -199,7 +198,7 @@ impl Runtime {
             eprintln!("{}", out);
             Ok(Value::Undefined)
         });
-        register_method(&console, "warn", |_rt, args|{
+        register_method(self, console,"warn", |_rt, args|{
             let mut out = String::new();
             for (i, a) in args.iter().enumerate() {
                 if i > 0 { out.push(' '); }
@@ -212,18 +211,13 @@ impl Runtime {
     }
 }
 
-fn new_object() -> Rc<RefCell<Object>> {
-    Rc::new(RefCell::new(Object::new_ordinary()))
-}
-
 fn num_arg(args: &[Value], i: usize) -> f64 {
     args.get(i).map(abstract_ops::to_number).unwrap_or(f64::NAN)
 }
 
-fn register_method<F>(host: &Rc<RefCell<Object>>, name: &str, f: F)
-where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
+pub(crate) fn make_native(name: &str, f: impl Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static) -> Object {
     let native: NativeFn = Rc::new(f);
-    let fn_obj = Object {
+    Object {
         proto: None,
         extensible: true,
         properties: HashMap::new(),
@@ -231,50 +225,55 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
             name: name.to_string(),
             native,
         }),
-    };
-    host.borrow_mut().set_own(name.into(), Value::Object(Rc::new(RefCell::new(fn_obj))));
+    }
+}
+
+fn register_method<F>(rt: &mut Runtime, host: ObjectRef, name: &str, f: F)
+where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
+    let fn_obj = make_native(name, f);
+    let fn_id = rt.alloc_object(fn_obj);
+    rt.object_set(host, name.into(), Value::Object(fn_id));
 }
 
 fn register_global_fn<F>(rt: &mut Runtime, name: &str, f: F)
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
-    let native: NativeFn = Rc::new(f);
-    let fn_obj = Object {
-        proto: None,
-        extensible: true,
-        properties: HashMap::new(),
-        internal_kind: InternalKind::Function(FunctionInternals {
-            name: name.to_string(),
-            native,
-        }),
-    };
-    rt.globals.insert(name.into(), Value::Object(Rc::new(RefCell::new(fn_obj))));
+    let fn_obj = make_native(name, f);
+    let fn_id = rt.alloc_object(fn_obj);
+    rt.globals.insert(name.into(), Value::Object(fn_id));
 }
 
 // ──────────────── JSON.stringify (limited) ────────────────
 
-fn json_stringify(v: &Value) -> String {
+fn json_stringify(rt: &Runtime, v: &Value) -> String {
     match v {
-        Value::Undefined => "undefined".into(),  // technically JSON.stringify(undefined) -> undefined, but for v1 return string
+        Value::Undefined => "undefined".into(),
         Value::Null => "null".into(),
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => {
             if n.is_finite() { abstract_ops::number_to_string(*n) } else { "null".into() }
         }
         Value::String(s) => json_quote_string(s.as_str()),
-        Value::BigInt(_) => "null".into(),  // BigInt not valid JSON
-        Value::Object(o) => {
-            let obj = o.borrow();
-            if matches!(obj.internal_kind, InternalKind::Array) {
-                let mut entries: Vec<(usize, String)> = obj.properties.iter()
-                    .filter_map(|(k, d)| k.parse::<usize>().ok().map(|i| (i, json_stringify(&d.value))))
+        Value::BigInt(_) => "null".into(),
+        Value::Object(id) => {
+            // Snapshot the props (clones Value) to avoid recursive borrow.
+            let (is_array, props): (bool, Vec<(String, PropertyDescriptor)>) = {
+                let obj = rt.obj(*id);
+                let is_array = matches!(obj.internal_kind, InternalKind::Array);
+                let v: Vec<_> = obj.properties.iter()
+                    .map(|(k, d)| (k.clone(), d.clone())).collect();
+                (is_array, v)
+            };
+            if is_array {
+                let mut entries: Vec<(usize, String)> = props.iter()
+                    .filter_map(|(k, d)| k.parse::<usize>().ok().map(|i| (i, json_stringify(rt, &d.value))))
                     .collect();
                 entries.sort_by_key(|(i, _)| *i);
                 let body: Vec<String> = entries.into_iter().map(|(_, s)| s).collect();
                 format!("[{}]", body.join(","))
             } else {
-                let entries: Vec<String> = obj.properties.iter()
+                let entries: Vec<String> = props.iter()
                     .filter(|(_, d)| d.enumerable && !matches!(d.value, Value::Undefined))
-                    .map(|(k, d)| format!("{}:{}", json_quote_string(k), json_stringify(&d.value)))
+                    .map(|(k, d)| format!("{}:{}", json_quote_string(k), json_stringify(rt, &d.value)))
                     .collect();
                 format!("{{{}}}", entries.join(","))
             }
@@ -302,11 +301,11 @@ fn json_quote_string(s: &str) -> String {
 
 // ──────────────── JSON.parse (limited recursive-descent) ────────────────
 
-fn json_parse(s: &str) -> Result<Value, RuntimeError> {
+fn json_parse(rt: &mut Runtime, s: &str) -> Result<Value, RuntimeError> {
     let bytes = s.as_bytes();
     let mut p = 0;
     skip_ws(bytes, &mut p);
-    let v = json_parse_value(bytes, &mut p)?;
+    let v = json_parse_value(rt, bytes, &mut p)?;
     skip_ws(bytes, &mut p);
     if p != bytes.len() {
         return Err(RuntimeError::TypeError("JSON.parse: trailing characters".into()));
@@ -318,12 +317,12 @@ fn skip_ws(b: &[u8], p: &mut usize) {
     while *p < b.len() && matches!(b[*p], b' ' | b'\t' | b'\n' | b'\r') { *p += 1; }
 }
 
-fn json_parse_value(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
+fn json_parse_value(rt: &mut Runtime, b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     skip_ws(b, p);
     if *p >= b.len() { return Err(RuntimeError::TypeError("JSON.parse: unexpected end".into())); }
     match b[*p] {
-        b'{' => json_parse_object(b, p),
-        b'[' => json_parse_array(b, p),
+        b'{' => json_parse_object(rt, b, p),
+        b'[' => json_parse_array(rt, b, p),
         b'"' => json_parse_string(b, p).map(|s| Value::String(Rc::new(s))),
         b't' if b[*p..].starts_with(b"true") => { *p += 4; Ok(Value::Boolean(true)) }
         b'f' if b[*p..].starts_with(b"false") => { *p += 5; Ok(Value::Boolean(false)) }
@@ -333,9 +332,9 @@ fn json_parse_value(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     }
 }
 
-fn json_parse_object(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
+fn json_parse_object(rt: &mut Runtime, b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     *p += 1; // consume '{'
-    let obj = new_object();
+    let obj = rt.alloc_object(Object::new_ordinary());
     skip_ws(b, p);
     if *p < b.len() && b[*p] == b'}' { *p += 1; return Ok(Value::Object(obj)); }
     loop {
@@ -344,8 +343,8 @@ fn json_parse_object(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
         skip_ws(b, p);
         if *p >= b.len() || b[*p] != b':' { return Err(RuntimeError::TypeError("JSON.parse: expected ':'".into())); }
         *p += 1;
-        let value = json_parse_value(b, p)?;
-        obj.borrow_mut().set_own(key, value);
+        let value = json_parse_value(rt, b, p)?;
+        rt.object_set(obj, key, value);
         skip_ws(b, p);
         match b.get(*p) {
             Some(&b',') => { *p += 1; continue; }
@@ -355,15 +354,15 @@ fn json_parse_object(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     }
 }
 
-fn json_parse_array(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
+fn json_parse_array(rt: &mut Runtime, b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     *p += 1; // consume '['
-    let arr = Rc::new(RefCell::new(Object::new_array()));
+    let arr = rt.alloc_object(Object::new_array());
     skip_ws(b, p);
     if *p < b.len() && b[*p] == b']' { *p += 1; return Ok(Value::Object(arr)); }
     let mut i = 0u32;
     loop {
-        let value = json_parse_value(b, p)?;
-        arr.borrow_mut().set_own(i.to_string(), value);
+        let value = json_parse_value(rt, b, p)?;
+        rt.object_set(arr, i.to_string(), value);
         i += 1;
         skip_ws(b, p);
         match b.get(*p) {

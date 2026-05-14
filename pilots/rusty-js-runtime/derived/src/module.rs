@@ -20,7 +20,6 @@ use crate::interp::{Runtime, RuntimeError};
 use crate::value::{Object, ObjectRef, Value};
 use rusty_js_ast::Module as AstModule;
 use rusty_js_bytecode::CompiledModule;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -50,7 +49,7 @@ pub enum HostHook {
     /// namespace + the AST. The hook can mutate the namespace to add
     /// synthetic bindings (Tuple A: default = namespace; Tuple B: named
     /// exports synthesized from default's own properties).
-    FinalizeModuleNamespace(Box<dyn Fn(&mut Runtime, &AstModule, &ObjectRef) -> Result<(), RuntimeError>>),
+    FinalizeModuleNamespace(Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef) -> Result<(), RuntimeError>>),
     /// Called at run_to_completion's idle phase (phase 3) when both
     /// microtask and macrotask queues are empty. The host should:
     /// (a) consult its OS I/O multiplexer (mio Poll, libuv, io_uring,
@@ -66,7 +65,7 @@ pub enum HostHook {
 
 #[derive(Default)]
 pub struct HostHooks {
-    pub finalize_namespace: Option<Box<dyn Fn(&mut Runtime, &AstModule, &ObjectRef) -> Result<(), RuntimeError>>>,
+    pub finalize_namespace: Option<Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef) -> Result<(), RuntimeError>>>,
     pub poll_io: Option<Box<dyn Fn(&mut Runtime) -> Result<bool, RuntimeError>>>,
 }
 
@@ -83,6 +82,8 @@ impl Runtime {
             }
         }
     }
+
+
 
     /// Evaluate a module: parse + compile + run + build namespace +
     /// invoke HostFinalizeModuleNamespace. Returns the namespace
@@ -107,28 +108,21 @@ impl Runtime {
         let (_value, locals) = self.run_module_with_locals(&bytecode_rc)?;
 
         // Build the namespace from local_export_entries.
-        let namespace = Rc::new(RefCell::new(Object::new_module_namespace()));
+        let namespace = self.alloc_object(Object::new_module_namespace());
         for export in &ast_rc.local_export_entries {
             if let (Some(export_name), Some(local_name)) = (&export.export_name, &export.local_name) {
-                // Find the slot whose LocalDescriptor.name matches the local_name.
                 let slot = bytecode_rc.locals.iter().position(|d| &d.name == local_name);
                 let value = match slot {
                     Some(i) => locals.get(i).cloned().unwrap_or(Value::Undefined),
-                    None => {
-                        // Special: *default* — for `export default <expr>` where
-                        // the AST records local_name = "*default*". v1 does not
-                        // yet thread the default-expression value into a local;
-                        // future Round 3.d.g work.
-                        Value::Undefined
-                    }
+                    None => Value::Undefined,
                 };
-                namespace.borrow_mut().set_own(export_name.clone(), value);
+                self.object_set(namespace, export_name.clone(), value);
             }
         }
 
         // Call HostFinalizeModuleNamespace if installed.
         if let Some(hook) = self.host_hooks.finalize_namespace.take() {
-            hook(self, &ast_rc, &namespace)?;
+            hook(self, &ast_rc, namespace)?;
             self.host_hooks.finalize_namespace = Some(hook);
         }
 

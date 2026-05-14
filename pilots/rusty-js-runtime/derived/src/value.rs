@@ -5,34 +5,58 @@
 //!   per spec §6.1.4). The mismatch matters for surrogate-pair-aware
 //!   indexing/length but doesn't affect most consumer behavior. Migration
 //!   to UTF-16 is mechanical when needed.
-//! - Object references as Rc<RefCell<Object>>. Cycles leak. The v2 mark-
-//!   sweep GC (Ω.3.e) replaces this with a managed heap.
+//! - Round 3.e.d: Object references migrated from Rc<RefCell<Object>> to
+//!   ObjectId — Objects live in Runtime.heap. Value::Object payload is
+//!   ObjectId (Copy + Eq). Cycles are now reclaimable via rt.collect().
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub type ObjectRef = Rc<RefCell<Object>>;
+/// Alias preserving call-site shape. Post-3.e.d this is a heap handle
+/// (Copy + Eq), not an Rc<RefCell<...>>.
+pub type ObjectRef = rusty_js_gc::ObjectId;
 
 // ──────────────── GC Trace impl ────────────────
 //
-// Object stores property values as `Value`, and Value::Object currently
-// holds Rc<RefCell<Object>> (v1 representation). The Trace impl walks
-// the property values + proto + InternalKind fields, pushing the
-// embedded ObjectIds where present.
-//
-// In v1 the Value::Object payload is Rc<RefCell<Object>>, so there are
-// no ObjectIds to push — the GC's reachability sweep is operationally
-// inert. Wiring the Trace impl now means round 3.e.d (the Value migration)
-// changes only the Value enum + a small set of construction sites; the
-// trace topology already exists.
+// Object's out-edges:
+//   - proto: Option<ObjectId>
+//   - properties.values()'s Value::Object payloads
+//   - InternalKind edges:
+//       Closure: upvalues' Value::Object payloads
+//       BoundFunction: target + this + args
+//       Promise: each reaction's chain (always Object) + handler (if Object)
 impl rusty_js_gc::Trace for Object {
-    fn trace(&self, _ids: &mut Vec<rusty_js_gc::ObjectId>) {
-        // v1: no GC-tracked edges since Object isn't yet stored in the
-        // heap. Round 3.e.d migrates Value::Object to ObjectId; this
-        // impl then walks proto + properties.values() + InternalKind
-        // fields, pushing each contained ObjectId. The shape is
-        // already correct.
+    fn trace(&self, ids: &mut Vec<rusty_js_gc::ObjectId>) {
+        if let Some(p) = self.proto { ids.push(p); }
+        for d in self.properties.values() {
+            if let Value::Object(id) = &d.value { ids.push(*id); }
+        }
+        match &self.internal_kind {
+            InternalKind::Closure(c) => {
+                for v in &c.upvalues {
+                    if let Value::Object(id) = v { ids.push(*id); }
+                }
+            }
+            InternalKind::BoundFunction(b) => {
+                ids.push(b.target);
+                if let Value::Object(id) = &b.this { ids.push(*id); }
+                for v in &b.args {
+                    if let Value::Object(id) = v { ids.push(*id); }
+                }
+            }
+            InternalKind::Promise(ps) => {
+                if let Value::Object(id) = &ps.value { ids.push(*id); }
+                for r in &ps.fulfill_reactions {
+                    ids.push(r.chain);
+                    if let Some(Value::Object(id)) = &r.handler { ids.push(*id); }
+                }
+                for r in &ps.reject_reactions {
+                    ids.push(r.chain);
+                    if let Some(Value::Object(id)) = &r.handler { ids.push(*id); }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -50,10 +74,6 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn new_object() -> Value {
-        Value::Object(Rc::new(RefCell::new(Object::new_ordinary())))
-    }
-
     pub fn type_of(&self) -> &'static str {
         match self {
             Value::Undefined => "undefined",
@@ -62,14 +82,11 @@ impl Value {
             Value::Number(_) => "number",
             Value::String(_) => "string",
             Value::BigInt(_) => "bigint",
-            Value::Object(o) => {
-                let obj = o.borrow();
-                if matches!(obj.internal_kind, InternalKind::Function(_) | InternalKind::Closure(_) | InternalKind::BoundFunction(_)) {
-                    "function"
-                } else {
-                    "object"
-                }
-            }
+            // Post-3.e.d: Value::Object's typeof requires a heap to peek
+            // InternalKind. Without a runtime here we report "object";
+            // callers that need precise function/object disambiguation
+            // should use Runtime::type_of_value (added in 3.e.d).
+            Value::Object(_) => "object",
         }
     }
 
@@ -80,13 +97,12 @@ impl Value {
             (Value::Null, Value::Null) => true,
             (Value::Boolean(x), Value::Boolean(y)) => x == y,
             (Value::Number(x), Value::Number(y)) => {
-                // SameValue treats +0 and -0 as different, and NaN equal to NaN.
                 if x.is_nan() && y.is_nan() { return true; }
                 x.to_bits() == y.to_bits()
             }
             (Value::String(x), Value::String(y)) => x == y,
             (Value::BigInt(x), Value::BigInt(y)) => x == y,
-            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => x == y,
             _ => false,
         }
     }
@@ -101,7 +117,7 @@ impl std::fmt::Debug for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{:?}", s.as_str()),
             Value::BigInt(s) => write!(f, "{}n", s.as_str()),
-            Value::Object(o) => write!(f, "[Object {:?}]", o.borrow().internal_kind.kind_name()),
+            Value::Object(id) => write!(f, "[Object #{}]", id.0),
         }
     }
 }
@@ -139,8 +155,8 @@ impl Object {
         }
     }
 
-    /// OrdinaryGet per §10.1.8.1. v1 doesn't walk the prototype chain
-    /// beyond one hop; full prototype walk lands when intrinsics arrive.
+    /// OrdinaryGet per §10.1.8.1. Own-property only. Prototype-chain
+    /// walk moved to Runtime::object_get (proto deref requires heap).
     pub fn get_own(&self, key: &str) -> Option<&PropertyDescriptor> {
         self.properties.get(key)
     }
@@ -154,16 +170,6 @@ impl Object {
             enumerable: true,
             configurable: true,
         });
-    }
-
-    pub fn get(&self, key: &str) -> Value {
-        if let Some(d) = self.properties.get(key) {
-            return d.value.clone();
-        }
-        if let Some(p) = &self.proto {
-            return p.borrow().get(key);
-        }
-        Value::Undefined
     }
 }
 
@@ -184,9 +190,7 @@ pub enum InternalKind {
     BoundFunction(BoundFunctionInternals),
     Error,
     ModuleNamespace,
-    /// Promise per ECMA-262 §27.2. State + reactions stored directly;
-    /// resolution / rejection drains reactions as microtasks via the
-    /// engine's JobQueue (round 3.f.d).
+    /// Promise per ECMA-262 §27.2.
     Promise(PromiseState),
 }
 
@@ -203,9 +207,6 @@ pub enum PromiseStatus { Pending, Fulfilled, Rejected }
 
 #[derive(Debug)]
 pub struct PromiseReaction {
-    /// Handler function; None = pass-through identity (per spec when
-    /// .then has no onFulfilled / .catch has no onRejected for that
-    /// branch).
     pub handler: Option<Value>,
     /// Chained Promise to resolve with the handler's result.
     pub chain: ObjectRef,
@@ -246,10 +247,6 @@ impl std::fmt::Debug for FunctionInternals {
     }
 }
 
-/// Native function signature. Takes a runtime reference for hooks like
-/// enqueue_microtask / heap.alloc that need runtime state. Round 3.f.d
-/// adds the runtime parameter; pre-3.f.d intrinsics that don't need it
-/// simply ignore the rt argument.
 pub type NativeFn = std::rc::Rc<dyn Fn(&mut crate::interp::Runtime, &[Value]) -> Result<Value, crate::interp::RuntimeError>>;
 
 #[derive(Debug)]

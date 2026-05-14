@@ -5,37 +5,37 @@ use rusty_js_runtime::{Runtime, Value};
 use std::rc::Rc;
 
 pub fn install(rt: &mut Runtime) {
-    let os = new_object();
+    let os = new_object(rt);
 
-    register_method(&os, "platform", |_rt, _args| {
+    register_method(rt, os, "platform", |_rt, _args| {
         Ok(Value::String(Rc::new(detect_platform().to_string())))
     });
-    register_method(&os, "arch", |_rt, _args| {
+    register_method(rt, os, "arch", |_rt, _args| {
         Ok(Value::String(Rc::new(detect_arch().to_string())))
     });
-    register_method(&os, "type", |_rt, _args| {
+    register_method(rt, os, "type", |_rt, _args| {
         Ok(Value::String(Rc::new(detect_os_type().to_string())))
     });
-    register_method(&os, "release", |_rt, _args| {
+    register_method(rt, os, "release", |_rt, _args| {
         Ok(Value::String(Rc::new("0.0.0".to_string())))
     });
-    register_method(&os, "hostname", |_rt, _args| {
+    register_method(rt, os, "hostname", |_rt, _args| {
         let h = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
         Ok(Value::String(Rc::new(h)))
     });
-    register_method(&os, "homedir", |_rt, _args| {
+    register_method(rt, os, "homedir", |_rt, _args| {
         let h = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
         Ok(Value::String(Rc::new(h)))
     });
-    register_method(&os, "tmpdir", |_rt, _args| {
+    register_method(rt, os, "tmpdir", |_rt, _args| {
         let t = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
         Ok(Value::String(Rc::new(t)))
     });
-    register_method(&os, "endianness", |_rt, _args| {
+    register_method(rt, os, "endianness", |_rt, _args| {
         Ok(Value::String(Rc::new(if cfg!(target_endian = "little") { "LE".into() } else { "BE".into() })))
     });
 
-    set_constant(&os, "EOL", Value::String(Rc::new("\n".to_string())));
+    set_constant(rt, os, "EOL", Value::String(Rc::new("\n".to_string())));
 
     rt.globals.insert("os".into(), Value::Object(os));
 }

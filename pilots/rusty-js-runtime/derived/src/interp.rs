@@ -2,12 +2,11 @@
 //! Per specs/rusty-js-runtime-design.md §III.
 
 use crate::abstract_ops::*;
-use crate::value::{Object, ObjectRef, Value};
+use crate::value::{InternalKind, Object, ObjectRef, Value};
 use rusty_js_bytecode::{
     op::{decode_i32, decode_u16, op_from_byte, Op},
     CompiledModule,
 };
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -50,37 +49,83 @@ impl Runtime {
 
     /// Run a full mark-sweep cycle on the heap with the runtime's
     /// current root set.
-    ///
-    /// Roots per design spec §V: Runtime.globals + active call stack
-    /// frames. v1: Value::Object is still Rc<RefCell<Object>>, so
-    /// `enumerate_roots` returns an empty iterator (no ObjectIds yet
-    /// exist as values). After round 3.e.d migrates Value::Object to
-    /// ObjectId, this method becomes operationally effective.
     pub fn collect(&mut self) -> usize {
         let roots = self.enumerate_roots();
         self.heap.collect(roots)
     }
 
     /// Enumerate every ObjectId reachable from the runtime's roots.
-    /// In v1 (round 3.e.c) the Value::Object payload is still
-    /// Rc<RefCell<Object>>; no ObjectIds exist as values. The 3.e.d
-    /// migration changes Value::Object to ObjectId and populates this
-    /// enumeration.
+    ///
+    /// Tracked roots:
+    ///   - self.globals.values() — every Value::Object payload
+    ///   - self.last_value — if Value::Object
+    ///
+    /// NOT tracked (3.e.d): the active call-stack frames' operand_stack /
+    /// locals / try_stack. Frames are stack-allocated on the Rust call
+    /// stack inside run_frame; their values are implicit roots while the
+    /// frame is on the stack. This is safe because `collect()` is only
+    /// invoked outside a frame's execution (e.g. by tests or external
+    /// drivers between top-level run_module calls). When `collect()` is
+    /// wired into the dispatch loop at safe points, frame walking will
+    /// need to be added — there is no Runtime-side frame_stack field
+    /// today (run_frame is called recursively via call_function with
+    /// frames living on Rust's stack).
     pub fn enumerate_roots(&self) -> Vec<rusty_js_gc::ObjectId> {
-        // Future shape (3.e.d):
-        //   - walk self.globals.values(), push Value::Object payloads
-        //   - walk self.last_value, push if Value::Object
-        //   - (call-stack frames are stack-allocated during run_frame;
-        //     they call collect at safe points and pass themselves as
-        //     additional roots)
-        Vec::new()
+        let mut roots: Vec<rusty_js_gc::ObjectId> = Vec::new();
+        for v in self.globals.values() {
+            if let Value::Object(id) = v { roots.push(*id); }
+        }
+        if let Value::Object(id) = &self.last_value { roots.push(*id); }
+        roots
     }
 
     /// Allocate an Object via the managed heap. Returns the ObjectId
-    /// handle. Used by the 3.e.d migration to replace
-    /// Rc::new(RefCell::new(Object::new_ordinary())) call sites.
+    /// handle.
     pub fn alloc_object(&mut self, obj: crate::value::Object) -> rusty_js_gc::ObjectId {
         self.heap.alloc(obj)
+    }
+
+    /// Ergonomic heap accessors. Panic on missing — the migration's
+    /// invariant is that every ObjectId in a live Value points to a live
+    /// slot. Stale handles after a sweep would be a GC-correctness bug
+    /// surfaced loudly here.
+    pub fn obj(&self, id: ObjectRef) -> &Object {
+        self.heap.get(id).expect("ObjectId points to free/missing slot")
+    }
+    pub fn obj_mut(&mut self, id: ObjectRef) -> &mut Object {
+        self.heap.get_mut(id).expect("ObjectId points to free/missing slot")
+    }
+
+    /// OrdinaryGet with prototype walk. Returns Undefined if neither the
+    /// object nor any prototype owns the key.
+    pub fn object_get(&self, id: ObjectRef, key: &str) -> Value {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let o = self.obj(c);
+            if let Some(d) = o.properties.get(key) {
+                return d.value.clone();
+            }
+            cur = o.proto;
+        }
+        Value::Undefined
+    }
+
+    /// OrdinaryDefineOwnProperty — own-key set on the named object.
+    pub fn object_set(&mut self, id: ObjectRef, key: String, value: Value) {
+        self.obj_mut(id).set_own(key, value);
+    }
+
+    /// Typeof with heap deref for Object/function discrimination.
+    pub fn type_of_value(&self, v: &Value) -> &'static str {
+        match v {
+            Value::Object(id) => {
+                let o = self.obj(*id);
+                if matches!(o.internal_kind,
+                    InternalKind::Function(_) | InternalKind::Closure(_) | InternalKind::BoundFunction(_))
+                { "function" } else { "object" }
+            }
+            other => other.type_of(),
+        }
     }
 
     /// Public wrapper: run a module-level Frame. Used by evaluate_module
@@ -308,7 +353,8 @@ impl Runtime {
                 // ─── Unary type / void ───
                 Op::Typeof => {
                     let v = frame.pop()?;
-                    frame.push(Value::String(Rc::new(v.type_of().to_string())));
+                    let t = self.type_of_value(&v);
+                    frame.push(Value::String(Rc::new(t.to_string())));
                 }
                 Op::Void => {
                     let _ = frame.pop()?;
@@ -390,33 +436,35 @@ impl Runtime {
 
                 // ─── Object / Array construction ───
                 Op::NewObject => {
-                    frame.push(Value::Object(Rc::new(RefCell::new(Object::new_ordinary()))));
+                    let id = self.alloc_object(Object::new_ordinary());
+                    frame.push(Value::Object(id));
                 }
                 Op::NewArray => {
                     let _hint = decode_u16(&frame.bytecode, frame.pc);
                     frame.pc += 2;
-                    frame.push(Value::Object(Rc::new(RefCell::new(Object::new_array()))));
+                    let id = self.alloc_object(Object::new_array());
+                    frame.push(Value::Object(id));
                 }
                 Op::InitProp => {
                     let idx = decode_u16(&frame.bytecode, frame.pc);
                     frame.pc += 2;
                     let key = self.constant_name(frame, idx)?;
                     let value = frame.pop()?;
-                    let obj = match frame.peek(0)?.clone() {
-                        Value::Object(o) => o,
+                    let id = match frame.peek(0)? {
+                        Value::Object(id) => *id,
                         _ => return Err(RuntimeError::TypeError("InitProp on non-object".into())),
                     };
-                    obj.borrow_mut().set_own(key, value);
+                    self.object_set(id, key, value);
                 }
                 Op::InitIndex => {
                     let idx = rusty_js_bytecode::op::decode_u32(&frame.bytecode, frame.pc);
                     frame.pc += 4;
                     let value = frame.pop()?;
-                    let obj = match frame.peek(0)?.clone() {
-                        Value::Object(o) => o,
+                    let id = match frame.peek(0)? {
+                        Value::Object(id) => *id,
                         _ => return Err(RuntimeError::TypeError("InitIndex on non-array".into())),
                     };
-                    obj.borrow_mut().set_own(idx.to_string(), value);
+                    self.object_set(id, idx.to_string(), value);
                 }
 
                 // ─── Property access ───
@@ -425,8 +473,8 @@ impl Runtime {
                     frame.pc += 2;
                     let key = self.constant_name(frame, idx)?;
                     let obj_v = frame.pop()?;
-                    let v = match obj_v.clone() {
-                        Value::Object(o) => o.borrow().get(&key),
+                    let v = match &obj_v {
+                        Value::Object(id) => self.object_get(*id, &key),
                         Value::String(s) if key == "length" => Value::Number(s.chars().count() as f64),
                         Value::Undefined | Value::Null => {
                             return Err(RuntimeError::TypeError(
@@ -444,8 +492,8 @@ impl Runtime {
                     let key = self.constant_name(frame, idx)?;
                     let value = frame.pop()?;
                     let obj_v = frame.pop()?;
-                    if let Value::Object(o) = &obj_v {
-                        o.borrow_mut().set_own(key, value.clone());
+                    if let Value::Object(id) = &obj_v {
+                        self.object_set(*id, key, value.clone());
                     } else {
                         return Err(RuntimeError::TypeError("SetProp on non-object".into()));
                     }
@@ -456,7 +504,7 @@ impl Runtime {
                     let obj_v = frame.pop()?;
                     let key = property_key(&key_v);
                     let v = match obj_v {
-                        Value::Object(o) => o.borrow().get(&key),
+                        Value::Object(id) => self.object_get(id, &key),
                         Value::String(s) => {
                             if let Ok(i) = key.parse::<usize>() {
                                 s.chars().nth(i)
@@ -477,8 +525,8 @@ impl Runtime {
                     let key_v = frame.pop()?;
                     let obj_v = frame.pop()?;
                     let key = property_key(&key_v);
-                    if let Value::Object(o) = &obj_v {
-                        o.borrow_mut().set_own(key, value.clone());
+                    if let Value::Object(id) = &obj_v {
+                        self.object_set(*id, key, value.clone());
                     } else {
                         return Err(RuntimeError::TypeError("SetIndex on non-object".into()));
                     }
@@ -505,7 +553,8 @@ impl Runtime {
                             is_arrow,
                         }),
                     };
-                    frame.push(Value::Object(Rc::new(RefCell::new(closure))));
+                    let id = self.alloc_object(closure);
+                    frame.push(Value::Object(id));
                 }
 
                 // ─── Function call ───
@@ -530,7 +579,8 @@ impl Runtime {
                     }
                     args.reverse();
                     let callee = frame.pop()?;
-                    let this_obj = Value::Object(Rc::new(RefCell::new(Object::new_ordinary())));
+                    let this_id = self.alloc_object(Object::new_ordinary());
+                    let this_obj = Value::Object(this_id);
                     let ret = self.call_function(callee, this_obj.clone(), args)?;
                     let result = match ret {
                         Value::Object(_) => ret,
@@ -554,22 +604,23 @@ impl Runtime {
     /// FunctionProto, populates its locals slot 0..N with the arguments,
     /// runs the frame, returns the produced value (or Undefined on ReturnUndef).
     pub fn call_function(&mut self, callee: Value, _this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
-        let obj = match callee {
-            Value::Object(o) => o,
+        let id = match callee {
+            Value::Object(id) => id,
             _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
         };
-        let obj_b = obj.borrow();
-        let proto = match &obj_b.internal_kind {
-            crate::value::InternalKind::Closure(c) => c.proto.clone(),
-            crate::value::InternalKind::Function(f) => {
-                // Native function: invoke directly with the runtime reference.
-                let native = f.native.clone();
-                drop(obj_b);
-                return native(self, &args);
+        // Extract proto-or-native by inspecting the heap object once.
+        let (proto_opt, native_opt) = {
+            let o = self.obj(id);
+            match &o.internal_kind {
+                crate::value::InternalKind::Closure(c) => (Some(c.proto.clone()), None),
+                crate::value::InternalKind::Function(f) => (None, Some(f.native.clone())),
+                _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
             }
-            _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
         };
-        drop(obj_b);
+        if let Some(native) = native_opt {
+            return native(self, &args);
+        }
+        let proto = proto_opt.expect("closure branch implies proto");
         // Build the inner frame's locals: arguments first, then space for
         // additional locals beyond params.
         let mut locals: Vec<Value> = Vec::new();

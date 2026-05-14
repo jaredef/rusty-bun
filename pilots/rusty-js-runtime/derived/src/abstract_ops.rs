@@ -2,7 +2,7 @@
 //! verbatim from the spec where reasonable. v1 implements the subset
 //! exercised by the round-3.d.b opcode handlers.
 
-use crate::value::{Value};
+use crate::value::Value;
 use std::rc::Rc;
 
 /// ToBoolean per §7.1.2.
@@ -80,7 +80,7 @@ pub fn is_strictly_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::String(x), Value::String(y)) => x.as_str() == y.as_str(),
         (Value::BigInt(x), Value::BigInt(y)) => x == y,
-        (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+        (Value::Object(x), Value::Object(y)) => x == y,
         _ => false,
     }
 }

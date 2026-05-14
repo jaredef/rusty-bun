@@ -1,17 +1,16 @@
 //! Native-function registration helpers. Each registers a closure as
 //! a callable Value on a host object or globalThis.
 
-use rusty_js_runtime::value::{FunctionInternals, InternalKind, NativeFn, Object};
+use rusty_js_runtime::value::{FunctionInternals, InternalKind, NativeFn, Object, ObjectRef};
 use rusty_js_runtime::{Runtime, RuntimeError, Value};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub fn new_object() -> Rc<RefCell<Object>> {
-    Rc::new(RefCell::new(Object::new_ordinary()))
+pub fn new_object(rt: &mut Runtime) -> ObjectRef {
+    rt.alloc_object(Object::new_ordinary())
 }
 
-pub fn register_method<F>(host: &Rc<RefCell<Object>>, name: &str, f: F)
+pub fn register_method<F>(rt: &mut Runtime, host: ObjectRef, name: &str, f: F)
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
     let fn_obj = Object {
@@ -23,11 +22,12 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
             native,
         }),
     };
-    host.borrow_mut().set_own(name.into(), Value::Object(Rc::new(RefCell::new(fn_obj))));
+    let fn_id = rt.alloc_object(fn_obj);
+    rt.object_set(host, name.into(), Value::Object(fn_id));
 }
 
-pub fn set_constant(host: &Rc<RefCell<Object>>, name: &str, value: Value) {
-    host.borrow_mut().set_own(name.into(), value);
+pub fn set_constant(rt: &mut Runtime, host: ObjectRef, name: &str, value: Value) {
+    rt.object_set(host, name.into(), value);
 }
 
 pub fn arg_string(args: &[Value], i: usize) -> String {

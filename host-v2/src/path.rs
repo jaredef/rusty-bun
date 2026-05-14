@@ -1,15 +1,13 @@
-//! node:path intrinsic — minimal v1 surface. Migrates wire_path from
-//! the pre-Ω host's lib.rs (~80 LOC), now installed as a globalThis.path
-//! object via register_method.
+//! node:path intrinsic — minimal v1 surface.
 
 use crate::register::{arg_string, new_object, register_method, set_constant};
 use rusty_js_runtime::{Runtime, Value};
 use std::rc::Rc;
 
 pub fn install(rt: &mut Runtime) {
-    let path = new_object();
+    let path = new_object(rt);
 
-    register_method(&path, "basename", |_rt, args| {
+    register_method(rt, path, "basename", |_rt, args| {
         let p = arg_string(args, 0);
         let ext = args.get(1).map(|v| {
             rusty_js_runtime::abstract_ops::to_string(v).as_str().to_string()
@@ -23,7 +21,7 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(result)))
     });
 
-    register_method(&path, "dirname", |_rt, args| {
+    register_method(rt, path, "dirname", |_rt, args| {
         let p = arg_string(args, 0);
         let result = if let Some(idx) = p.rfind('/') {
             if idx == 0 { "/".to_string() } else { p[..idx].to_string() }
@@ -31,7 +29,7 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(result)))
     });
 
-    register_method(&path, "extname", |_rt, args| {
+    register_method(rt, path, "extname", |_rt, args| {
         let p = arg_string(args, 0);
         let base = p.rsplit('/').next().unwrap_or(&p);
         let result = if let Some(idx) = base.rfind('.') {
@@ -40,7 +38,7 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(result)))
     });
 
-    register_method(&path, "join", |_rt, args| {
+    register_method(rt, path, "join", |_rt, args| {
         let mut out = String::new();
         for (i, v) in args.iter().enumerate() {
             let s = rusty_js_runtime::abstract_ops::to_string(v);
@@ -58,7 +56,7 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(out)))
     });
 
-    register_method(&path, "normalize", |_rt, args| {
+    register_method(rt, path, "normalize", |_rt, args| {
         let p = arg_string(args, 0);
         if p.is_empty() { return Ok(Value::String(Rc::new(".".into()))); }
         let absolute = p.starts_with('/');
@@ -80,13 +78,12 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(result)))
     });
 
-    register_method(&path, "isAbsolute", |_rt, args| {
+    register_method(rt, path, "isAbsolute", |_rt, args| {
         let p = arg_string(args, 0);
         Ok(Value::Boolean(p.starts_with('/')))
     });
 
-    register_method(&path, "resolve", |_rt, args| {
-        // Right-to-left join until we hit an absolute path; if none, prepend cwd.
+    register_method(rt, path, "resolve", |_rt, args| {
         let mut parts: Vec<String> = Vec::new();
         let mut hit_absolute = false;
         for v in args.iter().rev() {
@@ -104,7 +101,6 @@ pub fn install(rt: &mut Runtime) {
             parts.insert(0, cwd);
         }
         let joined = parts.join("/");
-        // Normalize the result.
         let absolute = joined.starts_with('/');
         let segs: Vec<&str> = joined.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
         let mut out: Vec<&str> = Vec::new();
@@ -118,8 +114,8 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::String(Rc::new(result)))
     });
 
-    set_constant(&path, "sep", Value::String(Rc::new("/".into())));
-    set_constant(&path, "delimiter", Value::String(Rc::new(":".into())));
+    set_constant(rt, path, "sep", Value::String(Rc::new("/".into())));
+    set_constant(rt, path, "delimiter", Value::String(Rc::new(":".into())));
 
     rt.globals.insert("path".into(), Value::Object(path));
 }

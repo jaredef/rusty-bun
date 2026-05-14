@@ -43,12 +43,39 @@ impl Runtime {
         }
     }
 
-    /// Run a full mark-sweep cycle on the heap. Roots are not yet
-    /// enumerated since Value::Object is still Rc-backed in v1; the
-    /// migration in 3.e.d wires the root enumeration. In v1 the heap
-    /// is always empty, so this is operationally a no-op.
+    /// Run a full mark-sweep cycle on the heap with the runtime's
+    /// current root set.
+    ///
+    /// Roots per design spec §V: Runtime.globals + active call stack
+    /// frames. v1: Value::Object is still Rc<RefCell<Object>>, so
+    /// `enumerate_roots` returns an empty iterator (no ObjectIds yet
+    /// exist as values). After round 3.e.d migrates Value::Object to
+    /// ObjectId, this method becomes operationally effective.
     pub fn collect(&mut self) -> usize {
-        self.heap.collect([])
+        let roots = self.enumerate_roots();
+        self.heap.collect(roots)
+    }
+
+    /// Enumerate every ObjectId reachable from the runtime's roots.
+    /// In v1 (round 3.e.c) the Value::Object payload is still
+    /// Rc<RefCell<Object>>; no ObjectIds exist as values. The 3.e.d
+    /// migration changes Value::Object to ObjectId and populates this
+    /// enumeration.
+    pub fn enumerate_roots(&self) -> Vec<rusty_js_gc::ObjectId> {
+        // Future shape (3.e.d):
+        //   - walk self.globals.values(), push Value::Object payloads
+        //   - walk self.last_value, push if Value::Object
+        //   - (call-stack frames are stack-allocated during run_frame;
+        //     they call collect at safe points and pass themselves as
+        //     additional roots)
+        Vec::new()
+    }
+
+    /// Allocate an Object via the managed heap. Returns the ObjectId
+    /// handle. Used by the 3.e.d migration to replace
+    /// Rc::new(RefCell::new(Object::new_ordinary())) call sites.
+    pub fn alloc_object(&mut self, obj: crate::value::Object) -> rusty_js_gc::ObjectId {
+        self.heap.alloc(obj)
     }
 
     /// Public wrapper: run a module-level Frame. Used by evaluate_module

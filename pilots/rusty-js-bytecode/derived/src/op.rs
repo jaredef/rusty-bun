@@ -39,6 +39,13 @@ pub enum Op {
     StoreUpvalue = 0x17,
     /// DEFINE_LOCAL <u16>
     DefineLocal = 0x18,
+    /// RESET_LOCAL_CELL <u16> — clear frame.local_cells[slot] to None so the
+    /// next CaptureLocal at this slot promotes to a fresh upvalue cell. Used
+    /// by for-of with `let`/`const` head to give each iteration a fresh
+    /// binding per ECMA-262 §14.7.5.5. Closures captured in iteration N keep
+    /// their Rc handle to iteration N's cell; iteration N+1 starts from None.
+    /// Tier-Ω.5.g.1.
+    ResetLocalCell = 0x19,
 
     // Arithmetic
     Add = 0x20,
@@ -177,7 +184,7 @@ impl Op {
             Call | New | CallMethod => 1,
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
-            | DefineLocal | GetProp | SetProp | NewArray | InitProp
+            | DefineLocal | ResetLocalCell | GetProp | SetProp | NewArray | InitProp
             | MakeClosure | MakeArrow | CaptureLocal | CaptureUpvalue => 2,
             PushI32 | Jump | JumpIfTrue | JumpIfFalse
             | JumpIfTrueKeep | JumpIfFalseKeep | JumpIfNullish
@@ -228,7 +235,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x05 => PushI32, 0x06 => PushConst, 0x07 => Pop, 0x08 => Dup, 0x09 => Swap,
         0x10 => LoadLocal, 0x11 => StoreLocal, 0x12 => LoadArg, 0x13 => StoreArg,
         0x14 => LoadGlobal, 0x15 => StoreGlobal, 0x16 => LoadUpvalue, 0x17 => StoreUpvalue,
-        0x18 => DefineLocal,
+        0x18 => DefineLocal, 0x19 => ResetLocalCell,
         0x20 => Add, 0x21 => Sub, 0x22 => Mul, 0x23 => Div, 0x24 => Mod, 0x25 => Pow,
         0x26 => Neg, 0x27 => Pos, 0x28 => Inc, 0x29 => Dec,
         0x30 => Lt, 0x31 => Gt, 0x32 => Le, 0x33 => Ge,

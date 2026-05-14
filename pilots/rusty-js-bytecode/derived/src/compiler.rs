@@ -323,20 +323,27 @@ impl Compiler {
                 let iter_slot = self.alloc_local(LocalDescriptor {
                     name: "<iter>".into(), kind: VariableKind::Let, depth: 0,
                 });
-                let (bind_slot, _bind_name) = match left {
+                // Per ECMA-262 §14.7.5.5, `let`/`const` heads receive a fresh
+                // binding per iteration; `var` heads remain function-scoped
+                // and share a single slot across iterations. We track this
+                // with `per_iter_fresh`: when true, emit Op::ResetLocalCell at
+                // iteration entry so closures captured in iteration N keep
+                // their handle to that iteration's cell. Tier-Ω.5.g.1.
+                let (bind_slot, _bind_name, per_iter_fresh) = match left {
                     rusty_js_ast::ForBinding::Decl { kind, name, .. } => {
                         let s = self.alloc_local(LocalDescriptor {
                             name: name.name.clone(), kind: *kind, depth: 0,
                         });
-                        (s, name.name.clone())
+                        let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
+                        (s, name.name.clone(), fresh)
                     }
                     rusty_js_ast::ForBinding::Identifier(id) => {
-                        if let Some(s) = self.resolve_local(&id.name) { (s, id.name.clone()) }
+                        if let Some(s) = self.resolve_local(&id.name) { (s, id.name.clone(), false) }
                         else {
                             let s = self.alloc_local(LocalDescriptor {
                                 name: id.name.clone(), kind: VariableKind::Let, depth: 0,
                             });
-                            (s, id.name.clone())
+                            (s, id.name.clone(), false)
                         }
                     }
                 };
@@ -376,6 +383,14 @@ impl Compiler {
                 let value_key = self.constants.intern(Constant::String("value".into()));
                 encode_op(&mut self.bytecode, Op::GetProp);
                 encode_u16(&mut self.bytecode, value_key);
+                // Per-iteration fresh binding for let/const heads: detach the
+                // previous iteration's upvalue cell from this frame slot so
+                // the body's CaptureLocal promotes to a new one. ECMA-262
+                // §14.7.5.5 / Tier-Ω.5.g.1.
+                if per_iter_fresh {
+                    encode_op(&mut self.bytecode, Op::ResetLocalCell);
+                    encode_u16(&mut self.bytecode, bind_slot);
+                }
                 encode_op(&mut self.bytecode, Op::StoreLocal);
                 encode_u16(&mut self.bytecode, bind_slot);
                 self.compile_stmt(body)?;

@@ -138,14 +138,13 @@ fn t09_reduce_canary() {
     assert_eq!(run(src), Value::Number(6.0));
 }
 
-// 10. for-of per-iteration binding for `const`. Deferred: the current
-// compiler emits a single shared binding for the loop variable, so
-// closures over it all observe the final iteration value. ECMA-262
-// §14.7.5.5 requires a fresh binding per iteration for `let`/`const` in
-// for-of/for-loops — that is its own compiler-side concern, separate
-// from the runtime upvalue cell mechanism delivered here.
+// 10. for-of per-iteration binding for `const`. ECMA-262 §14.7.5.5
+// requires a fresh binding per iteration for `let`/`const` heads.
+// Delivered Tier-Ω.5.g.1 via Op::ResetLocalCell: at each iteration entry
+// the compiler detaches the previous iteration's upvalue cell from the
+// frame slot, so closures captured in iteration N retain their handle
+// to N's cell while iteration N+1 promotes to a fresh one.
 #[test]
-#[ignore = "deferred: per-iteration binding for let/const in for-of is a compiler-side concern, not solved by Tier-Ω.5.e runtime upvalue migration"]
 fn t10_for_of_per_iteration_binding() {
     let src = r#"
         let closures = [];
@@ -153,6 +152,65 @@ fn t10_for_of_per_iteration_binding() {
         return closures[0]() + "," + closures[1]() + "," + closures[2]();
     "#;
     if let Value::String(s) = run(src) { assert_eq!(s.as_str(), "1,2,3"); }
+    else { panic!("expected string"); }
+}
+
+// 10b. Same as t10 but with `let` head — let and const behave identically
+// under §14.7.5.5 for-of per-iteration binding.
+#[test]
+fn t10b_for_of_let_head_per_iteration() {
+    let src = r#"
+        let closures = [];
+        for (let i of [1,2,3]) { closures.push(() => i); }
+        return closures[0]() + "," + closures[1]() + "," + closures[2]();
+    "#;
+    if let Value::String(s) = run(src) { assert_eq!(s.as_str(), "1,2,3"); }
+    else { panic!("expected string"); }
+}
+
+// 10c. `var` head in for-of stays function-scoped and shared across
+// iterations per §14.7.5.5 — only let/const get per-iteration fresh
+// bindings. Locks in the var-vs-let distinction.
+#[test]
+fn t10c_for_of_var_head_shared() {
+    let src = r#"
+        let closures = [];
+        for (var i of [1,2,3]) { closures.push(() => i); }
+        return closures[0]() + "," + closures[1]() + "," + closures[2]();
+    "#;
+    if let Value::String(s) = run(src) { assert_eq!(s.as_str(), "3,3,3"); }
+    else { panic!("expected string"); }
+}
+
+// 10d. continue mid-loop: skip iteration where i === 2; first/third
+// closures still capture their iteration's binding.
+#[test]
+fn t10d_for_of_per_iteration_with_continue() {
+    let src = r#"
+        let closures = [];
+        for (const i of [1,2,3]) {
+            if (i === 2) { continue; }
+            closures.push(() => i);
+        }
+        return closures[0]() + "," + closures[1]();
+    "#;
+    if let Value::String(s) = run(src) { assert_eq!(s.as_str(), "1,3"); }
+    else { panic!("expected string"); }
+}
+
+// 10e. break mid-loop: closures collected before the break observe
+// their own iteration's binding, not the loop's exit value.
+#[test]
+fn t10e_for_of_per_iteration_with_break() {
+    let src = r#"
+        let closures = [];
+        for (const i of [1,2,3,4]) {
+            closures.push(() => i);
+            if (i === 2) { break; }
+        }
+        return closures[0]() + "," + closures[1]();
+    "#;
+    if let Value::String(s) = run(src) { assert_eq!(s.as_str(), "1,2"); }
     else { panic!("expected string"); }
 }
 

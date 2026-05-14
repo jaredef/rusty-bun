@@ -316,6 +316,18 @@ impl Runtime {
                     let v = frame.pop()?;
                     frame.write_local(slot, v);
                 }
+                Op::ResetLocalCell => {
+                    // Detach any prior upvalue cell at this slot so the next
+                    // CaptureLocal promotes to a fresh cell. Existing closures
+                    // that already captured the previous cell retain their
+                    // Rc<RefCell<Value>> handle — only the frame's binding to
+                    // the cell is cleared. Tier-Ω.5.g.1 per-iteration binding.
+                    let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
+                    frame.pc += 2;
+                    if slot < frame.local_cells.len() {
+                        frame.local_cells[slot] = None;
+                    }
+                }
                 Op::LoadGlobal => {
                     let idx = decode_u16(&frame.bytecode, frame.pc);
                     frame.pc += 2;

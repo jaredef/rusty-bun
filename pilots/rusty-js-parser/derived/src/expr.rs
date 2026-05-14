@@ -544,6 +544,52 @@ impl<'src> Parser<'src> {
                 let expr = self.parse_assignment_expression()?;
                 let end = expr.span().end;
                 properties.push(ObjectProperty::Spread { expr, span: Span::new(sp_start, end) });
+            } else if matches!(self.current_kind(), TokenKind::Punct(Punct::Star)) {
+                // Tier-Ω.5.p.parse: generator method shorthand `*name(params) { body }`.
+                // Lower to a plain property with a generator-flagged
+                // Function expression as the value. Runtime/compile may
+                // refuse generators; parsing past the syntax is the goal.
+                let prop_start = self.lookahead_span().start;
+                self.bump()?; // consume `*`
+                let key = self.parse_object_key()?;
+                let params = self.parse_function_parameters()?;
+                let body = self.parse_function_body()?;
+                let end = self.last_span_end();
+                let func = Expr::Function {
+                    name: None,
+                    is_async: false,
+                    is_generator: true,
+                    params,
+                    body,
+                    span: Span::new(prop_start, end),
+                };
+                properties.push(ObjectProperty::Property {
+                    key, value: func, shorthand: false, span: Span::new(prop_start, end),
+                });
+            } else if self.looks_like_accessor_shorthand() {
+                // Tier-Ω.5.p.parse: getter/setter shorthand `get name() { body }` /
+                // `set name(v) { body }`. v1 deviation: drop accessor-descriptor
+                // semantics — the accessor function is stored as a plain
+                // function-valued property under the accessor's name. Real
+                // getter/setter behavior is queued for a follow-on substrate
+                // round when Object.defineProperty accessor descriptors land.
+                let prop_start = self.lookahead_span().start;
+                self.bump()?; // consume `get` or `set`
+                let key = self.parse_object_key()?;
+                let params = self.parse_function_parameters()?;
+                let body = self.parse_function_body()?;
+                let end = self.last_span_end();
+                let func = Expr::Function {
+                    name: None,
+                    is_async: false,
+                    is_generator: false,
+                    params,
+                    body,
+                    span: Span::new(prop_start, end),
+                };
+                properties.push(ObjectProperty::Property {
+                    key, value: func, shorthand: false, span: Span::new(prop_start, end),
+                });
             } else {
                 let prop_start = self.lookahead_span().start;
                 let key = self.parse_object_key()?;
@@ -639,6 +685,37 @@ impl<'src> Parser<'src> {
     }
 
     // ───────────────── Helpers ─────────────────
+
+    /// Tier-Ω.5.p.parse: distinguish `get`/`set` used as accessor markers
+    /// from `get`/`set` used as a plain property key. Returns true when
+    /// the current token is the identifier `get` or `set` AND the next
+    /// non-whitespace source byte (after the identifier's bytes) starts
+    /// a property-key shape: identifier-start, string quote, digit, or `[`.
+    /// If followed by `(`, `:`, `,`, `}`, or `=`, it's a plain key.
+    fn looks_like_accessor_shorthand(&self) -> bool {
+        let is_accessor_ident = match self.current_kind() {
+            TokenKind::Ident(n) => n == "get" || n == "set",
+            _ => false,
+        };
+        if !is_accessor_ident { return false; }
+        let src = self.source().as_bytes();
+        let span = self.lookahead_span();
+        // Skip whitespace and line terminators after the identifier.
+        let mut j = span.end;
+        while j < src.len() {
+            match src[j] {
+                b' ' | b'\t' | b'\n' | b'\r' => j += 1,
+                _ => break,
+            }
+        }
+        match src.get(j) {
+            Some(&b) if b.is_ascii_alphabetic() || b == b'_' || b == b'$' => true,
+            Some(&b'"') | Some(&b'\'') => true,
+            Some(&b'[') => true,
+            Some(&b) if b.is_ascii_digit() => true,
+            _ => false,
+        }
+    }
 
     fn looks_like_arrow_function_head(&self) -> bool {
         // Tight detection per the AssignmentExpression-arrow grammar:

@@ -11,6 +11,9 @@ pub mod value;
 pub mod abstract_ops;
 pub mod interp;
 pub mod intrinsics;
+pub mod module;
+
+pub use module::{HostHook, ModuleStatus};
 
 pub use value::{Value, Object, ObjectRef, PropertyDescriptor, InternalKind};
 pub use interp::{Runtime, RuntimeError};

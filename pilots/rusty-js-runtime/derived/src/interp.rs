@@ -25,6 +25,7 @@ pub enum RuntimeError {
 pub struct Runtime {
     pub globals: HashMap<String, Value>,
     pub last_value: Value,
+    pub host_hooks: crate::module::HostHooks,
 }
 
 impl Runtime {
@@ -32,7 +33,15 @@ impl Runtime {
         Self {
             globals: HashMap::new(),
             last_value: Value::Undefined,
+            host_hooks: crate::module::HostHooks::default(),
         }
+    }
+
+    /// Public wrapper: run a module-level Frame. Used by evaluate_module
+    /// to drive bytecode execution while retaining access to the post-
+    /// execution local-slot values.
+    pub fn run_frame_module(&mut self, frame: &mut Frame) -> Result<Value, RuntimeError> {
+        self.run_frame(frame)
     }
 
     /// Execute a compiled module. Returns the terminal stack value (the

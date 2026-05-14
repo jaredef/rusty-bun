@@ -333,9 +333,155 @@ impl Runtime {
                     return Ok(Value::Undefined);
                 }
 
-                // ─── Object construction (round d.b: minimum) ───
+                // ─── Object / Array construction ───
                 Op::NewObject => {
                     frame.push(Value::Object(Rc::new(RefCell::new(Object::new_ordinary()))));
+                }
+                Op::NewArray => {
+                    let _hint = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    frame.push(Value::Object(Rc::new(RefCell::new(Object::new_array()))));
+                }
+                Op::InitProp => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    let key = self.constant_name(frame, idx)?;
+                    let value = frame.pop()?;
+                    let obj = match frame.peek(0)?.clone() {
+                        Value::Object(o) => o,
+                        _ => return Err(RuntimeError::TypeError("InitProp on non-object".into())),
+                    };
+                    obj.borrow_mut().set_own(key, value);
+                }
+                Op::InitIndex => {
+                    let idx = rusty_js_bytecode::op::decode_u32(&frame.bytecode, frame.pc);
+                    frame.pc += 4;
+                    let value = frame.pop()?;
+                    let obj = match frame.peek(0)?.clone() {
+                        Value::Object(o) => o,
+                        _ => return Err(RuntimeError::TypeError("InitIndex on non-array".into())),
+                    };
+                    obj.borrow_mut().set_own(idx.to_string(), value);
+                }
+
+                // ─── Property access ───
+                Op::GetProp => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    let key = self.constant_name(frame, idx)?;
+                    let obj_v = frame.pop()?;
+                    let v = match obj_v.clone() {
+                        Value::Object(o) => o.borrow().get(&key),
+                        Value::String(s) if key == "length" => Value::Number(s.chars().count() as f64),
+                        Value::Undefined | Value::Null => {
+                            return Err(RuntimeError::TypeError(
+                                format!("Cannot read property '{}' of {}", key,
+                                    if matches!(obj_v, Value::Undefined) { "undefined" } else { "null" })
+                            ));
+                        }
+                        _ => Value::Undefined,
+                    };
+                    frame.push(v);
+                }
+                Op::SetProp => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    let key = self.constant_name(frame, idx)?;
+                    let value = frame.pop()?;
+                    let obj_v = frame.pop()?;
+                    if let Value::Object(o) = &obj_v {
+                        o.borrow_mut().set_own(key, value.clone());
+                    } else {
+                        return Err(RuntimeError::TypeError("SetProp on non-object".into()));
+                    }
+                    frame.push(value);
+                }
+                Op::GetIndex => {
+                    let key_v = frame.pop()?;
+                    let obj_v = frame.pop()?;
+                    let key = property_key(&key_v);
+                    let v = match obj_v {
+                        Value::Object(o) => o.borrow().get(&key),
+                        Value::String(s) => {
+                            if let Ok(i) = key.parse::<usize>() {
+                                s.chars().nth(i)
+                                    .map(|c| Value::String(Rc::new(c.to_string())))
+                                    .unwrap_or(Value::Undefined)
+                            } else if key == "length" {
+                                Value::Number(s.chars().count() as f64)
+                            } else { Value::Undefined }
+                        }
+                        Value::Undefined | Value::Null =>
+                            return Err(RuntimeError::TypeError("Cannot index undefined/null".into())),
+                        _ => Value::Undefined,
+                    };
+                    frame.push(v);
+                }
+                Op::SetIndex => {
+                    let value = frame.pop()?;
+                    let key_v = frame.pop()?;
+                    let obj_v = frame.pop()?;
+                    let key = property_key(&key_v);
+                    if let Value::Object(o) = &obj_v {
+                        o.borrow_mut().set_own(key, value.clone());
+                    } else {
+                        return Err(RuntimeError::TypeError("SetIndex on non-object".into()));
+                    }
+                    frame.push(value);
+                }
+
+                // ─── Closure construction ───
+                Op::MakeClosure | Op::MakeArrow => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    let proto = match frame.constants.get(idx) {
+                        Some(rusty_js_bytecode::Constant::Function(p)) => p.clone(),
+                        _ => return Err(RuntimeError::TypeError("MakeClosure constant is not a function".into())),
+                    };
+                    let is_arrow = matches!(op, Op::MakeArrow);
+                    let proto_rc = Rc::new(*proto);
+                    let closure = Object {
+                        proto: None,
+                        extensible: true,
+                        properties: std::collections::HashMap::new(),
+                        internal_kind: crate::value::InternalKind::Closure(crate::value::ClosureInternals {
+                            proto: proto_rc,
+                            upvalues: Vec::new(),
+                            is_arrow,
+                        }),
+                    };
+                    frame.push(Value::Object(Rc::new(RefCell::new(closure))));
+                }
+
+                // ─── Function call ───
+                Op::Call => {
+                    let n = frame.bytecode[frame.pc] as usize;
+                    frame.pc += 1;
+                    let mut args = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        args.push(frame.pop()?);
+                    }
+                    args.reverse();
+                    let callee = frame.pop()?;
+                    let result = self.call_function(callee, Value::Undefined, args)?;
+                    frame.push(result);
+                }
+                Op::New => {
+                    let n = frame.bytecode[frame.pc] as usize;
+                    frame.pc += 1;
+                    let mut args = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        args.push(frame.pop()?);
+                    }
+                    args.reverse();
+                    let callee = frame.pop()?;
+                    let this_obj = Value::Object(Rc::new(RefCell::new(Object::new_ordinary())));
+                    let ret = self.call_function(callee, this_obj.clone(), args)?;
+                    let result = match ret {
+                        Value::Object(_) => ret,
+                        _ => this_obj,
+                    };
+                    frame.push(result);
                 }
 
                 // ─── Misc ───
@@ -349,6 +495,48 @@ impl Runtime {
         }
     }
 
+    /// Call a function value. Materializes a new Frame from the callee's
+    /// FunctionProto, populates its locals slot 0..N with the arguments,
+    /// runs the frame, returns the produced value (or Undefined on ReturnUndef).
+    pub fn call_function(&mut self, callee: Value, _this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let obj = match callee {
+            Value::Object(o) => o,
+            _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
+        };
+        let obj_b = obj.borrow();
+        let proto = match &obj_b.internal_kind {
+            crate::value::InternalKind::Closure(c) => c.proto.clone(),
+            crate::value::InternalKind::Function(f) => {
+                // Native function: invoke directly.
+                let native = f.native.clone();
+                drop(obj_b);
+                return native(&args);
+            }
+            _ => return Err(RuntimeError::TypeError("callee is not callable".into())),
+        };
+        drop(obj_b);
+        // Build the inner frame's locals: arguments first, then space for
+        // additional locals beyond params.
+        let mut locals: Vec<Value> = Vec::new();
+        for (i, _) in proto.locals.iter().enumerate() {
+            if i < args.len() {
+                locals.push(args[i].clone());
+            } else {
+                locals.push(Value::Undefined);
+            }
+        }
+        // If fewer locals than args (e.g. extra args), trim — JS permits.
+        let mut inner = Frame {
+            bytecode: &proto.bytecode,
+            constants: &proto.constants,
+            locals,
+            operand_stack: Vec::with_capacity(32),
+            pc: 0,
+            try_stack: Vec::new(),
+        };
+        self.run_frame(&mut inner)
+    }
+
     fn constant_to_value(&self, frame: &Frame, idx: u16) -> Result<Value, RuntimeError> {
         match frame.constants.get(idx) {
             Some(rusty_js_bytecode::Constant::Number(n)) => Ok(Value::Number(*n)),
@@ -358,7 +546,11 @@ impl Runtime {
                 Err(RuntimeError::Unimplemented("Regex literals not yet supported".into()))
             }
             Some(rusty_js_bytecode::Constant::Function(_)) => {
-                Err(RuntimeError::Unimplemented("Function constants not yet supported (round 3.d.d)".into()))
+                // Function constants are not directly Pushable as values;
+                // they're consumed by MakeClosure / MakeArrow. Reaching
+                // here means the compiler emitted a PushConst on a
+                // Function which would be a bug.
+                Err(RuntimeError::TypeError("Function constant pushed as a value".into()))
             }
             None => Err(RuntimeError::TypeError(format!("invalid constant index {}", idx))),
         }
@@ -369,6 +561,16 @@ impl Runtime {
             Some(rusty_js_bytecode::Constant::String(s)) => Ok(s.clone()),
             _ => Err(RuntimeError::TypeError(format!("constant {} is not a name string", idx))),
         }
+    }
+}
+
+/// ToPropertyKey per ECMA-262 §7.1.19. v1 simplified: numbers stringify
+/// to their canonical decimal form; other primitives ToString-coerce.
+fn property_key(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.as_str().to_string(),
+        Value::Number(n) => crate::abstract_ops::number_to_string(*n),
+        _ => crate::abstract_ops::to_string(v).as_str().to_string(),
     }
 }
 

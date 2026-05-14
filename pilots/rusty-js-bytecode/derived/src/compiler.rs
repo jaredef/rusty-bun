@@ -521,11 +521,10 @@ impl Compiler {
                 if !matches!(operator, AssignOp::Assign) {
                     return Err(self.err(e.span(), "compound assignment not yet supported"));
                 }
-                self.compile_expr(value)?;
-                // The value remains on the stack as the assignment's result.
-                encode_op(&mut self.bytecode, Op::Dup);
                 match target.as_ref() {
                     Expr::Identifier { name, .. } => {
+                        self.compile_expr(value)?;
+                        encode_op(&mut self.bytecode, Op::Dup);
                         if let Some(slot) = self.resolve_local(name) {
                             encode_op(&mut self.bytecode, Op::StoreLocal);
                             encode_u16(&mut self.bytecode, slot);
@@ -533,6 +532,28 @@ impl Compiler {
                             let idx = self.constants.intern(Constant::String(name.clone()));
                             encode_op(&mut self.bytecode, Op::StoreGlobal);
                             encode_u16(&mut self.bytecode, idx);
+                        }
+                    }
+                    Expr::Member { object, property, .. } => {
+                        self.compile_expr(object)?;
+                        match property.as_ref() {
+                            MemberProperty::Identifier { name, .. } => {
+                                self.compile_expr(value)?;
+                                let idx = self.constants.intern(Constant::String(name.clone()));
+                                encode_op(&mut self.bytecode, Op::SetProp);
+                                encode_u16(&mut self.bytecode, idx);
+                            }
+                            MemberProperty::Computed { expr, .. } => {
+                                self.compile_expr(expr)?;
+                                self.compile_expr(value)?;
+                                encode_op(&mut self.bytecode, Op::SetIndex);
+                            }
+                            MemberProperty::Private { name, .. } => {
+                                self.compile_expr(value)?;
+                                let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                                encode_op(&mut self.bytecode, Op::SetProp);
+                                encode_u16(&mut self.bytecode, idx);
+                            }
                         }
                     }
                     _ => return Err(self.err(e.span(), "complex assignment target not yet supported")),

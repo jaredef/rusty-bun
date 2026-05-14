@@ -419,6 +419,191 @@ fn try_without_throw_skips_handler() {
     } else { panic!(); }
 }
 
+// ─────────── Object / Array literals ───────────
+
+#[test]
+fn array_literal_creates_array() {
+    let v = run("return [1, 2, 3];");
+    if let Value::Object(_) = v {
+        // good — produced an array-kind object
+    } else { panic!("expected object"); }
+}
+
+#[test]
+fn array_index_access() {
+    if let Value::Number(n) = run("let a = [10, 20, 30]; return a[1];") {
+        assert_eq!(n, 20.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn object_literal_property_access() {
+    if let Value::Number(n) = run("let o = {x: 1, y: 2}; return o.x;") {
+        assert_eq!(n, 1.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn object_computed_index() {
+    if let Value::Number(n) = run("let o = {a: 42}; return o['a'];") {
+        assert_eq!(n, 42.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn nested_object() {
+    if let Value::Number(n) = run("let o = {a: {b: 99}}; return o.a.b;") {
+        assert_eq!(n, 99.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn object_set_property() {
+    let s = r#"
+        let o = {};
+        o.x = 10;
+        o.y = 20;
+        return o.x + o.y;
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 30.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn property_undefined_on_missing() {
+    if let Value::Undefined = run("let o = {a: 1}; return o.b;") {
+        // good
+    } else { panic!("expected undefined"); }
+}
+
+#[test]
+fn typeof_object_literal() {
+    if let Value::String(s) = run("return typeof {};") {
+        assert_eq!(s.as_str(), "object");
+    } else { panic!(); }
+}
+
+// ─────────── Function calls ───────────
+
+#[test]
+fn call_function_no_args() {
+    let s = r#"
+        function f() { return 42; }
+        return f();
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 42.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn call_function_with_args() {
+    let s = r#"
+        function add(a, b) { return a + b; }
+        return add(3, 4);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 7.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn arrow_function_call() {
+    let s = r#"
+        let sq = (x) => x * x;
+        return sq(7);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 49.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn arrow_function_block_body() {
+    let s = r#"
+        let f = (x, y) => { return x + y * 2; };
+        return f(1, 3);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 7.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn function_returning_string() {
+    let s = r#"
+        function greet(name) { return 'hello ' + name; }
+        return greet('world');
+    "#;
+    if let Value::String(s) = run(s) {
+        assert_eq!(s.as_str(), "hello world");
+    } else { panic!(); }
+}
+
+#[test]
+fn typeof_function() {
+    let s = r#"
+        function f() {}
+        return typeof f;
+    "#;
+    if let Value::String(s) = run(s) {
+        assert_eq!(s.as_str(), "function");
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_local_variable() {
+    let s = r#"
+        function compute(x) {
+            let result = x * 2;
+            result = result + 1;
+            return result;
+        }
+        return compute(10);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 21.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn function_with_conditional() {
+    let s = r#"
+        function abs(x) {
+            if (x < 0) { return -x; }
+            return x;
+        }
+        return abs(-7) + abs(3);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 10.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn call_in_arithmetic() {
+    let s = r#"
+        function double(x) { return x * 2; }
+        return double(3) + double(4);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 14.0);
+    } else { panic!(); }
+}
+
+#[test]
+fn higher_order_function() {
+    let s = r#"
+        function apply(f, x) { return f(x); }
+        let cube = (x) => x * x * x;
+        return apply(cube, 3);
+    "#;
+    if let Value::Number(n) = run(s) {
+        assert_eq!(n, 27.0);
+    } else { panic!(); }
+}
+
 #[test]
 fn typeof_primitives() {
     if let Value::String(s) = run("return typeof 42;") {

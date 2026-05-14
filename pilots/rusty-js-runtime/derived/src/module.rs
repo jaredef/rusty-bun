@@ -36,18 +36,38 @@ pub struct ModuleRecord {
 }
 
 /// Host-supplied callback kinds. The host installs these to customize the
-/// engine's above-spec behavior — primarily for Doc 717 Tuple A/B closure.
+/// engine's above-spec behavior. Two categories:
+///
+/// (1) Module-namespace augmentation — Doc 717 Tuple A/B closure point
+///     (FinalizeModuleNamespace, installed in round 3.d.f).
+///
+/// (2) Event-loop integration — Doc 714 §VI Consequence 5: the host
+///     supplies OS I/O multiplexing via PollIo, called by the engine at
+///     idle (round 3.f.c). The host translates ready I/O events into
+///     macrotasks enqueued on the engine's JobQueue.
 pub enum HostHook {
     /// Called between Link and Evaluate. Receives the module's exported
     /// namespace + the AST. The hook can mutate the namespace to add
     /// synthetic bindings (Tuple A: default = namespace; Tuple B: named
     /// exports synthesized from default's own properties).
     FinalizeModuleNamespace(Box<dyn Fn(&mut Runtime, &AstModule, &ObjectRef) -> Result<(), RuntimeError>>),
+    /// Called at run_to_completion's idle phase (phase 3) when both
+    /// microtask and macrotask queues are empty. The host should:
+    /// (a) consult its OS I/O multiplexer (mio Poll, libuv, io_uring,
+    ///     etc.) for ready events,
+    /// (b) translate each ready event into a macrotask enqueued via
+    ///     rt.enqueue_macrotask(...),
+    /// (c) return true if any work was enqueued (engine loops back to
+    ///     phase 1); false if no work pending (engine exits cleanly).
+    ///
+    /// Default: no hook installed → engine exits at idle.
+    PollIo(Box<dyn Fn(&mut Runtime) -> Result<bool, RuntimeError>>),
 }
 
 #[derive(Default)]
 pub struct HostHooks {
     pub finalize_namespace: Option<Box<dyn Fn(&mut Runtime, &AstModule, &ObjectRef) -> Result<(), RuntimeError>>>,
+    pub poll_io: Option<Box<dyn Fn(&mut Runtime) -> Result<bool, RuntimeError>>>,
 }
 
 impl Runtime {
@@ -57,6 +77,9 @@ impl Runtime {
         match hook {
             HostHook::FinalizeModuleNamespace(f) => {
                 self.host_hooks.finalize_namespace = Some(f);
+            }
+            HostHook::PollIo(f) => {
+                self.host_hooks.poll_io = Some(f);
             }
         }
     }

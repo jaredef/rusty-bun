@@ -104,8 +104,19 @@ impl Runtime {
                 self.run_job(job)?;
                 continue;
             }
-            // Phase 3: idle. Round Ω.3.f.b exits immediately; 3.f.c
-            // consults host PollIo here.
+            // Phase 3: idle. Consult host PollIo if installed; otherwise exit.
+            // The host's PollIo is responsible for blocking on OS I/O,
+            // translating ready events into macrotask enqueues, and
+            // returning true (more work; loop back) or false (exit).
+            //
+            // We take + restore the hook to avoid borrowing self twice;
+            // host hooks must not re-enter run_to_completion (would
+            // re-borrow). The take/restore pattern matches FinalizeModuleNamespace.
+            if let Some(poll) = self.host_hooks.poll_io.take() {
+                let progressed = poll(self)?;
+                self.host_hooks.poll_io = Some(poll);
+                if progressed { continue; }
+            }
             return Ok(());
         }
     }

@@ -7,7 +7,7 @@ use rusty_js_bytecode::{
     op::{decode_i32, decode_u16, op_from_byte, Op},
     CompiledModule,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -34,6 +34,11 @@ pub struct Runtime {
     /// Engine-owned; replaces the pre-Ω rusty-bun-host's mio + JS-side
     /// __keepAlive + __tickKeepAlive split. Per Doc 714 §VI Consequence 5.
     pub job_queue: crate::job_queue::JobQueue,
+    /// Promises that have been rejected with no reject handler attached.
+    /// Per ECMA-262 §27.2.1.9 HostPromiseRejectionTracker: the host is
+    /// notified at end-of-job for any rejection still without a handler.
+    /// Drained by `drain_unhandled_rejections()` after run_to_completion.
+    pub pending_unhandled: HashSet<rusty_js_gc::ObjectId>,
 }
 
 impl Runtime {
@@ -44,7 +49,22 @@ impl Runtime {
             host_hooks: crate::module::HostHooks::default(),
             heap: rusty_js_gc::Heap::new(),
             job_queue: crate::job_queue::JobQueue::new(),
+            pending_unhandled: HashSet::new(),
         }
+    }
+
+    /// Drain promises still rejected with no handler. Caller is the host;
+    /// canonical action is print-to-stderr + exit nonzero. Idempotent.
+    pub fn drain_unhandled_rejections(&mut self) -> Vec<(rusty_js_gc::ObjectId, Value)> {
+        let ids: Vec<_> = self.pending_unhandled.drain().collect();
+        ids.into_iter().filter_map(|id| {
+            match &self.heap.get(id)?.internal_kind {
+                InternalKind::Promise(ps) if matches!(ps.status, crate::value::PromiseStatus::Rejected) => {
+                    Some((id, ps.value.clone()))
+                }
+                _ => None,
+            }
+        }).collect()
     }
 
     /// Run a full mark-sweep cycle on the heap with the runtime's

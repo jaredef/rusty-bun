@@ -61,6 +61,7 @@ impl Runtime {
                     enqueue_reaction(rt, on_fulfilled, value, chain, false);
                 }
                 PromiseStatus::Rejected => {
+                    rt.pending_unhandled.remove(&source);
                     enqueue_reaction(rt, on_rejected, value, chain, true);
                 }
             }
@@ -91,6 +92,7 @@ impl Runtime {
                     enqueue_reaction(rt, None, value, chain, false);
                 }
                 PromiseStatus::Rejected => {
+                    rt.pending_unhandled.remove(&source);
                     enqueue_reaction(rt, on_rejected, value, chain, true);
                 }
             }
@@ -144,6 +146,14 @@ pub fn reject_promise(rt: &mut Runtime, promise: ObjectRef, reason: Value) {
             std::mem::take(&mut ps.reject_reactions)
         } else { return; }
     };
+    // Per §27.2.1.9 HostPromiseRejectionTracker: a rejection landing with
+    // no reject reaction attached is a candidate unhandled rejection.
+    // .then / .catch_ removes the entry if a handler attaches later (still
+    // valid only because the source promise is already Rejected at that
+    // point, so the spec-side "unhandledrejection" event timing collapses).
+    if reactions.is_empty() {
+        rt.pending_unhandled.insert(promise);
+    }
     let value = match &rt.obj(promise).internal_kind {
         InternalKind::Promise(ps) => ps.value.clone(),
         _ => Value::Undefined,

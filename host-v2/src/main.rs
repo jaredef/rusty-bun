@@ -39,5 +39,13 @@ fn main() -> ExitCode {
         return ExitCode::from(70);
     }
 
+    let unhandled = rt.drain_unhandled_rejections();
+    if !unhandled.is_empty() {
+        for (_id, reason) in &unhandled {
+            eprintln!("rusty-bun-host-v2: unhandled promise rejection: {:?}", reason);
+        }
+        return ExitCode::from(70);
+    }
+
     ExitCode::SUCCESS
 }

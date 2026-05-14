@@ -9,8 +9,20 @@
 //!   ObjectId — Objects live in Runtime.heap. Value::Object payload is
 //!   ObjectId (Copy + Eq). Cycles are now reclaimable via rt.collect().
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+/// A captured-binding cell. Tier-Ω.5.e migrated upvalues from
+/// value-snapshot (Vec<Value>) to binding-shared (Vec<UpvalueCell>) per
+/// ECMA-262 §8.1 / §10.2: each captured binding is one shared location,
+/// shared across the outer frame's slot and every closure that captured
+/// it. Writes through any handle are visible to all others.
+pub type UpvalueCell = Rc<RefCell<Value>>;
+
+pub fn new_upvalue_cell(v: Value) -> UpvalueCell {
+    Rc::new(RefCell::new(v))
+}
 
 /// Alias preserving call-site shape. Post-3.e.d this is a heap handle
 /// (Copy + Eq), not an Rc<RefCell<...>>.
@@ -33,8 +45,8 @@ impl rusty_js_gc::Trace for Object {
         }
         match &self.internal_kind {
             InternalKind::Closure(c) => {
-                for v in &c.upvalues {
-                    if let Value::Object(id) = v { ids.push(*id); }
+                for cell in &c.upvalues {
+                    if let Value::Object(id) = &*cell.borrow() { ids.push(*id); }
                 }
             }
             InternalKind::BoundFunction(b) => {
@@ -231,7 +243,10 @@ impl InternalKind {
 #[derive(Debug)]
 pub struct ClosureInternals {
     pub proto: Rc<rusty_js_bytecode::compiler::FunctionProto>,
-    pub upvalues: Vec<Value>,
+    /// Tier-Ω.5.e: shared-binding upvalues. Each cell is shared with the
+    /// outer frame's promoted local slot and with any sibling closures
+    /// that captured the same binding.
+    pub upvalues: Vec<UpvalueCell>,
     pub is_arrow: bool,
 }
 

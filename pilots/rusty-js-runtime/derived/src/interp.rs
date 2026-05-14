@@ -2,7 +2,7 @@
 //! Per specs/rusty-js-runtime-design.md §III.
 
 use crate::abstract_ops::*;
-use crate::value::{InternalKind, Object, ObjectRef, Value};
+use crate::value::{new_upvalue_cell, InternalKind, Object, ObjectRef, UpvalueCell, Value};
 use rusty_js_bytecode::{
     op::{decode_i32, decode_u16, op_from_byte, Op},
     CompiledModule,
@@ -307,15 +307,14 @@ impl Runtime {
                 Op::LoadLocal => {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
-                    let v = frame.locals.get(slot).cloned().unwrap_or(Value::Undefined);
+                    let v = frame.read_local(slot);
                     frame.push(v);
                 }
                 Op::StoreLocal => {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
                     let v = frame.pop()?;
-                    while frame.locals.len() <= slot { frame.locals.push(Value::Undefined); }
-                    frame.locals[slot] = v;
+                    frame.write_local(slot, v);
                 }
                 Op::LoadGlobal => {
                     let idx = decode_u16(&frame.bytecode, frame.pc);
@@ -334,40 +333,59 @@ impl Runtime {
                 Op::LoadUpvalue => {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
-                    let v = frame.upvalues.get(slot).cloned().unwrap_or(Value::Undefined);
+                    let v = frame.upvalues.get(slot)
+                        .map(|cell| cell.borrow().clone())
+                        .unwrap_or(Value::Undefined);
                     frame.push(v);
                 }
                 Op::StoreUpvalue => {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
                     let v = frame.pop()?;
-                    while frame.upvalues.len() <= slot { frame.upvalues.push(Value::Undefined); }
-                    frame.upvalues[slot] = v;
+                    if let Some(cell) = frame.upvalues.get(slot) {
+                        *cell.borrow_mut() = v;
+                    } else {
+                        // Out-of-range StoreUpvalue: shouldn't happen for
+                        // well-formed bytecode. Extend with a fresh cell so
+                        // a later LoadUpvalue at the same slot reads it back.
+                        while frame.upvalues.len() <= slot { frame.upvalues.push(new_upvalue_cell(Value::Undefined)); }
+                        *frame.upvalues[slot].borrow_mut() = v;
+                    }
                 }
                 Op::CaptureLocal => {
+                    // Promote outer-frame slot to a shared cell (idempotent),
+                    // then push that cell's Rc into the closure's upvalues.
+                    // Binding-shared semantics: outer-frame writes through
+                    // the same cell, sibling closures share too.
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
-                    let v = frame.locals.get(slot).cloned().unwrap_or(Value::Undefined);
+                    let cell = frame.promote_local(slot);
                     let top = match frame.peek(0)? {
                         Value::Object(id) => *id,
                         _ => return Err(RuntimeError::TypeError("CaptureLocal: top of stack is not a closure".into())),
                     };
                     if let InternalKind::Closure(c) = &mut self.obj_mut(top).internal_kind {
-                        c.upvalues.push(v);
+                        c.upvalues.push(cell);
                     } else {
                         return Err(RuntimeError::TypeError("CaptureLocal: top is not a closure".into()));
                     }
                 }
                 Op::CaptureUpvalue => {
+                    // Transitive capture: share the Rc<RefCell<Value>> the
+                    // enclosing closure already holds. Do NOT deep-copy the
+                    // value out and re-wrap — that would break binding
+                    // semantics across the three-deep nesting case.
                     let idx = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
-                    let v = frame.upvalues.get(idx).cloned().unwrap_or(Value::Undefined);
+                    let cell = frame.upvalues.get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| new_upvalue_cell(Value::Undefined));
                     let top = match frame.peek(0)? {
                         Value::Object(id) => *id,
                         _ => return Err(RuntimeError::TypeError("CaptureUpvalue: top is not a closure".into())),
                     };
                     if let InternalKind::Closure(c) = &mut self.obj_mut(top).internal_kind {
-                        c.upvalues.push(v);
+                        c.upvalues.push(cell);
                     } else {
                         return Err(RuntimeError::TypeError("CaptureUpvalue: top is not a closure".into()));
                     }
@@ -813,11 +831,11 @@ impl Runtime {
         let proto = proto_opt.expect("closure branch implies proto");
         let args = effective_args;
         let this = effective_this;
-        // Snapshot the closure's upvalues for the inner frame. v1
-        // value-capture: clone the Values; mutation inside the closure
-        // operates on the frame's snapshot and is *not* propagated back
-        // to the creating scope. See trajectory row.
-        let upvalues: Vec<Value> = {
+        // Tier-Ω.5.e: binding-shared upvalues. Share the closure's
+        // Rc<RefCell<Value>> handles with the inner frame; writes through
+        // either side land in the same cell. The outer frame that created
+        // the closure shares the cell too via its promoted local slot.
+        let upvalues: Vec<UpvalueCell> = {
             let o = self.obj(id);
             match &o.internal_kind {
                 crate::value::InternalKind::Closure(c) => c.upvalues.clone(),
@@ -836,6 +854,7 @@ impl Runtime {
             bytecode: &proto.bytecode,
             constants: &proto.constants,
             locals,
+            local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),
             pc: 0,
             try_stack: Vec::new(),
@@ -886,16 +905,22 @@ pub struct Frame<'a> {
     pub bytecode: &'a [u8],
     pub constants: &'a rusty_js_bytecode::ConstantsPool,
     pub locals: Vec<Value>,
+    /// Parallel to `locals`. Tier-Ω.5.e: when a nested closure captures
+    /// this frame's local slot `i`, `local_cells[i]` becomes
+    /// `Some(Rc<RefCell<Value>>)` and authoritative; `locals[i]` is no
+    /// longer read. Lazy in-place promotion (Approach A from the spec
+    /// note) keeps unrelated frames on the fast path.
+    pub local_cells: Vec<Option<UpvalueCell>>,
     pub operand_stack: Vec<Value>,
     pub pc: usize,
     pub try_stack: Vec<TryFrame>,
     /// `this` for the executing frame. Module frames default to Undefined;
     /// method-call frames receive the receiver. Tier-Ω.5.a.
     pub this_value: Value,
-    /// Captured upvalues snapshot for this frame. Tier-Ω.5.c. Closure
-    /// frames receive the closure object's upvalues vector (cloned at
-    /// frame entry — v1 uses value-capture semantics, see trajectory).
-    pub upvalues: Vec<Value>,
+    /// Captured upvalues for this frame as shared binding cells. Closure
+    /// frames receive Rc-clones of the closure's upvalue cells so writes
+    /// propagate to the outer frame and to sibling closures. Tier-Ω.5.e.
+    pub upvalues: Vec<UpvalueCell>,
 }
 
 #[derive(Debug)]
@@ -912,12 +937,48 @@ impl<'a> Frame<'a> {
             bytecode: &m.bytecode,
             constants: &m.constants,
             locals,
+            local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),
             pc: 0,
             try_stack: Vec::new(),
             this_value: Value::Undefined,
             upvalues: Vec::new(),
         }
+    }
+
+    /// Read local `slot`. If promoted (a closure captured it), read
+    /// through the shared cell; else read the value slot directly.
+    pub fn read_local(&self, slot: usize) -> Value {
+        if let Some(Some(cell)) = self.local_cells.get(slot) {
+            return cell.borrow().clone();
+        }
+        self.locals.get(slot).cloned().unwrap_or(Value::Undefined)
+    }
+
+    /// Write local `slot`. If promoted, write through the shared cell so
+    /// nested closures see the update.
+    pub fn write_local(&mut self, slot: usize, v: Value) {
+        if let Some(Some(cell)) = self.local_cells.get(slot) {
+            *cell.borrow_mut() = v;
+            return;
+        }
+        while self.locals.len() <= slot { self.locals.push(Value::Undefined); }
+        self.locals[slot] = v;
+    }
+
+    /// Promote local `slot` to a shared cell (idempotent). Used when a
+    /// nested closure captures the slot — the cell becomes authoritative
+    /// for both this frame's reads/writes and the closure's upvalue.
+    pub fn promote_local(&mut self, slot: usize) -> UpvalueCell {
+        while self.locals.len() <= slot { self.locals.push(Value::Undefined); }
+        while self.local_cells.len() <= slot { self.local_cells.push(None); }
+        if let Some(cell) = &self.local_cells[slot] {
+            return cell.clone();
+        }
+        let v = std::mem::replace(&mut self.locals[slot], Value::Undefined);
+        let cell = new_upvalue_cell(v);
+        self.local_cells[slot] = Some(cell.clone());
+        cell
     }
 
     pub fn push(&mut self, v: Value) { self.operand_stack.push(v); }

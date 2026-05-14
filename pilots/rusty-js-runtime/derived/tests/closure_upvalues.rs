@@ -1,9 +1,9 @@
-//! Tier-Ω.5.c Stage 1 acceptance: closure upvalues.
+//! Tier-Ω.5.c Stage 1 acceptance: closure upvalues (read-path).
 //!
-//! v1 captures-by-value (snapshot). The trajectory row notes the
-//! deviation from ECMA-262 binding-capture semantics; this affects only
-//! mutation-after-capture patterns (see t05). All other forEach/map/
-//! reduce-style consumer idioms work.
+//! Tier-Ω.5.e: closures are now binding-shared (ECMA-262 §8.1 / §10.2).
+//! The two tests that encoded the value-capture deviation (t03, t04)
+//! were updated to assert spec-faithful semantics. The detailed
+//! binding-shared acceptance bar lives in tests/binding_capture.rs.
 
 use rusty_js_runtime::{run_module, Runtime, Value};
 
@@ -47,23 +47,21 @@ fn t03_foreach_accumulator() {
     // documented; the test verifies engine *runs* this code without panic
     // and the recorded value is the snapshot result.
     let recorded = rt.globals.get("__last_recorded").cloned().unwrap_or(Value::Undefined);
-    // Under value-capture, the outer n stays at 0 after the forEach because
-    // the arrow's StoreUpvalue writes to its own frame's upvalue slot.
-    assert_eq!(recorded, Value::Number(0.0));
+    // Binding-shared: arrow's writes propagate to outer `n`. 0+1+2+3 = 6.
+    assert_eq!(recorded, Value::Number(6.0));
 }
 
 // 4. Counter factory — exercises capture-of-param.
 #[test]
 fn t04_counter_factory_reads() {
-    // Value-capture: each call to f() snapshots c=0, then ++c inside that
-    // frame yields 1 each time. So f(); f(); f() returns 1, not 3.
-    // The acceptance bar for spec-faithful counters needs binding-capture.
+    // Binding-shared: f();f();f() now returns 3 per spec.
     let src = r#"
         function counter() { let c = 0; return () => ++c; }
         let f = counter();
+        f(); f();
         return f();
     "#;
-    assert_eq!(run(src), Value::Number(1.0));
+    assert_eq!(run(src), Value::Number(3.0));
 }
 
 // 5. Multiple levels of nesting (transitive upvalue).

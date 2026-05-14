@@ -43,4 +43,6 @@ members = [
     "pilots/x509/derived",
     # JS host integration (trajectory Tier-H, seed §VII Sub-criterion 4)
     "host",
+    # Tier-Ω.4: rusty-bun-host migration onto rusty-js-runtime
+    "host-v2",
 ]

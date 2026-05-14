@@ -1,0 +1,18 @@
+[package]
+name = "rusty-bun-host-v2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rusty_bun_host_v2"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rusty-bun-host-v2"
+path = "src/main.rs"
+
+[dependencies]
+rusty-js-runtime = { path = "../pilots/rusty-js-runtime/derived" }
+rusty-js-bytecode = { path = "../pilots/rusty-js-bytecode/derived" }
+rusty-js-parser = { path = "../pilots/rusty-js-parser/derived" }
+rusty-js-ast = { path = "../pilots/rusty-js-ast" }

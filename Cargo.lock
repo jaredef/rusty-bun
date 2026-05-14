@@ -399,6 +399,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-bun-host-v2"
+version = "0.1.0"
+dependencies = [
+ "rusty-js-ast",
+ "rusty-js-bytecode",
+ "rusty-js-parser",
+ "rusty-js-runtime",
+]
+
+[[package]]
 name = "rusty-bun-serve"
 version = "0.1.0"
 dependencies = [

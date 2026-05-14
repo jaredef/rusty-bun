@@ -200,10 +200,10 @@ impl Compiler {
             }
             Stmt::Variable(v) => {
                 for d in &v.declarators {
-                    if d.names.len() != 1 {
-                        return Err(self.err(d.span, "destructure declarators not yet supported"));
-                    }
-                    let name = &d.names[0];
+                    let name = match &d.target {
+                        rusty_js_ast::BindingPattern::Identifier(id) => id,
+                        _ => return Err(self.err(d.span, "compile: destructure declarators not yet supported (Ω.5.g.3)")),
+                    };
                     // Allocate a local slot for the binding.
                     let slot = self.alloc_local(LocalDescriptor {
                         name: name.name.clone(),
@@ -330,14 +330,22 @@ impl Compiler {
                 // iteration entry so closures captured in iteration N keep
                 // their handle to that iteration's cell. Tier-Ω.5.g.1.
                 let (bind_slot, _bind_name, per_iter_fresh) = match left {
-                    rusty_js_ast::ForBinding::Decl { kind, name, .. } => {
+                    rusty_js_ast::ForBinding::Decl { kind, target, span } => {
+                        let name = match target {
+                            rusty_js_ast::BindingPattern::Identifier(id) => id,
+                            _ => return Err(self.err(*span, "compile: destructure in for-of head not yet supported (Ω.5.g.3)")),
+                        };
                         let s = self.alloc_local(LocalDescriptor {
                             name: name.name.clone(), kind: *kind, depth: 0,
                         });
                         let fresh = matches!(kind, VariableKind::Let | VariableKind::Const);
                         (s, name.name.clone(), fresh)
                     }
-                    rusty_js_ast::ForBinding::Identifier(id) => {
+                    rusty_js_ast::ForBinding::Pattern(pat) => {
+                        let id = match pat {
+                            rusty_js_ast::BindingPattern::Identifier(id) => id,
+                            _ => return Err(self.err(span, "compile: destructure in for-of head not yet supported (Ω.5.g.3)")),
+                        };
                         if let Some(s) = self.resolve_local(&id.name) { (s, id.name.clone(), false) }
                         else {
                             let s = self.alloc_local(LocalDescriptor {
@@ -959,6 +967,9 @@ impl Compiler {
                 return Err(self.err(*span,
                     "bare `super` reference is only valid as `super(...)` or `super.method(...)`"));
             }
+            Expr::TemplateLiteral { span, .. } => {
+                return Err(self.err(*span, "compile: template literal substitution not yet supported (Ω.5.g.3)"));
+            }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
             }
@@ -1000,12 +1011,15 @@ impl Compiler {
         };
         let param_count = params.len() as u16;
         for p in params {
-            for n in &p.names {
-                sub.alloc_local(LocalDescriptor {
-                    name: n.name.clone(),
-                    kind: VariableKind::Let,
-                    depth: 0,
-                });
+            match &p.target {
+                rusty_js_ast::BindingPattern::Identifier(n) => {
+                    sub.alloc_local(LocalDescriptor {
+                        name: n.name.clone(),
+                        kind: VariableKind::Let,
+                        depth: 0,
+                    });
+                }
+                _ => return Err(self.err(p.span, "compile: destructure declarators not yet supported (Ω.5.g.3)")),
             }
         }
         for s in body { sub.compile_stmt(s)?; }

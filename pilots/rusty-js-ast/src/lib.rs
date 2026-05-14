@@ -73,9 +73,20 @@ pub enum Expr {
         body: ArrowBody,
         span: Span,
     },
+    /// `` `quasi0 ${expr0} quasi1 ${expr1} quasi2` `` — template literal
+    /// with substitutions. `quasis.len() == expressions.len() + 1`.
+    /// A no-substitution template (`` `hello` ``) is represented as
+    /// Expr::StringLiteral; this variant is reserved for the substitution
+    /// form. Introduced in Tier-Ω.5.g.2 as substrate; compiler lowering
+    /// lands in Ω.5.g.3.
+    TemplateLiteral {
+        quasis: Vec<std::rc::Rc<String>>,
+        expressions: Vec<Expr>,
+        span: Span,
+    },
     /// Opaque byte-span placeholder for forms still pending
-    /// (TemplateLiteral-with-substitutions, RegExp-typed-node,
-    /// dynamic-import-call). Other forms have moved off this fallback.
+    /// (RegExp-typed-node, dynamic-import-call). Other forms have moved
+    /// off this fallback.
     Opaque { span: Span },
 }
 
@@ -205,6 +216,7 @@ impl Expr {
             Expr::Conditional { span, .. } | Expr::Assign { span, .. } |
             Expr::Sequence { span, .. } | Expr::Function { span, .. } |
             Expr::Class { span, .. } | Expr::Arrow { span, .. } |
+            Expr::TemplateLiteral { span, .. } |
             Expr::Opaque { span } => *span,
         }
     }
@@ -301,10 +313,12 @@ pub enum ForInit {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForBinding {
-    /// `var X` / `let X` / `const X` head
-    Decl { kind: VariableKind, name: BindingIdentifier, span: Span },
-    /// Pre-existing binding: `for (x of arr)` where x was declared earlier.
-    Identifier(BindingIdentifier),
+    /// `var X` / `let X` / `const X` head — target carries the pattern
+    /// shape (BindingPattern::Identifier for the simple case).
+    Decl { kind: VariableKind, target: BindingPattern, span: Span },
+    /// Pre-existing binding (or pattern) without a decl keyword:
+    /// `for (x of arr)` or `for ([a,b] of arrs)`.
+    Pattern(BindingPattern),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -319,9 +333,11 @@ pub struct SwitchCase {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
-    /// v1 captures the binding-introduced names; full BindingPattern AST
-    /// lands when destructure-patterns become first-class.
-    pub names: Vec<BindingIdentifier>,
+    /// Binding-pattern target for this parameter position. For a plain
+    /// `function f(x)`, `target` is `BindingPattern::Identifier(x)`. For
+    /// destructure params (`function f({a, b})`), `target` carries the
+    /// pattern shape. Introduced in Tier-Ω.5.g.2.
+    pub target: BindingPattern,
     /// `= default` initializer.
     pub default: Option<Expr>,
     /// `...rest` — true for the rest parameter (must be last per spec).
@@ -367,11 +383,95 @@ pub enum VariableKind { Let, Const, Var }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableDeclarator {
-    /// v1 stores the binding's introduced names. Full BindingPattern AST
-    /// lands in a follow-on sub-round.
-    pub names: Vec<BindingIdentifier>,
+    /// Binding-pattern target. For `const x = 1`, this is
+    /// `BindingPattern::Identifier(x)`. For `const [a,b] = ...` it is
+    /// `BindingPattern::Array(...)`. Introduced in Tier-Ω.5.g.2 as
+    /// substrate; compiler lowering for non-Identifier targets lands in
+    /// Ω.5.g.3.
+    pub target: BindingPattern,
     pub init: Option<Expr>,
     pub span: Span,
+}
+
+// ─────────── BindingPattern (Tier-Ω.5.g.2 substrate) ───────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BindingPattern {
+    /// Plain identifier: `let x = ...`, `function f(x) {}`
+    Identifier(BindingIdentifier),
+    /// `[a, b, ...rest]` style
+    Array(ArrayPattern),
+    /// `{x, y, z: alias, ...rest}` style
+    Object(ObjectPattern),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayPattern {
+    /// Elements; `None` for elision holes `[a,,b]`.
+    pub elements: Vec<Option<BindingElement>>,
+    /// `...rest` (must be last per spec).
+    pub rest: Option<Box<BindingPattern>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingElement {
+    pub target: BindingPattern,
+    /// `= default` (e.g. `[a = 99] = []` → a binds to 99 when source is undefined).
+    pub default: Option<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPattern {
+    pub properties: Vec<ObjectPatternProperty>,
+    /// `...rest` — spec restricts to a plain identifier.
+    pub rest: Option<Box<BindingIdentifier>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPatternProperty {
+    pub key: PropertyKey,
+    pub value: BindingElement,
+    /// `{x}` shorthand for `{x: x}` — key and value's target both refer to `x`.
+    pub shorthand: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyKey {
+    Identifier(BindingIdentifier),
+    String(std::rc::Rc<String>),
+    Number(f64),
+    /// `[expr]` computed key
+    Computed(Expr),
+}
+
+impl BindingPattern {
+    /// Walk the pattern and collect every BindingIdentifier it introduces.
+    /// Used by the compiler for scope-binding emission and by call sites
+    /// that previously read `decl.names` directly.
+    pub fn collect_names(&self) -> Vec<&BindingIdentifier> {
+        let mut out = Vec::new();
+        self.collect_names_into(&mut out);
+        out
+    }
+    pub fn collect_names_into<'a>(&'a self, out: &mut Vec<&'a BindingIdentifier>) {
+        match self {
+            BindingPattern::Identifier(id) => out.push(id),
+            BindingPattern::Array(arr) => {
+                for elem in &arr.elements {
+                    if let Some(e) = elem { e.target.collect_names_into(out); }
+                }
+                if let Some(rest) = &arr.rest { rest.collect_names_into(out); }
+            }
+            BindingPattern::Object(obj) => {
+                for prop in &obj.properties { prop.value.target.collect_names_into(out); }
+                if let Some(rest) = &obj.rest { out.push(rest); }
+            }
+        }
+    }
 }
 
 // ─────────── ImportDeclaration ───────────

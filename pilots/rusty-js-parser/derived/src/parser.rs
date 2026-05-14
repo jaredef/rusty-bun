@@ -803,11 +803,165 @@ impl<'src> Parser<'src> {
         Ok(())
     }
     pub(crate) fn consume_semicolon_pub(&mut self) { self.consume_semicolon() }
-    pub(crate) fn extract_obj_destructure_names_pub(&mut self, out: &mut Vec<rusty_js_ast::BindingIdentifier>) -> Result<(), ParseError> {
-        self.extract_destructure_names_object(out)
+    // ─── Tier-Ω.5.g.2: typed BindingPattern parsers ───
+    //
+    // Each entry point assumes the opening `{` / `[` has already been
+    // consumed (mirroring the prior extract_* helpers). The returned
+    // pattern's span covers from `open_start` through the closing brace.
+
+    /// Parse the inside of `{ ... }` as an ObjectPattern. The opening
+    /// `{` is already consumed; this function consumes through the
+    /// matching `}`.
+    pub(crate) fn parse_object_binding_pattern_body(&mut self, open_start: usize) -> Result<rusty_js_ast::ObjectPattern, ParseError> {
+        use rusty_js_ast::{ObjectPattern, ObjectPatternProperty, PropertyKey, BindingElement, BindingPattern, BindingIdentifier};
+        let mut properties: Vec<ObjectPatternProperty> = Vec::new();
+        let mut rest: Option<Box<BindingIdentifier>> = None;
+        loop {
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::RBrace)) {
+                break;
+            }
+            // Rest element: `...ident`
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Spread)) {
+                self.bump()?;
+                let n_span = self.lookahead_span();
+                if let TokenKind::Ident(n) = self.current_kind().clone() {
+                    self.bump()?;
+                    rest = Some(Box::new(BindingIdentifier { name: n, span: n_span }));
+                } else {
+                    return Err(self.err_here("object rest must be a plain identifier".into()));
+                }
+                // Spec: rest must be last; bail.
+                break;
+            }
+            // Property: key [: value] [= default]
+            let prop_start = self.lookahead_span().start;
+            let (key, shorthand_ident): (PropertyKey, Option<BindingIdentifier>) = match self.current_kind().clone() {
+                TokenKind::Ident(name) => {
+                    let span = self.lookahead_span();
+                    self.bump()?;
+                    let id = BindingIdentifier { name: name.clone(), span };
+                    (PropertyKey::Identifier(id.clone()), Some(id))
+                }
+                TokenKind::String(value) => {
+                    self.bump()?;
+                    (PropertyKey::String(std::rc::Rc::new(value)), None)
+                }
+                TokenKind::Number(value, _) => {
+                    self.bump()?;
+                    (PropertyKey::Number(value), None)
+                }
+                TokenKind::Punct(Punct::LBracket) => {
+                    self.bump()?;
+                    let expr = self.parse_assignment_expression()?;
+                    self.expect_punct(Punct::RBracket)?;
+                    (PropertyKey::Computed(expr), None)
+                }
+                _ => return Err(self.err_here("expected property name in object binding pattern".into())),
+            };
+            let (value, shorthand) = if matches!(self.current_kind(), TokenKind::Punct(Punct::Colon)) {
+                self.bump()?;
+                let elem_start = self.lookahead_span().start;
+                let target = self.parse_binding_target()?;
+                let default = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                    self.bump()?;
+                    Some(self.parse_assignment_expression()?)
+                } else { None };
+                let elem_end = self.last_span_end();
+                (BindingElement { target, default, span: Span::new(elem_start, elem_end) }, false)
+            } else {
+                // Shorthand: key is an Identifier; target is the same name.
+                let id = shorthand_ident
+                    .ok_or_else(|| self.err_here("non-identifier key requires `: value`".into()))?;
+                let elem_start = id.span.start;
+                let target = BindingPattern::Identifier(id);
+                let default = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                    self.bump()?;
+                    Some(self.parse_assignment_expression()?)
+                } else { None };
+                let elem_end = self.last_span_end();
+                (BindingElement { target, default, span: Span::new(elem_start, elem_end) }, true)
+            };
+            let prop_end = self.last_span_end();
+            properties.push(ObjectPatternProperty {
+                key, value, shorthand, span: Span::new(prop_start, prop_end),
+            });
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
+                self.bump()?;
+            } else {
+                break;
+            }
+        }
+        self.expect_punct(Punct::RBrace)?;
+        let end = self.last_span_end();
+        Ok(ObjectPattern { properties, rest, span: Span::new(open_start, end) })
     }
-    pub(crate) fn extract_arr_destructure_names_pub(&mut self, out: &mut Vec<rusty_js_ast::BindingIdentifier>) -> Result<(), ParseError> {
-        self.extract_destructure_names_array(out)
+
+    /// Parse the inside of `[ ... ]` as an ArrayPattern. The opening
+    /// `[` is already consumed; this function consumes through `]`.
+    pub(crate) fn parse_array_binding_pattern_body(&mut self, open_start: usize) -> Result<rusty_js_ast::ArrayPattern, ParseError> {
+        use rusty_js_ast::{ArrayPattern, BindingElement, BindingPattern};
+        let mut elements: Vec<Option<BindingElement>> = Vec::new();
+        let mut rest: Option<Box<BindingPattern>> = None;
+        loop {
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::RBracket)) {
+                break;
+            }
+            // Elision hole.
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
+                elements.push(None);
+                self.bump()?;
+                continue;
+            }
+            // Rest element: `...<pattern>`
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Spread)) {
+                self.bump()?;
+                let target = self.parse_binding_target()?;
+                rest = Some(Box::new(target));
+                break;
+            }
+            let elem_start = self.lookahead_span().start;
+            let target = self.parse_binding_target()?;
+            let default = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                self.bump()?;
+                Some(self.parse_assignment_expression()?)
+            } else { None };
+            let elem_end = self.last_span_end();
+            elements.push(Some(BindingElement {
+                target, default, span: Span::new(elem_start, elem_end),
+            }));
+            if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
+                self.bump()?;
+            } else {
+                break;
+            }
+        }
+        self.expect_punct(Punct::RBracket)?;
+        let end = self.last_span_end();
+        Ok(ArrayPattern { elements, rest, span: Span::new(open_start, end) })
+    }
+
+    /// Parse one BindingPattern (Identifier | `{...}` | `[...]`) without
+    /// consuming a trailing default initializer.
+    pub(crate) fn parse_binding_target(&mut self) -> Result<rusty_js_ast::BindingPattern, ParseError> {
+        use rusty_js_ast::{BindingPattern, BindingIdentifier};
+        match self.current_kind().clone() {
+            TokenKind::Ident(n) => {
+                let span = self.lookahead_span();
+                self.bump()?;
+                Ok(BindingPattern::Identifier(BindingIdentifier { name: n, span }))
+            }
+            TokenKind::Punct(Punct::LBrace) => {
+                let open_start = self.lookahead_span().start;
+                self.bump()?;
+                Ok(BindingPattern::Object(self.parse_object_binding_pattern_body(open_start)?))
+            }
+            TokenKind::Punct(Punct::LBracket) => {
+                let open_start = self.lookahead_span().start;
+                self.bump()?;
+                Ok(BindingPattern::Array(self.parse_array_binding_pattern_body(open_start)?))
+            }
+            _ => Err(self.err_here("expected binding identifier or pattern".into())),
+        }
     }
 
     pub(crate) fn err_here(&self, message: String) -> ParseError {

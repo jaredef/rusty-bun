@@ -16,6 +16,14 @@ fn first_stmt(src: &str) -> Stmt {
     }
 }
 
+fn declarator_names(d: &VariableDeclarator) -> Vec<String> {
+    d.target.collect_names().into_iter().map(|n| n.name.clone()).collect()
+}
+
+fn param_names(p: &Parameter) -> Vec<String> {
+    p.target.collect_names().into_iter().map(|n| n.name.clone()).collect()
+}
+
 // ─────────── VariableStatement ───────────
 
 #[test]
@@ -35,9 +43,9 @@ fn var_const_let_kinds() {
 fn var_multiple_declarators() {
     if let Stmt::Variable(v) = first_stmt("let x = 1, y = 2, z;") {
         assert_eq!(v.declarators.len(), 3);
-        assert_eq!(v.declarators[0].names[0].name, "x");
-        assert_eq!(v.declarators[1].names[0].name, "y");
-        assert_eq!(v.declarators[2].names[0].name, "z");
+        assert_eq!(declarator_names(&v.declarators[0]), vec!["x"]);
+        assert_eq!(declarator_names(&v.declarators[1]), vec!["y"]);
+        assert_eq!(declarator_names(&v.declarators[2]), vec!["z"]);
         assert!(v.declarators[2].init.is_none());
     } else { panic!(); }
 }
@@ -53,17 +61,17 @@ fn var_initializer_is_typed_expr() {
 #[test]
 fn var_destructure_object() {
     if let Stmt::Variable(v) = first_stmt("const { a, b: c } = obj;") {
-        let names: Vec<&str> = v.declarators[0].names.iter().map(|n| n.name.as_str()).collect();
+        let names = declarator_names(&v.declarators[0]);
         // a is bare; b is renamed to c — local binding is `c`.
-        assert!(names.contains(&"a"));
-        assert!(names.contains(&"c"));
+        assert!(names.iter().any(|n| n == "a"));
+        assert!(names.iter().any(|n| n == "c"));
     } else { panic!(); }
 }
 
 #[test]
 fn var_destructure_array() {
     if let Stmt::Variable(v) = first_stmt("const [a, b, c] = arr;") {
-        let names: Vec<&str> = v.declarators[0].names.iter().map(|n| n.name.as_str()).collect();
+        let names = declarator_names(&v.declarators[0]);
         assert_eq!(names, vec!["a", "b", "c"]);
     } else { panic!(); }
 }
@@ -135,8 +143,8 @@ fn function_declaration() {
 fn function_with_parameters() {
     if let Stmt::FunctionDecl { params, .. } = first_stmt("function add(a, b) { return a + b; }") {
         assert_eq!(params.len(), 2);
-        assert_eq!(params[0].names[0].name, "a");
-        assert_eq!(params[1].names[0].name, "b");
+        assert_eq!(param_names(&params[0]), vec!["a"]);
+        assert_eq!(param_names(&params[1]), vec!["b"]);
         assert!(!params[0].rest);
     } else { panic!(); }
 }
@@ -156,7 +164,7 @@ fn function_with_rest_parameter() {
         assert_eq!(params.len(), 2);
         assert!(!params[0].rest);
         assert!(params[1].rest);
-        assert_eq!(params[1].names[0].name, "rest");
+        assert_eq!(param_names(&params[1]), vec!["rest"]);
     } else { panic!(); }
 }
 
@@ -164,9 +172,9 @@ fn function_with_rest_parameter() {
 fn function_with_destructure_parameter() {
     if let Stmt::FunctionDecl { params, .. } = first_stmt("function f({a, b: c}) {}") {
         assert_eq!(params.len(), 1);
-        let names: Vec<&str> = params[0].names.iter().map(|n| n.name.as_str()).collect();
-        assert!(names.contains(&"a"));
-        assert!(names.contains(&"c"));
+        let names = param_names(&params[0]);
+        assert!(names.iter().any(|n| n == "a"));
+        assert!(names.iter().any(|n| n == "c"));
     } else { panic!(); }
 }
 
@@ -256,8 +264,10 @@ fn for_c_style() {
 #[test]
 fn for_in() {
     if let Stmt::ForIn { left, .. } = first_stmt("for (const k in obj) f(k);") {
-        if let ForBinding::Decl { name, .. } = left {
-            assert_eq!(name.name, "k");
+        if let ForBinding::Decl { target, .. } = left {
+            if let BindingPattern::Identifier(id) = target {
+                assert_eq!(id.name, "k");
+            } else { panic!("expected identifier target"); }
         } else { panic!("expected decl binding"); }
     } else { panic!("expected for-in"); }
 }
@@ -265,8 +275,10 @@ fn for_in() {
 #[test]
 fn for_of() {
     if let Stmt::ForOf { left, await_, .. } = first_stmt("for (const x of arr) f(x);") {
-        if let ForBinding::Decl { name, .. } = left {
-            assert_eq!(name.name, "x");
+        if let ForBinding::Decl { target, .. } = left {
+            if let BindingPattern::Identifier(id) = target {
+                assert_eq!(id.name, "x");
+            } else { panic!("expected identifier target"); }
         } else { panic!("expected decl binding"); }
         assert!(!await_);
     } else { panic!("expected for-of"); }
@@ -381,4 +393,88 @@ fn typed_module_body() {
     assert!(matches!(&m.body[1], ModuleItem::Statement(Stmt::Variable(_))));
     assert!(matches!(&m.body[2], ModuleItem::Statement(Stmt::Expression { .. })));
     assert!(matches!(&m.body[3], ModuleItem::Export(_)));
+}
+
+// ─────────── Tier-Ω.5.g.2: typed BindingPattern parser tests ───────────
+
+#[test]
+fn destructure_array_with_rest() {
+    if let Stmt::Variable(v) = first_stmt("const [a, b, ...rest] = arr;") {
+        let target = &v.declarators[0].target;
+        if let BindingPattern::Array(arr) = target {
+            assert_eq!(arr.elements.len(), 2);
+            // first two are named elements
+            for (i, expected) in ["a", "b"].iter().enumerate() {
+                if let Some(e) = &arr.elements[i] {
+                    if let BindingPattern::Identifier(id) = &e.target {
+                        assert_eq!(id.name, *expected);
+                    } else { panic!("expected ident at {}", i); }
+                } else { panic!("expected element at {}", i); }
+            }
+            // rest
+            if let Some(rest) = &arr.rest {
+                if let BindingPattern::Identifier(id) = rest.as_ref() {
+                    assert_eq!(id.name, "rest");
+                } else { panic!("expected ident rest"); }
+            } else { panic!("expected rest"); }
+        } else { panic!("expected array pattern"); }
+        let names: Vec<String> = target.collect_names().into_iter().map(|n| n.name.clone()).collect();
+        assert_eq!(names, vec!["a", "b", "rest"]);
+    } else { panic!("expected variable"); }
+}
+
+#[test]
+fn destructure_object_with_rename_and_rest() {
+    if let Stmt::Variable(v) = first_stmt("const {x, y: alias, ...rest} = obj;") {
+        let target = &v.declarators[0].target;
+        if let BindingPattern::Object(obj) = target {
+            assert_eq!(obj.properties.len(), 2);
+            // Property 0: x — shorthand
+            assert!(obj.properties[0].shorthand);
+            if let BindingPattern::Identifier(id) = &obj.properties[0].value.target {
+                assert_eq!(id.name, "x");
+            } else { panic!("expected ident"); }
+            // Property 1: y: alias — renamed
+            assert!(!obj.properties[1].shorthand);
+            if let BindingPattern::Identifier(id) = &obj.properties[1].value.target {
+                assert_eq!(id.name, "alias");
+            } else { panic!("expected alias"); }
+            // Rest
+            let rest = obj.rest.as_ref().expect("rest");
+            assert_eq!(rest.name, "rest");
+        } else { panic!("expected object pattern"); }
+        let names: Vec<String> = target.collect_names().into_iter().map(|n| n.name.clone()).collect();
+        assert_eq!(names, vec!["x", "alias", "rest"]);
+    } else { panic!("expected variable"); }
+}
+
+#[test]
+fn function_with_two_destructure_params() {
+    if let Stmt::FunctionDecl { params, .. } = first_stmt("function f({a, b}, [c, d]) {}") {
+        assert_eq!(params.len(), 2);
+        if let BindingPattern::Object(_) = &params[0].target {} else { panic!("expected object pattern param 0"); }
+        if let BindingPattern::Array(_) = &params[1].target {} else { panic!("expected array pattern param 1"); }
+        let n0: Vec<String> = params[0].target.collect_names().into_iter().map(|n| n.name.clone()).collect();
+        let n1: Vec<String> = params[1].target.collect_names().into_iter().map(|n| n.name.clone()).collect();
+        assert_eq!(n0, vec!["a", "b"]);
+        assert_eq!(n1, vec!["c", "d"]);
+    } else { panic!("expected function decl"); }
+}
+
+#[test]
+fn template_literal_typed() {
+    // The template appears in expression-statement position.
+    if let Stmt::Expression { expr, .. } = first_stmt("`hello ${x} world ${y}!`;") {
+        if let Expr::TemplateLiteral { quasis, expressions, .. } = expr {
+            let qs: Vec<String> = quasis.iter().map(|s| (**s).clone()).collect();
+            assert_eq!(qs, vec!["hello ".to_string(), " world ".to_string(), "!".to_string()]);
+            assert_eq!(expressions.len(), 2);
+            if let Expr::Identifier { name, .. } = &expressions[0] {
+                assert_eq!(name, "x");
+            } else { panic!("expected ident x"); }
+            if let Expr::Identifier { name, .. } = &expressions[1] {
+                assert_eq!(name, "y");
+            } else { panic!("expected ident y"); }
+        } else { panic!("expected template literal, got {:?}", expr); }
+    } else { panic!("expected expression statement"); }
 }

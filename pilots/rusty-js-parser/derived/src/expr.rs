@@ -788,26 +788,38 @@ impl<'src> Parser<'src> {
     }
 
     /// Walks a `\`head${expr}middle${expr}tail\`` template-literal token
-    /// stream. v1 stores the result as Expr::Opaque covering the full
-    /// span; a typed TemplateLiteral AST node lands when the engine's
-    /// substitution-evaluation runtime arrives.
+    /// stream. Tier-Ω.5.g.2 substrate round: returns
+    /// Expr::TemplateLiteral with quasis (cooked strings) and
+    /// expressions captured in source order. Compiler lowering to a
+    /// concat chain lands in Ω.5.g.3.
     fn parse_template_with_substitutions(&mut self, start: usize) -> Result<Expr, ParseError> {
         use crate::token::TemplatePart;
+        let mut quasis: Vec<std::rc::Rc<String>> = Vec::new();
+        let mut expressions: Vec<Expr> = Vec::new();
+        // Consume Head, capturing its cooked text as the first quasi.
+        let head_cooked = match self.current_kind().clone() {
+            TokenKind::Template { cooked, part: TemplatePart::Head, .. } => cooked.unwrap_or_default(),
+            _ => return Err(self.err_here("expected template head".into())),
+        };
+        quasis.push(std::rc::Rc::new(head_cooked));
         self.bump()?; // consume Head
         loop {
             // Parse the substitution expression.
-            let _ = self.parse_expression()?;
+            let expr = self.parse_expression()?;
+            expressions.push(expr);
             // After the substitution, the lookahead is `}` (under Div goal
             // since the substitution completes an expression). Re-lex
             // starting at that `}` with TemplateTail goal to emit a
             // Middle/Tail token.
             self.refetch_lookahead_with_goal(crate::lexer::LexerGoal::TemplateTail)?;
             match self.current_kind().clone() {
-                TokenKind::Template { part: TemplatePart::Middle, .. } => {
+                TokenKind::Template { cooked, part: TemplatePart::Middle, .. } => {
+                    quasis.push(std::rc::Rc::new(cooked.unwrap_or_default()));
                     self.bump()?;
                     continue;
                 }
-                TokenKind::Template { part: TemplatePart::Tail, .. } => {
+                TokenKind::Template { cooked, part: TemplatePart::Tail, .. } => {
+                    quasis.push(std::rc::Rc::new(cooked.unwrap_or_default()));
                     self.bump()?;
                     break;
                 }
@@ -815,7 +827,7 @@ impl<'src> Parser<'src> {
             }
         }
         let end = self.last_span_end();
-        Ok(Expr::Opaque { span: Span::new(start, end) })
+        Ok(Expr::TemplateLiteral { quasis, expressions, span: Span::new(start, end) })
     }
 
     fn parse_arrow_function(&mut self, is_async: bool) -> Result<Expr, ParseError> {
@@ -827,7 +839,9 @@ impl<'src> Parser<'src> {
                 let span = self.lookahead_span();
                 self.bump()?;
                 vec![rusty_js_ast::Parameter {
-                    names: vec![rusty_js_ast::BindingIdentifier { name: n, span }],
+                    target: rusty_js_ast::BindingPattern::Identifier(
+                        rusty_js_ast::BindingIdentifier { name: n, span }
+                    ),
                     default: None, rest: false, span,
                 }]
             } else if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {

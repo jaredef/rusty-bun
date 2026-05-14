@@ -10,8 +10,8 @@
 use crate::parser::{ParseError, Parser};
 use crate::token::{Punct, TokenKind};
 use rusty_js_ast::{
-    BindingIdentifier, CatchClause, Expr, ForBinding, ForInit, Span, Stmt, SwitchCase,
-    VariableDeclarator, VariableKind, VariableStatement,
+    BindingIdentifier, BindingPattern, CatchClause, Expr, ForBinding, ForInit, Span, Stmt,
+    SwitchCase, VariableDeclarator, VariableKind, VariableStatement,
 };
 
 impl<'src> Parser<'src> {
@@ -114,31 +114,13 @@ impl<'src> Parser<'src> {
         let mut declarators = Vec::new();
         loop {
             let d_start = self.lookahead_span().start;
-            let mut names: Vec<BindingIdentifier> = Vec::new();
-            // BindingIdentifier or simple BindingPattern (object/array destructure).
-            // Full BindingPattern AST is deferred; we extract names only.
-            match self.current_kind().clone() {
-                TokenKind::Ident(name) => {
-                    let span = self.lookahead_span();
-                    self.bump()?;
-                    names.push(BindingIdentifier { name, span });
-                }
-                TokenKind::Punct(Punct::LBrace) => {
-                    self.bump()?;
-                    self.extract_obj_destructure_names_pub(&mut names)?;
-                }
-                TokenKind::Punct(Punct::LBracket) => {
-                    self.bump()?;
-                    self.extract_arr_destructure_names_pub(&mut names)?;
-                }
-                _ => return Err(self.err_here("expected binding identifier or pattern".into())),
-            }
+            let target = self.parse_binding_target()?;
             let init = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
                 self.bump()?;
                 Some(self.parse_assignment_expression()?)
             } else { None };
             let d_end = self.last_span_end();
-            declarators.push(VariableDeclarator { names, init, span: Span::new(d_start, d_end) });
+            declarators.push(VariableDeclarator { target, init, span: Span::new(d_start, d_end) });
             if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
                 self.bump()?;
             } else { break; }
@@ -182,30 +164,14 @@ impl<'src> Parser<'src> {
             let rest = if matches!(self.current_kind(), TokenKind::Punct(Punct::Spread)) {
                 self.bump()?; true
             } else { false };
-            let mut names: Vec<BindingIdentifier> = Vec::new();
-            match self.current_kind().clone() {
-                TokenKind::Ident(n) => {
-                    let span = self.lookahead_span();
-                    self.bump()?;
-                    names.push(BindingIdentifier { name: n, span });
-                }
-                TokenKind::Punct(Punct::LBrace) => {
-                    self.bump()?;
-                    self.extract_obj_destructure_names_pub(&mut names)?;
-                }
-                TokenKind::Punct(Punct::LBracket) => {
-                    self.bump()?;
-                    self.extract_arr_destructure_names_pub(&mut names)?;
-                }
-                _ => return Err(self.err_here("expected parameter binding".into())),
-            }
+            let target = self.parse_binding_target()?;
             let default = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
                 self.bump()?;
                 Some(self.parse_assignment_expression()?)
             } else { None };
             let p_end = self.last_span_end();
             out.push(rusty_js_ast::Parameter {
-                names, default, rest, span: Span::new(p_start, p_end),
+                target, default, rest, span: Span::new(p_start, p_end),
             });
             if matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
                 self.bump()?;
@@ -479,7 +445,9 @@ impl<'src> Parser<'src> {
                     let body = self.parse_statement()?;
                     let end = self.last_span_end();
                     let left = ForBinding::Decl {
-                        kind, name: BindingIdentifier { name: n, span: id_span }, span: Span::new(kw_span.start, id_span.end),
+                        kind,
+                        target: BindingPattern::Identifier(BindingIdentifier { name: n, span: id_span }),
+                        span: Span::new(kw_span.start, id_span.end),
                     };
                     return if is_of {
                         Ok(Stmt::ForOf { left, right, body: Box::new(body), await_: await_form, span: Span::new(start, end) })
@@ -490,13 +458,12 @@ impl<'src> Parser<'src> {
                 // C-style with single var decl + optional initializer +
                 // possibly more declarators. Recover via parse_variable_statement-like loop.
                 let mut declarators = vec![{
-                    let mut names = vec![BindingIdentifier { name: n, span: id_span }];
+                    let target = BindingPattern::Identifier(BindingIdentifier { name: n, span: id_span });
                     let init = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
                         self.bump()?;
                         Some(self.parse_assignment_expression()?)
                     } else { None };
-                    let _ = &mut names;
-                    VariableDeclarator { names, init, span: Span::new(id_span.start, self.last_span_end()) }
+                    VariableDeclarator { target, init, span: Span::new(id_span.start, self.last_span_end()) }
                 }];
                 while matches!(self.current_kind(), TokenKind::Punct(Punct::Comma)) {
                     self.bump()?;
@@ -509,7 +476,7 @@ impl<'src> Parser<'src> {
                             Some(self.parse_assignment_expression()?)
                         } else { None };
                         declarators.push(VariableDeclarator {
-                            names: vec![BindingIdentifier { name: nn, span: nn_span }],
+                            target: BindingPattern::Identifier(BindingIdentifier { name: nn, span: nn_span }),
                             init, span: Span::new(d_start, self.last_span_end()),
                         });
                     } else { break; }
@@ -549,13 +516,13 @@ impl<'src> Parser<'src> {
                 let body = self.parse_statement()?;
                 let end = self.last_span_end();
                 let left = match e {
-                    Expr::Identifier { name, span } => ForBinding::Identifier(BindingIdentifier { name, span }),
+                    Expr::Identifier { name, span } => ForBinding::Pattern(BindingPattern::Identifier(BindingIdentifier { name, span })),
                     _ => {
                         // Non-identifier LHS — represent the underlying ident
                         // via the expression's span. Round-3c keeps the type
                         // narrow.
                         let span = e.span();
-                        ForBinding::Identifier(BindingIdentifier { name: String::new(), span })
+                        ForBinding::Pattern(BindingPattern::Identifier(BindingIdentifier { name: String::new(), span }))
                     }
                 };
                 return if is_of {

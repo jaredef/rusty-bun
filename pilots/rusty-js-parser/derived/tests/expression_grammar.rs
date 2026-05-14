@@ -362,7 +362,9 @@ fn function_expression_named() {
 fn arrow_function_single_param() {
     if let Expr::Arrow { params, body, is_async, .. } = expr_of("x => x + 1") {
         assert_eq!(params.len(), 1);
-        assert_eq!(params[0].names[0].name, "x");
+        if let BindingPattern::Identifier(id) = &params[0].target {
+            assert_eq!(id.name, "x");
+        } else { panic!("expected identifier param"); }
         assert!(matches!(body, ArrowBody::Expression(_)));
         assert!(!is_async);
     } else { panic!("expected arrow"); }

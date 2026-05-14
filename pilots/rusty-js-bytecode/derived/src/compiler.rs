@@ -1439,6 +1439,21 @@ impl Compiler {
                 self.compile_expr(alternate)?;
                 self.patch_jump(j_end);
             }
+            Expr::Sequence { expressions, .. } => {
+                // Tier-Ω.5.n: comma expression `a, b, c`. Evaluate each;
+                // discard all but the last; final value remains on stack.
+                let n = expressions.len();
+                if n == 0 {
+                    encode_op(&mut self.bytecode, Op::PushUndef);
+                } else {
+                    for (i, ex) in expressions.iter().enumerate() {
+                        self.compile_expr(ex)?;
+                        if i + 1 < n {
+                            encode_op(&mut self.bytecode, Op::Pop);
+                        }
+                    }
+                }
+            }
             Expr::Assign { operator, target, value, .. } => {
                 self.compile_assign(e.span(), *operator, target, value)?;
             }

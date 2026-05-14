@@ -33,6 +33,10 @@ Thumbs.db
 *.log
 .direnv/
 
+# Local cargo config — redirects target/ to an out-of-tree drive on this
+# host (T7 mounted at /media/jaredef/T7). Machine-specific; not portable.
+/.cargo/
+
 # Translation pipeline scratch
 phase-a-scratch/
 phase-b-scratch/

@@ -249,6 +249,127 @@ fn assignment_to_global() {
     assert!(d.contains("StoreGlobal"));
 }
 
+// ─────────── Member access ───────────
+
+#[test]
+fn member_dot() {
+    let d = disasm("a.b;");
+    assert!(d.contains("GetProp"));
+    assert!(d.contains("\"b\""));
+}
+
+#[test]
+fn member_computed() {
+    let d = disasm("a[1];");
+    assert!(d.contains("GetIndex"));
+}
+
+#[test]
+fn member_chained() {
+    let d = disasm("a.b.c.d;");
+    let count = d.matches("GetProp").count();
+    assert_eq!(count, 3);
+}
+
+// ─────────── Call / New ───────────
+
+#[test]
+fn call_no_args() {
+    let d = disasm("f();");
+    assert!(d.contains("Call 0"));
+}
+
+#[test]
+fn call_with_args() {
+    let d = disasm("f(1, 2, 3);");
+    assert!(d.contains("Call 3"));
+}
+
+#[test]
+fn new_expression() {
+    let d = disasm("new Foo(1);");
+    assert!(d.contains("New 1"));
+}
+
+// ─────────── Object / Array literals ───────────
+
+#[test]
+fn array_literal() {
+    let d = disasm("[1, 2, 3];");
+    assert!(d.contains("NewArray"));
+    let count = d.matches("InitIndex").count();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn object_literal() {
+    let d = disasm("({a: 1, b: 2});");
+    assert!(d.contains("NewObject"));
+    let count = d.matches("InitProp").count();
+    assert_eq!(count, 2);
+}
+
+// ─────────── Update operators ───────────
+
+#[test]
+fn prefix_increment() {
+    let d = disasm("let x = 0; ++x;");
+    assert!(d.contains("Inc"));
+}
+
+#[test]
+fn postfix_increment() {
+    let d = disasm("let x = 0; x++;");
+    assert!(d.contains("Inc"));
+    // Postfix should also emit a Dup to preserve the prior value as the result
+    assert!(d.contains("Dup"));
+}
+
+// ─────────── Functions ───────────
+
+#[test]
+fn function_declaration_emits_closure_and_local() {
+    let d = disasm("function foo() {}");
+    assert!(d.contains("MakeClosure"));
+    assert!(d.contains("StoreLocal"));
+}
+
+#[test]
+fn function_expression_emits_closure() {
+    let d = disasm("(function () {});");
+    assert!(d.contains("MakeClosure"));
+}
+
+#[test]
+fn arrow_function_emits_make_arrow() {
+    let d = disasm("(x => x + 1);");
+    assert!(d.contains("MakeArrow"));
+}
+
+// ─────────── Try / catch ───────────
+
+#[test]
+fn try_emits_try_enter_exit() {
+    let d = disasm("try { f(); } catch (e) { g(e); }");
+    assert!(d.contains("TryEnter"));
+    assert!(d.contains("TryExit"));
+}
+
+#[test]
+fn try_with_catch_param_stores_local() {
+    let d = disasm("try { f(); } catch (e) { e; }");
+    // catch (e) binds the thrown value to local e.
+    assert!(d.contains("StoreLocal"));
+    assert!(d.contains("LoadLocal"));
+}
+
+#[test]
+fn try_finally() {
+    let d = disasm("try { f(); } finally { g(); }");
+    assert!(d.contains("TryEnter"));
+    assert!(d.contains("TryExit"));
+}
+
 // ─────────── Statements ───────────
 
 #[test]

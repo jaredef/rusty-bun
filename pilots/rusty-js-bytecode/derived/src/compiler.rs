@@ -229,6 +229,63 @@ impl Compiler {
                     return Err(self.err(span, "break outside of loop"));
                 }
             }
+            Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. } => {
+                let proto = self.compile_function_proto(name.clone(), *is_async, *is_generator, params, body)?;
+                let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut self.bytecode, Op::MakeClosure);
+                encode_u16(&mut self.bytecode, idx);
+                // Bind to a local slot under the function's name.
+                if let Some(n) = name {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: n.name.clone(),
+                        kind: VariableKind::Var,  // functions are var-scoped per spec
+                        depth: 0,
+                    });
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, slot);
+                } else {
+                    encode_op(&mut self.bytecode, Op::Pop);
+                }
+            }
+            Stmt::Try { block, handler, finalizer, .. } => {
+                // v1 minimal: encode TRY_ENTER with catch offset, compile block,
+                // TRY_EXIT, jump past handler/finalizer; emit handler/finalizer
+                // bodies. No exception-value binding to catch parameter yet
+                // (would require a CATCH_BIND opcode). Body content compiles
+                // normally.
+                let try_enter = self.bytecode.len();
+                encode_op(&mut self.bytecode, Op::TryEnter);
+                let catch_off_patch = self.bytecode.len();
+                encode_u32(&mut self.bytecode, 0);
+                self.compile_stmt(block)?;
+                encode_op(&mut self.bytecode, Op::TryExit);
+                let jump_to_end = self.emit_jump(Op::Jump);
+                // Patch the catch offset to point here (start of handler).
+                let catch_pos = self.bytecode.len();
+                let _ = try_enter;
+                self.bytecode[catch_off_patch..catch_off_patch + 4]
+                    .copy_from_slice(&(catch_pos as u32).to_le_bytes());
+                if let Some(h) = handler {
+                    // Binding the catch param to a local: v1 pops the thrown
+                    // value into a fresh slot if param present, else discards.
+                    if let Some(p) = &h.param {
+                        let slot = self.alloc_local(LocalDescriptor {
+                            name: p.name.clone(),
+                            kind: VariableKind::Let,
+                            depth: 0,
+                        });
+                        encode_op(&mut self.bytecode, Op::StoreLocal);
+                        encode_u16(&mut self.bytecode, slot);
+                    } else {
+                        encode_op(&mut self.bytecode, Op::Pop);
+                    }
+                    self.compile_stmt(&h.body)?;
+                }
+                self.patch_jump(jump_to_end);
+                if let Some(fin) = finalizer {
+                    self.compile_stmt(fin)?;
+                }
+            }
             Stmt::Continue { label, .. } => {
                 if label.is_some() {
                     return Err(self.err(span, "labelled continue not yet supported"));
@@ -452,11 +509,211 @@ impl Compiler {
                 encode_op(&mut self.bytecode, Op::LoadGlobal);
                 encode_u16(&mut self.bytecode, idx);
             }
+            Expr::Member { object, property, optional: _, .. } => {
+                self.compile_expr(object)?;
+                match property.as_ref() {
+                    MemberProperty::Identifier { name, .. } => {
+                        let idx = self.constants.intern(Constant::String(name.clone()));
+                        encode_op(&mut self.bytecode, Op::GetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                    MemberProperty::Computed { expr, .. } => {
+                        self.compile_expr(expr)?;
+                        encode_op(&mut self.bytecode, Op::GetIndex);
+                    }
+                    MemberProperty::Private { name, .. } => {
+                        let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                        encode_op(&mut self.bytecode, Op::GetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                }
+            }
+            Expr::Call { callee, arguments, optional: _, .. } => {
+                self.compile_expr(callee)?;
+                let n = arguments.len();
+                if n > 255 {
+                    return Err(self.err(e.span(), "too many call arguments (>255)"));
+                }
+                for a in arguments {
+                    match a {
+                        Argument::Expr(e) => self.compile_expr(e)?,
+                        Argument::Spread { .. } => {
+                            return Err(self.err(e.span(), "spread arguments not yet supported"));
+                        }
+                    }
+                }
+                encode_op(&mut self.bytecode, Op::Call);
+                encode_u8(&mut self.bytecode, n as u8);
+            }
+            Expr::New { callee, arguments, .. } => {
+                self.compile_expr(callee)?;
+                let n = arguments.len();
+                if n > 255 {
+                    return Err(self.err(e.span(), "too many new arguments (>255)"));
+                }
+                for a in arguments {
+                    match a {
+                        Argument::Expr(e) => self.compile_expr(e)?,
+                        Argument::Spread { .. } => {
+                            return Err(self.err(e.span(), "spread arguments not yet supported"));
+                        }
+                    }
+                }
+                encode_op(&mut self.bytecode, Op::New);
+                encode_u8(&mut self.bytecode, n as u8);
+            }
+            Expr::Array { elements, .. } => {
+                let len = elements.len();
+                encode_op(&mut self.bytecode, Op::NewArray);
+                encode_u16(&mut self.bytecode, len.min(u16::MAX as usize) as u16);
+                let mut idx = 0u32;
+                for el in elements {
+                    match el {
+                        ArrayElement::Elision { .. } => { idx += 1; }
+                        ArrayElement::Expr(ex) => {
+                            self.compile_expr(ex)?;
+                            encode_op(&mut self.bytecode, Op::InitIndex);
+                            encode_u32(&mut self.bytecode, idx);
+                            idx += 1;
+                        }
+                        ArrayElement::Spread { .. } => {
+                            return Err(self.err(e.span(), "spread in array literal not yet supported"));
+                        }
+                    }
+                }
+            }
+            Expr::Object { properties, .. } => {
+                encode_op(&mut self.bytecode, Op::NewObject);
+                for p in properties {
+                    match p {
+                        ObjectProperty::Property { key, value, .. } => {
+                            self.compile_expr(value)?;
+                            match key {
+                                ObjectKey::Identifier { name, .. } | ObjectKey::String { value: name, .. } => {
+                                    let idx = self.constants.intern(Constant::String(name.clone()));
+                                    encode_op(&mut self.bytecode, Op::InitProp);
+                                    encode_u16(&mut self.bytecode, idx);
+                                }
+                                ObjectKey::Number { value, .. } => {
+                                    let name = if value.fract() == 0.0 {
+                                        format!("{}", *value as i64)
+                                    } else { format!("{}", value) };
+                                    let idx = self.constants.intern(Constant::String(name));
+                                    encode_op(&mut self.bytecode, Op::InitProp);
+                                    encode_u16(&mut self.bytecode, idx);
+                                }
+                                ObjectKey::Computed { .. } => {
+                                    return Err(self.err(e.span(), "computed object key not yet supported"));
+                                }
+                            }
+                        }
+                        ObjectProperty::Spread { .. } => {
+                            return Err(self.err(e.span(), "spread in object literal not yet supported"));
+                        }
+                    }
+                }
+            }
+            Expr::Function { name, is_async, is_generator, params, body, .. } => {
+                let proto = self.compile_function_proto(name.clone(), *is_async, *is_generator, params, body)?;
+                let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut self.bytecode, Op::MakeClosure);
+                encode_u16(&mut self.bytecode, idx);
+            }
+            Expr::Arrow { is_async, params, body, .. } => {
+                // Arrow body is either a single Expression or a Block.
+                let body_stmts: Vec<Stmt> = match body {
+                    ArrowBody::Block(stmts) => stmts.clone(),
+                    ArrowBody::Expression(expr) => vec![Stmt::Return {
+                        argument: Some((**expr).clone()),
+                        span: expr.span(),
+                    }],
+                };
+                let proto = self.compile_function_proto(None, *is_async, false, params, &body_stmts)?;
+                let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut self.bytecode, Op::MakeArrow);
+                encode_u16(&mut self.bytecode, idx);
+            }
+            Expr::Update { operator, argument, prefix, .. } => {
+                // v1: support identifier-target updates only.
+                let name = match argument.as_ref() {
+                    Expr::Identifier { name, .. } => name.clone(),
+                    _ => return Err(self.err(e.span(), "update on non-identifier not yet supported")),
+                };
+                let slot = self.resolve_local(&name);
+                // Load current value
+                if let Some(s) = slot {
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, s);
+                } else {
+                    let idx = self.constants.intern(Constant::String(name.clone()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, idx);
+                }
+                if !prefix {
+                    // Postfix: duplicate the current value as the expression's result.
+                    encode_op(&mut self.bytecode, Op::Dup);
+                }
+                encode_op(&mut self.bytecode, match operator {
+                    UpdateOp::Inc => Op::Inc,
+                    UpdateOp::Dec => Op::Dec,
+                });
+                // Store back
+                if let Some(s) = slot {
+                    if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, s);
+                } else {
+                    let idx = self.constants.intern(Constant::String(name.clone()));
+                    if *prefix { encode_op(&mut self.bytecode, Op::Dup); }
+                    encode_op(&mut self.bytecode, Op::StoreGlobal);
+                    encode_u16(&mut self.bytecode, idx);
+                }
+                if !prefix {
+                    // Result is the prior value already on the stack (from
+                    // the Dup before Inc/Dec); the Store consumed the new
+                    // value, leaving the old.
+                }
+            }
             _ => {
                 return Err(self.err(e.span(), "expression form not yet supported in compiler v1"));
             }
         }
         Ok(())
+    }
+
+    /// Compile a nested function body into a FunctionProto. v1 does not
+    /// yet resolve upvalues (closure captures); nested functions can
+    /// reference globals but not outer-frame locals.
+    fn compile_function_proto(
+        &mut self,
+        _name: Option<BindingIdentifier>,
+        _is_async: bool,
+        _is_generator: bool,
+        params: &[Parameter],
+        body: &[Stmt],
+    ) -> Result<FunctionProto, CompileError> {
+        // Sub-compiler with its own state.
+        let mut sub = Compiler::new();
+        // Register parameters as locals (slot 0..n).
+        let param_count = params.len() as u16;
+        for p in params {
+            for n in &p.names {
+                sub.alloc_local(LocalDescriptor {
+                    name: n.name.clone(),
+                    kind: VariableKind::Let,
+                    depth: 0,
+                });
+            }
+        }
+        for s in body { sub.compile_stmt(s)?; }
+        encode_op(&mut sub.bytecode, Op::ReturnUndef);
+        Ok(FunctionProto {
+            bytecode: sub.bytecode,
+            constants: sub.constants,
+            params: param_count,
+            locals: sub.locals,
+            upvalues: Vec::new(),
+        })
     }
 
     fn record_span(&mut self, span: Span) {

@@ -26,6 +26,11 @@ pub struct Runtime {
     pub globals: HashMap<String, Value>,
     pub last_value: Value,
     pub host_hooks: crate::module::HostHooks,
+    /// Managed heap. Wired but not yet authoritative for Value::Object;
+    /// round 3.e.d migrates Value::Object from Rc<RefCell<Object>> to
+    /// ObjectId, at which point this heap becomes the storage for every
+    /// allocated Object.
+    pub heap: rusty_js_gc::Heap<crate::value::Object>,
 }
 
 impl Runtime {
@@ -34,7 +39,16 @@ impl Runtime {
             globals: HashMap::new(),
             last_value: Value::Undefined,
             host_hooks: crate::module::HostHooks::default(),
+            heap: rusty_js_gc::Heap::new(),
         }
+    }
+
+    /// Run a full mark-sweep cycle on the heap. Roots are not yet
+    /// enumerated since Value::Object is still Rc-backed in v1; the
+    /// migration in 3.e.d wires the root enumeration. In v1 the heap
+    /// is always empty, so this is operationally a no-op.
+    pub fn collect(&mut self) -> usize {
+        self.heap.collect([])
     }
 
     /// Public wrapper: run a module-level Frame. Used by evaluate_module

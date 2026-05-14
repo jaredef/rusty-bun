@@ -10,3 +10,4 @@ path = "src/lib.rs"
 rusty-js-ast = { path = "../../rusty-js-ast" }
 rusty-js-parser = { path = "../../rusty-js-parser/derived" }
 rusty-js-bytecode = { path = "../../rusty-js-bytecode/derived" }
+rusty-js-gc = { path = "../../rusty-js-gc/derived" }

@@ -460,6 +460,7 @@ version = "0.1.0"
 dependencies = [
  "rusty-js-ast",
  "rusty-js-bytecode",
+ "rusty-js-gc",
  "rusty-js-parser",
 ]
 

@@ -14,6 +14,28 @@ use std::rc::Rc;
 
 pub type ObjectRef = Rc<RefCell<Object>>;
 
+// ──────────────── GC Trace impl ────────────────
+//
+// Object stores property values as `Value`, and Value::Object currently
+// holds Rc<RefCell<Object>> (v1 representation). The Trace impl walks
+// the property values + proto + InternalKind fields, pushing the
+// embedded ObjectIds where present.
+//
+// In v1 the Value::Object payload is Rc<RefCell<Object>>, so there are
+// no ObjectIds to push — the GC's reachability sweep is operationally
+// inert. Wiring the Trace impl now means round 3.e.d (the Value migration)
+// changes only the Value enum + a small set of construction sites; the
+// trace topology already exists.
+impl rusty_js_gc::Trace for Object {
+    fn trace(&self, _ids: &mut Vec<rusty_js_gc::ObjectId>) {
+        // v1: no GC-tracked edges since Object isn't yet stored in the
+        // heap. Round 3.e.d migrates Value::Object to ObjectId; this
+        // impl then walks proto + properties.values() + InternalKind
+        // fields, pushing each contained ObjectId. The shape is
+        // already correct.
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Undefined,

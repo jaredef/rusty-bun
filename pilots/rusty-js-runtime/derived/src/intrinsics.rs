@@ -26,6 +26,7 @@ impl Runtime {
         self.install_object_static();
         self.install_array_static();
         self.install_symbol_static();
+        self.install_number_static();
         self.install_math();
         self.install_json();
         self.install_console();
@@ -127,6 +128,8 @@ impl Runtime {
             if proto_override.is_some() { ordinary.proto = proto_override; }
             let this_id = rt.alloc_object(ordinary);
             let this_obj = Value::Object(this_id);
+            // Tier-Ω.5.s: __construct mirrors Op::New — mark new.target.
+            rt.pending_new_target = Some(callee.clone());
             let ret = rt.call_function(callee, this_obj.clone(), collected)?;
             Ok(match ret {
                 Value::Object(_) => ret,
@@ -623,6 +626,62 @@ impl Runtime {
             Ok(Value::Object(out))
         });
         self.globals.insert("Array".into(), Value::Object(arr_ctor));
+    }
+
+    /// Tier-Ω.5.s: Number static surface — constants + numeric predicates.
+    /// The comment at the top of this file promised this surface; the
+    /// install function was never wired. semver and friends read
+    /// `Number.MAX_SAFE_INTEGER` / `Number.isInteger`, so this closure
+    /// is load-bearing for the parity corpus.
+    fn install_number_static(&mut self) {
+        let num = self.alloc_object(Object::new_ordinary());
+        // Constants per ECMA-262 §21.1.2.
+        self.object_set(num, "MAX_SAFE_INTEGER".into(), Value::Number(9007199254740991.0));
+        self.object_set(num, "MIN_SAFE_INTEGER".into(), Value::Number(-9007199254740991.0));
+        self.object_set(num, "MAX_VALUE".into(), Value::Number(f64::MAX));
+        self.object_set(num, "MIN_VALUE".into(), Value::Number(5e-324));
+        self.object_set(num, "EPSILON".into(), Value::Number(f64::EPSILON));
+        self.object_set(num, "POSITIVE_INFINITY".into(), Value::Number(f64::INFINITY));
+        self.object_set(num, "NEGATIVE_INFINITY".into(), Value::Number(f64::NEG_INFINITY));
+        self.object_set(num, "NaN".into(), Value::Number(f64::NAN));
+        // Predicates. Note: Number.isX (capital-N) differs from global
+        // isX in NOT coercing — typeof check first, false otherwise.
+        register_method(self, num, "isInteger", |_rt, args| {
+            let n = match args.first() {
+                Some(Value::Number(n)) => *n,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            Ok(Value::Boolean(n.is_finite() && n.floor() == n))
+        });
+        register_method(self, num, "isFinite", |_rt, args| {
+            let n = match args.first() {
+                Some(Value::Number(n)) => *n,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            Ok(Value::Boolean(n.is_finite()))
+        });
+        register_method(self, num, "isNaN", |_rt, args| {
+            let n = match args.first() {
+                Some(Value::Number(n)) => *n,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            Ok(Value::Boolean(n.is_nan()))
+        });
+        register_method(self, num, "isSafeInteger", |_rt, args| {
+            let n = match args.first() {
+                Some(Value::Number(n)) => *n,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            Ok(Value::Boolean(n.is_finite() && n.floor() == n && n.abs() <= 9007199254740991.0))
+        });
+        // Alias the global parseInt / parseFloat onto Number.
+        if let Some(pi) = self.globals.get("parseInt").cloned() {
+            self.object_set(num, "parseInt".into(), pi);
+        }
+        if let Some(pf) = self.globals.get("parseFloat").cloned() {
+            self.object_set(num, "parseFloat".into(), pf);
+        }
+        self.globals.insert("Number".into(), Value::Object(num));
     }
 
     fn install_symbol_static(&mut self) {

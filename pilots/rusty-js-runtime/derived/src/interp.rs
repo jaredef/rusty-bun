@@ -59,6 +59,14 @@ pub struct Runtime {
     /// Array.prototype.map's callback dispatch, and the like see a real
     /// receiver. Saved/restored across nested calls.
     pub current_this: Value,
+    /// Tier-Ω.5.s: `new.target` slot pending injection into the next
+    /// closure frame to be entered via `call_function`. Set by Op::New
+    /// before dispatching, consumed (take()) at frame construction.
+    /// Native frames don't read it directly; they call current_new_target()
+    /// if they need the value. Mirrors current_this's save/restore shape
+    /// for native dispatch.
+    pub pending_new_target: Option<Value>,
+    pub current_new_target: Option<Value>,
     // ─── Intrinsic prototypes (Tier-Ω.5.a) ───
     //
     // Stashed ObjectIds for the canonical prototype objects. Each
@@ -94,6 +102,8 @@ impl Runtime {
             job_queue: crate::job_queue::JobQueue::new(),
             pending_unhandled: HashSet::new(),
             current_this: Value::Undefined,
+            pending_new_target: None,
+            current_new_target: None,
             object_prototype: None,
             array_prototype: None,
             function_prototype: None,
@@ -856,6 +866,13 @@ impl Runtime {
                     };
                     frame.push(v);
                 }
+                Op::PushNewTarget => {
+                    // Tier-Ω.5.s: read the per-frame new.target. Populated
+                    // by Op::New before dispatching the constructor call;
+                    // left None for plain Call frames (yields Undefined).
+                    let v = frame.new_target.clone().unwrap_or(Value::Undefined);
+                    frame.push(v);
+                }
                 Op::New => {
                     let n = frame.bytecode[frame.pc] as usize;
                     frame.pc += 1;
@@ -882,6 +899,11 @@ impl Runtime {
                     }
                     let this_id = self.alloc_object(ordinary);
                     let this_obj = Value::Object(this_id);
+                    // Tier-Ω.5.s: mark this dispatch as a `new` call. The
+                    // pending slot is consumed by call_function when
+                    // constructing the inner frame (or the native call's
+                    // current_new_target).
+                    self.pending_new_target = Some(callee.clone());
                     let ret = self.call_function(callee, this_obj.clone(), args)?;
                     let result = match ret {
                         Value::Object(_) => ret,
@@ -915,6 +937,10 @@ impl Runtime {
             Value::Object(id) => id,
             other => return Err(RuntimeError::TypeError(format!("callee is not callable: {:?}", other))),
         };
+        // Tier-Ω.5.s: claim the pending new.target slot for this invocation.
+        // Op::New sets it just before dispatching; plain Call sites leave it
+        // None. Taken (not cloned) so nested calls don't inherit it.
+        let nt_for_this_call = self.pending_new_target.take();
         // Extract proto-or-native by inspecting the heap object once.
         // BoundFunction: rewrite to its target, prepending bound args.
         let (proto_opt, native_opt, effective_this, effective_args) = {
@@ -929,6 +955,8 @@ impl Runtime {
                     let bound_this = b.this.clone();
                     let mut bound_args = b.args.clone();
                     bound_args.extend(args);
+                    // Tier-Ω.5.s: propagate new.target through the bind shim.
+                    self.pending_new_target = nt_for_this_call;
                     return self.call_function(Value::Object(target), bound_this, bound_args);
                 }
                 other => return Err(RuntimeError::TypeError(format!("callee is not callable: Object(kind={})", other.kind_name()))),
@@ -936,8 +964,10 @@ impl Runtime {
         };
         if let Some(native) = native_opt {
             let saved = std::mem::replace(&mut self.current_this, effective_this);
+            let saved_nt = std::mem::replace(&mut self.current_new_target, nt_for_this_call.clone());
             let result = native(self, &effective_args);
             self.current_this = saved;
+            self.current_new_target = saved_nt;
             return result;
         }
         let proto = proto_opt.expect("closure branch implies proto");
@@ -990,6 +1020,7 @@ impl Runtime {
             upvalues,
             last_property_lookup: None,
             import_meta: None,
+            new_target: nt_for_this_call,
         };
         self.run_frame(&mut inner)
     }
@@ -1060,6 +1091,11 @@ pub struct Frame<'a> {
     /// callers, function-call frames) leave this None; Op::PushImportMeta
     /// pushes Undefined in that case.
     pub import_meta: Option<crate::value::ObjectRef>,
+    /// Tier-Ω.5.s: `new.target` slot. Populated by Op::New before
+    /// dispatching the constructor call (set to the callee value). Plain
+    /// Call frames leave this None; Op::PushNewTarget pushes Undefined
+    /// in that case. Mirrors the import_meta threading shape.
+    pub new_target: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -1084,6 +1120,7 @@ impl<'a> Frame<'a> {
             upvalues: Vec::new(),
             last_property_lookup: None,
             import_meta: None,
+            new_target: None,
         }
     }
 

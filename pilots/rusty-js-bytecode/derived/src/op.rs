@@ -117,6 +117,12 @@ pub enum Op {
     /// via the module loader (e.g. ad-hoc compile + run_module callers).
     /// Tier-Ω.5.r.
     PushImportMeta = 0x76,
+    /// PUSH_NEW_TARGET — push the current frame's `new.target` value onto
+    /// the operand stack. The runtime populates Frame::new_target inside
+    /// Op::New before dispatching the constructor call; frames invoked
+    /// via plain Call leave the slot None, in which case PushNewTarget
+    /// pushes Undefined per ECMA-262 §15.7.5.1. Tier-Ω.5.s.
+    PushNewTarget = 0x77,
 
     // Member access
     /// GET_PROP <u16>
@@ -187,7 +193,7 @@ impl Op {
             | Typeof | Void | Delete
             | Throw | TryExit
             | IterInit | IterNext | IterClose
-            | Nop | Debugger | PushThis | PushImportMeta => 0,
+            | Nop | Debugger | PushThis | PushImportMeta | PushNewTarget => 0,
             Call | New | CallMethod => 1,
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
@@ -254,7 +260,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x60 => Jump, 0x61 => JumpIfTrue, 0x62 => JumpIfFalse,
         0x63 => JumpIfTrueKeep, 0x64 => JumpIfFalseKeep, 0x65 => JumpIfNullish,
         0x70 => Call, 0x71 => New, 0x72 => Return, 0x73 => ReturnUndef,
-        0x74 => CallMethod, 0x75 => PushThis, 0x76 => PushImportMeta,
+        0x74 => CallMethod, 0x75 => PushThis, 0x76 => PushImportMeta, 0x77 => PushNewTarget,
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
         0x84 => SetPrototype,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,

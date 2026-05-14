@@ -6,13 +6,18 @@
 //! http, TLS, WebSocket, crypto.subtle, mio reactor integration, and
 //! the CJS↔ESM bridge.
 
+pub mod assert;
 pub mod crypto;
 pub mod fs;
 pub mod http;
+pub mod https;
 pub mod os;
 pub mod path;
 pub mod process;
 pub mod register;
+pub mod stream;
+pub mod url;
+pub mod util;
 
 use rusty_js_runtime::{HostHook, Runtime, Value};
 
@@ -31,6 +36,12 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     fs::install_poll_io(rt);
     http::install(rt);
     crypto::install(rt);
+    // Tier-Ω.5.s: bundle of small built-in stubs.
+    assert::install(rt);
+    https::install(rt);
+    stream::install(rt);
+    url::install(rt);
+    util::install(rt);
     install_builtin_module_resolver(rt);
 }
 
@@ -57,6 +68,12 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             // Tier-Ω.5.r: http + crypto stubs.
             "node:http" | "http" => "http",
             "node:crypto" | "crypto" => "crypto",
+            // Tier-Ω.5.s: assert / https / stream / url / util stubs.
+            "node:assert" | "assert" => "assert",
+            "node:https" | "https" => "https",
+            "node:stream" | "stream" => "stream",
+            "node:url" | "url" => "url",
+            "node:util" | "util" => "util",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

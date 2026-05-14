@@ -1917,6 +1917,17 @@ impl Compiler {
                 // parser parses `import.meta.url` as Member{ MetaProperty, "url" }.
                 encode_op(&mut self.bytecode, Op::PushImportMeta);
             }
+            Expr::MetaProperty { meta, property, .. } if meta == "new" && property == "target" => {
+                // Tier-Ω.5.s: `new.target` lowers to a single opcode. The
+                // runtime populates Frame::new_target inside Op::New before
+                // dispatching the constructor body; plain-Call frames leave
+                // the slot None and PushNewTarget yields Undefined.
+                encode_op(&mut self.bytecode, Op::PushNewTarget);
+            }
+            Expr::MetaProperty { meta, property, span } => {
+                return Err(self.err(*span, &format!(
+                    "unsupported MetaProperty: {}.{}", meta, property)));
+            }
             other => {
                 let tag = match other {
                     Expr::Sequence { .. } => "Sequence",

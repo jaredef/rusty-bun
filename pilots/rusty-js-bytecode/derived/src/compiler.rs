@@ -1909,6 +1909,14 @@ impl Compiler {
                 encode_op(&mut self.bytecode, Op::Call);
                 encode_u8(&mut self.bytecode, 2u8);
             }
+            Expr::MetaProperty { meta, property, .. } if meta == "import" && property == "meta" => {
+                // Tier-Ω.5.r: `import.meta` lowers to a single opcode. The
+                // runtime threads the per-module import_meta object into the
+                // frame at evaluate_module entry; PushImportMeta reads it.
+                // `import.meta.X` member access works naturally because the
+                // parser parses `import.meta.url` as Member{ MetaProperty, "url" }.
+                encode_op(&mut self.bytecode, Op::PushImportMeta);
+            }
             other => {
                 let tag = match other {
                     Expr::Sequence { .. } => "Sequence",

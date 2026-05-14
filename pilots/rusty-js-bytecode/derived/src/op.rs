@@ -110,6 +110,13 @@ pub enum Op {
     CallMethod = 0x74,
     /// PUSH_THIS — push the current frame's `this` value onto the operand stack.
     PushThis = 0x75,
+    /// PUSH_IMPORT_META — push the current module's `import.meta` object onto
+    /// the operand stack. The runtime populates the frame's import_meta slot
+    /// at evaluate_module entry with an object `{ url, dir }` reflecting the
+    /// module's resolved URL. Falls back to Undefined for frames not entered
+    /// via the module loader (e.g. ad-hoc compile + run_module callers).
+    /// Tier-Ω.5.r.
+    PushImportMeta = 0x76,
 
     // Member access
     /// GET_PROP <u16>
@@ -180,7 +187,7 @@ impl Op {
             | Typeof | Void | Delete
             | Throw | TryExit
             | IterInit | IterNext | IterClose
-            | Nop | Debugger | PushThis => 0,
+            | Nop | Debugger | PushThis | PushImportMeta => 0,
             Call | New | CallMethod => 1,
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
@@ -247,7 +254,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x60 => Jump, 0x61 => JumpIfTrue, 0x62 => JumpIfFalse,
         0x63 => JumpIfTrueKeep, 0x64 => JumpIfFalseKeep, 0x65 => JumpIfNullish,
         0x70 => Call, 0x71 => New, 0x72 => Return, 0x73 => ReturnUndef,
-        0x74 => CallMethod, 0x75 => PushThis,
+        0x74 => CallMethod, 0x75 => PushThis, 0x76 => PushImportMeta,
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
         0x84 => SetPrototype,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,

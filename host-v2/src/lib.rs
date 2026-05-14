@@ -6,9 +6,11 @@
 //! http, TLS, WebSocket, crypto.subtle, mio reactor integration, and
 //! the CJS↔ESM bridge.
 
+pub mod crypto;
 pub mod fs;
-pub mod path;
+pub mod http;
 pub mod os;
+pub mod path;
 pub mod process;
 pub mod register;
 
@@ -27,6 +29,8 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     process::install(rt, argv);
     fs::install(rt);
     fs::install_poll_io(rt);
+    http::install(rt);
+    crypto::install(rt);
     install_builtin_module_resolver(rt);
 }
 
@@ -50,6 +54,9 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:path" | "path" => "path",
             "node:os" | "os" => "os",
             "node:process" | "process" => "process",
+            // Tier-Ω.5.r: http + crypto stubs.
+            "node:http" | "http" => "http",
+            "node:crypto" | "crypto" => "crypto",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

@@ -846,6 +846,16 @@ impl Runtime {
                     let t = frame.this_value.clone();
                     frame.push(t);
                 }
+                Op::PushImportMeta => {
+                    // Tier-Ω.5.r: read the per-module synthetic object.
+                    // Falls back to Undefined for frames the module loader
+                    // didn't populate.
+                    let v = match frame.import_meta {
+                        Some(oid) => Value::Object(oid),
+                        None => Value::Undefined,
+                    };
+                    frame.push(v);
+                }
                 Op::New => {
                     let n = frame.bytecode[frame.pc] as usize;
                     frame.pc += 1;
@@ -979,6 +989,7 @@ impl Runtime {
             this_value: this,
             upvalues,
             last_property_lookup: None,
+            import_meta: None,
         };
         self.run_frame(&mut inner)
     }
@@ -1043,6 +1054,12 @@ pub struct Frame<'a> {
     /// Diagnostic: name of the property most recently read by Op::GetProp.
     /// Used to enrich "callee is not callable" errors with the method name.
     pub last_property_lookup: Option<String>,
+    /// Tier-Ω.5.r: synthetic `import.meta` object for this module frame.
+    /// Populated by `evaluate_module` (ESM path) with `{ url, dir }` keys.
+    /// Frames that didn't enter through the module loader (raw run_module
+    /// callers, function-call frames) leave this None; Op::PushImportMeta
+    /// pushes Undefined in that case.
+    pub import_meta: Option<crate::value::ObjectRef>,
 }
 
 #[derive(Debug)]
@@ -1066,6 +1083,7 @@ impl<'a> Frame<'a> {
             this_value: Value::Undefined,
             upvalues: Vec::new(),
             last_property_lookup: None,
+            import_meta: None,
         }
     }
 

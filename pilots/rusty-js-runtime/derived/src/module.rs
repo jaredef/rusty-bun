@@ -287,14 +287,29 @@ impl Runtime {
         };
 
         // Walk up looking for node_modules/<pkg_name>.
-        let pkg_dir = walk_up_for_pkg(&start_dir, &pkg_name).ok_or_else(|| {
-            RuntimeError::TypeError(format!(
-                "bare specifier '{}' not found: walked up from '{}' looking for node_modules/{}",
-                specifier,
-                start_dir.display(),
-                pkg_name
-            ))
-        })?;
+        let pkg_dir = match walk_up_for_pkg(&start_dir, &pkg_name) {
+            Some(d) => d,
+            None => {
+                // Tier-Ω.5.r: node-builtin synonym fallback. Real Node
+                // treats a bare specifier matching a known builtin name
+                // (e.g. `require("crypto")`, `require("tty")`) as a
+                // synonym for `node:<name>`. The node_modules walk has
+                // priority — a local `node_modules/crypto` would have
+                // already won. We hit this branch only when the walk
+                // failed AND the name is a builtin. Returning the
+                // `node:` form sends the caller through the existing
+                // resolve_builtin_namespace host-hook dispatch.
+                if is_node_builtin(&pkg_name) && subpath.is_empty() {
+                    return Ok(format!("node:{}", pkg_name));
+                }
+                return Err(RuntimeError::TypeError(format!(
+                    "bare specifier '{}' not found: walked up from '{}' looking for node_modules/{}",
+                    specifier,
+                    start_dir.display(),
+                    pkg_name
+                )));
+            }
+        };
 
         // Read + parse package.json (cached).
         let pkg_json_path = pkg_dir.join("package.json");
@@ -534,8 +549,23 @@ impl Runtime {
             import_values.push((ib.slot, v));
         }
 
+        // Tier-Ω.5.r: allocate the synthetic `import.meta` object for this
+        // module. The shape is `{ url, dir }` per ECMA-262 §16.2.1.10 plus
+        // the Bun-conventional `dir` extension (dirname of url with the
+        // file:// prefix stripped). The compiler lowers `import.meta` to
+        // Op::PushImportMeta which reads from the frame's import_meta slot.
+        let meta_obj = self.alloc_object(Object::new_ordinary());
+        self.object_set(meta_obj, "url".to_string(), Value::String(Rc::new(url.to_string())));
+        let dir_str = {
+            let path = url.strip_prefix("file://").unwrap_or(url);
+            let p = std::path::Path::new(path);
+            p.parent().map(|d| d.display().to_string()).unwrap_or_default()
+        };
+        self.object_set(meta_obj, "dir".to_string(), Value::String(Rc::new(dir_str)));
+
         // Build a module frame, pre-populate import slots, run body.
         let mut frame = Frame::new_module(&bytecode_rc);
+        frame.import_meta = Some(meta_obj);
         for (slot, v) in &import_values {
             frame.write_local(*slot as usize, v.clone());
         }
@@ -978,6 +1008,25 @@ fn parse_package_json(text: &str) -> Result<ParsedPackageJson, String> {
     let module_field = raw.get("module").and_then(|v| v.as_str()).map(|s| s.to_string());
     let type_field = raw.get("type").and_then(|v| v.as_str()).map(|s| s.to_string());
     Ok(ParsedPackageJson { raw, name, main, module_field, type_field })
+}
+
+/// Tier-Ω.5.r: known Node builtin module names. Used by
+/// resolve_module_full to treat a bare `require("crypto")` as a synonym
+/// for `require("node:crypto")` when no node_modules/<name> exists.
+/// The host hook decides whether each name actually has a stub — names
+/// without a hook return Ok(None) and the caller surfaces a clean
+/// "unknown built-in" error.
+fn is_node_builtin(name: &str) -> bool {
+    matches!(name,
+        "assert" | "async_hooks" | "buffer" | "child_process" | "cluster"
+        | "console" | "constants" | "crypto" | "dgram" | "diagnostics_channel"
+        | "dns" | "domain" | "events" | "fs" | "http" | "http2" | "https"
+        | "inspector" | "module" | "net" | "os" | "path" | "perf_hooks"
+        | "process" | "punycode" | "querystring" | "readline" | "repl"
+        | "stream" | "string_decoder" | "sys" | "timers" | "tls" | "trace_events"
+        | "tty" | "url" | "util" | "v8" | "vm" | "wasi" | "worker_threads"
+        | "zlib"
+    )
 }
 
 /// Split a bare specifier into (pkg_name, subpath). Returns None on

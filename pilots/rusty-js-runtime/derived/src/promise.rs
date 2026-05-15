@@ -14,7 +14,42 @@ use std::rc::Rc;
 
 impl Runtime {
     pub fn install_promise(&mut self) {
-        let promise_obj = self.alloc_object(Object::new_ordinary());
+        // Tier-Ω.5.kkk: Promise installed as a real Function (InternalKind::Function),
+        // not an ordinary object. Without this, `new Promise((r, j) => {...})`
+        // hit "callee is not callable: Object(kind=ordinary)" — load-bearing
+        // for p-defer, ky, jose, got, get-stream, and any package whose
+        // module-init constructs a Promise (~5 packages in route-2 ERR).
+        // The constructor takes the executor function, builds a fresh
+        // pending Promise, invokes the executor with resolve/reject
+        // callbacks, and returns the promise.
+        let promise_ctor = crate::intrinsics::make_native("Promise", |rt, args| {
+            let executor = match args.first() {
+                Some(v @ Value::Object(_)) => v.clone(),
+                _ => return Err(RuntimeError::TypeError("Promise constructor: executor must be a function".into())),
+            };
+            let p = new_promise(rt);
+            let p_for_resolve = p;
+            let p_for_reject = p;
+            let resolve_fn = crate::intrinsics::make_native("<promise-resolve>", move |rt, args| {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                resolve_promise(rt, p_for_resolve, v);
+                Ok(Value::Undefined)
+            });
+            let reject_fn = crate::intrinsics::make_native("<promise-reject>", move |rt, args| {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                reject_promise(rt, p_for_reject, v);
+                Ok(Value::Undefined)
+            });
+            let resolve_id = rt.alloc_object(resolve_fn);
+            let reject_id = rt.alloc_object(reject_fn);
+            // Synchronously invoke executor(resolve, reject) per spec.
+            let _ = rt.call_function(executor, Value::Undefined, vec![
+                Value::Object(resolve_id),
+                Value::Object(reject_id),
+            ])?;
+            Ok(Value::Object(p))
+        });
+        let promise_obj = self.alloc_object(promise_ctor);
         register_method(self, promise_obj, "resolve", |rt, args| {
             let v = args.first().cloned().unwrap_or(Value::Undefined);
             let p = new_promise(rt);

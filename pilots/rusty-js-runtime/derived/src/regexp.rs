@@ -462,17 +462,51 @@ fn string_replace_impl(
     // Function replacer — collect match ranges, then invoke the function
     // for each match and stitch the output. We split the borrow so we
     // can call back into the runtime.
-    let matches: Vec<(usize, usize, String)> = rx.find_iter_owned(s);
-    let take_n = if is_global { matches.len() } else { matches.len().min(1) };
+    // Tier-Ω.5.vvv: per ECMA-262 §22.1.3.18, the replace callback is
+    // invoked with (match, p1, p2, ..., pN, offset, string). Earlier we
+    // passed only `match` — pluralize's `function (match, index) {
+    // ...word[index - 1]... }` callback expected `index` as the second
+    // arg (first capture group OR offset when no captures); with only
+    // `match` passed, index was undefined and `word[NaN]` cascaded into
+    // a Cannot-read-of-undefined fault three layers downstream.
+    //
+    // The hand-rolled regex captures populate the captures field;
+    // Rust's regex crate captures via captures_at. The dual-engine
+    // wrapper's captures_at returns (start, end, captures_as_strings)
+    // where captures[0] is the whole match and captures[1..] are the
+    // groups.
     let mut out = String::new();
     let mut cursor = 0usize;
-    for (mstart, mend, mstr) in matches.into_iter().take(take_n) {
+    let mut search_start = 0usize;
+    let mut count = 0usize;
+    let max_n = if is_global { usize::MAX } else { 1 };
+    while count < max_n {
+        let caps = match rx.captures_at(s, search_start) {
+            Some(c) => c,
+            None => break,
+        };
+        let (mstart, mend, groups) = caps;
         out.push_str(&s[cursor..mstart]);
-        let call_args = vec![Value::String(Rc::new(mstr))];
+        let mut call_args: Vec<Value> = Vec::new();
+        // groups[0] is the match itself; groups[1..] are capture groups.
+        for g in groups.iter() {
+            call_args.push(match g {
+                Some(s) => Value::String(Rc::new(s.clone())),
+                None => Value::Undefined,
+            });
+        }
+        // offset
+        call_args.push(Value::Number(mstart as f64));
+        // full input string
+        call_args.push(Value::String(Rc::new(s.to_string())));
         let r = rt.call_function(repl.clone(), Value::Undefined, call_args)?;
         let r_s = abstract_ops::to_string(&r).as_str().to_string();
         out.push_str(&r_s);
         cursor = mend;
+        // Advance search_start. Avoid zero-width infinite loop.
+        search_start = if mend == mstart { mend + 1 } else { mend };
+        count += 1;
+        if search_start > s.len() { break; }
     }
     out.push_str(&s[cursor..]);
     Ok(Value::String(Rc::new(out)))

@@ -16,7 +16,7 @@ use rusty_js_ast::{
     BindingIdentifier, DefaultExportBody, ExportDeclaration, ExportEntry,
     ExportImportName, ExportSpecifier, ImportAttribute, ImportDeclaration,
     ImportEntry, ImportName, ImportSpecifier, Module, ModuleExportName,
-    ModuleItem, ModuleSpecifier, Span,
+    ModuleItem, ModuleSpecifier, Span, Stmt,
 };
 
 #[derive(Debug, Clone)]
@@ -466,31 +466,28 @@ impl<'src> Parser<'src> {
         let is_const = self.is_ident("const");
         let is_var = self.is_ident("var");
         if is_func {
-            if self.is_ident("async") { self.bump_regexp()?; }
-            self.expect_keyword("function")?;
-            if self.is_punct(Punct::Star) { self.bump_regexp()?; }
-            if let TokenKind::Ident(n) = &self.lookahead.kind {
-                let bi = BindingIdentifier { name: n.clone(), span: self.lookahead.span };
-                names.push(bi);
-                self.bump_regexp()?;
+            // Tier-Ω.5.gg: parse the full FunctionDeclaration via the
+            // typed statement parser instead of skipping braces blindly.
+            // The lexer's brace-vs-template-substitution disambiguation
+            // requires the parser to drive token goals; skip_balanced
+            // mistakes a `${expr}` closing `}` for the function's `}`,
+            // pollutes lexer state, and trips a later template as
+            // unterminated. See trajectory Ω.5.gg.
+            let is_async_kw = self.is_ident("async");
+            if is_async_kw { self.bump_regexp()?; }
+            let stmt = self.parse_function_decl_stmt(is_async_kw)?;
+            if let Stmt::FunctionDecl { name: Some(bi), .. } = &stmt {
+                names.push(bi.clone());
             }
-            self.skip_balanced(Punct::LParen, Punct::RParen)?;
-            self.skip_balanced(Punct::LBrace, Punct::RBrace)?;
         } else if is_class {
-            self.bump_regexp()?;
-            if let TokenKind::Ident(n) = &self.lookahead.kind {
-                if n != "extends" && n != "{" {
-                    names.push(BindingIdentifier { name: n.clone(), span: self.lookahead.span });
-                    self.bump_regexp()?;
-                }
+            // Tier-Ω.5.gg: same hazard for class bodies — method bodies
+            // may contain template-with-substitutions whose `}` would
+            // unbalance skip_balanced. Use the typed class statement
+            // parser instead.
+            let stmt = self.parse_class_decl_stmt()?;
+            if let Stmt::ClassDecl { name: Some(bi), .. } = &stmt {
+                names.push(bi.clone());
             }
-            if self.is_ident("extends") {
-                self.bump_regexp()?;
-                while !self.is_punct(Punct::LBrace) && !self.at_eof() {
-                    self.bump_regexp()?;
-                }
-            }
-            self.skip_balanced(Punct::LBrace, Punct::RBrace)?;
         } else if is_let || is_const || is_var {
             self.bump_regexp()?;
             loop {
@@ -798,6 +795,15 @@ impl<'src> Parser<'src> {
     /// of a substitution where the lexer would otherwise emit a RBrace.
     pub(crate) fn refetch_lookahead_with_goal(&mut self, goal: LexerGoal) -> Result<(), ParseError> {
         let pos = self.lookahead.span.start;
+        self.lx.set_pos(pos);
+        self.lookahead = self.lx.next_token(goal).map_err(lex_to_parse)?;
+        Ok(())
+    }
+
+    /// Rewind the lexer to `pos` and re-lex the lookahead under `goal`.
+    /// Used by recovery paths (e.g. the for-head fast-path when the bumped
+    /// identifier turns out not to be followed by `in`/`of`).
+    pub(crate) fn rewind_lexer_to(&mut self, pos: usize, goal: LexerGoal) -> Result<(), ParseError> {
         self.lx.set_pos(pos);
         self.lookahead = self.lx.next_token(goal).map_err(lex_to_parse)?;
         Ok(())

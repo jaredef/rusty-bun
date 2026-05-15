@@ -130,7 +130,7 @@ impl<'src> Parser<'src> {
         Ok(VariableStatement { kind, declarators, span: Span::new(start, end) })
     }
 
-    fn parse_function_decl_stmt(&mut self, is_async: bool) -> Result<Stmt, ParseError> {
+    pub(crate) fn parse_function_decl_stmt(&mut self, is_async: bool) -> Result<Stmt, ParseError> {
         let start = if is_async {
             // `async` already consumed; recover start from before it.
             // The bump-tracker doesn't preserve prior span; use lookahead.
@@ -191,7 +191,7 @@ impl<'src> Parser<'src> {
         Ok(out)
     }
 
-    fn parse_class_decl_stmt(&mut self) -> Result<Stmt, ParseError> {
+    pub(crate) fn parse_class_decl_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.lookahead_span().start;
         self.expect_keyword("class")?;
         let name = if let TokenKind::Ident(n) = self.current_kind().clone() {
@@ -563,6 +563,51 @@ impl<'src> Parser<'src> {
         // Expression-headed for / for-in / for-of
         if head_is_empty {
             self.bump()?;
+        }
+        // Tier-Ω.5.gg fast-path: bare-identifier `for (id in …)` / `for (id of …)`
+        // — pre-Ω.5.gg this branch never fired because `export function`
+        // bodies were walked by skip_balanced. Now that real parsing runs,
+        // `parse_expression` would consume `id in obj` as a RelationalExpr
+        // (`in` is a binary op at precedence 10), tripping `expected `;``.
+        // The spec's [+In] flag is the proper fix; this peek captures the
+        // common shape (`for (ident in/of expr)`) without rebuilding the
+        // precedence climber.
+        if !head_is_empty {
+            if let TokenKind::Ident(n) = self.current_kind().clone() {
+                let id_span = self.lookahead_span();
+                // Save before we bump so we can fall through if it's not for-in/of.
+                let saved_pos_before_id = id_span.start;
+                // Peek the next byte after the identifier to decide whether
+                // it's `in` / `of`. We can't easily two-token-peek, so we
+                // bump and look; if not in/of, we still produce a usable
+                // expression by treating the bumped ident as the head and
+                // continuing.
+                // Avoid eating reserved words like `var`/`let`/`const`
+                // (already handled by head_is_var) or `await`.
+                if !matches!(n.as_str(), "var" | "let" | "const" | "function" | "class") {
+                    self.bump()?;
+                    if self.is_ident("in") || self.is_ident("of") {
+                        let is_of = self.is_ident("of");
+                        self.bump()?;
+                        let right = self.parse_expression()?;
+                        self.expect_punct(Punct::RParen)?;
+                        let body = self.parse_statement()?;
+                        let end = self.last_span_end();
+                        let left = ForBinding::Pattern(BindingPattern::Identifier(
+                            BindingIdentifier { name: n, span: id_span }
+                        ));
+                        return if is_of {
+                            Ok(Stmt::ForOf { left, right, body: Box::new(body), await_: await_form, span: Span::new(start, end) })
+                        } else {
+                            Ok(Stmt::ForIn { left, right, body: Box::new(body), span: Span::new(start, end) })
+                        };
+                    }
+                    // Not for-in/of — recover by re-lexing from the ident's
+                    // start position so the upcoming parse_expression sees
+                    // the full head.
+                    self.rewind_lexer_to(saved_pos_before_id, crate::lexer::LexerGoal::RegExp)?;
+                }
+            }
         }
         let mut init_expr: Option<Expr> = None;
         if !head_is_empty && !matches!(self.current_kind(), TokenKind::Punct(Punct::Semicolon)) {

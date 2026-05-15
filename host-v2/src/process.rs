@@ -59,5 +59,23 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         Ok(Value::Object(arr))
     });
 
+    // Tier-Ω.5.cccc: process.nextTick(cb, ...args) — synchronous-ish
+    // queuing of the callback. v1 deviation: invokes immediately since
+    // we don't yet have a microtask integration at the JS-callable
+    // surface. pump and many CJS streams rely on its existence and
+    // single-callback shape.
+    register_method(rt, process, "nextTick", |rt, args| {
+        if let Some(cb) = args.first().cloned() {
+            let rest: Vec<Value> = args.iter().skip(1).cloned().collect();
+            let _ = rt.call_function(cb, Value::Undefined, rest);
+        }
+        Ok(Value::Undefined)
+    });
+    register_method(rt, process, "emit", |_rt, _args| Ok(Value::Boolean(false)));
+    register_method(rt, process, "on", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "off", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "once", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "removeListener", |rt, _args| Ok(rt.current_this()));
+
     rt.globals.insert("process".into(), Value::Object(process));
 }

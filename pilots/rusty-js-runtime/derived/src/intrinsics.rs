@@ -66,7 +66,41 @@ impl Runtime {
             self.object_set(gt, k, v);
         }
         self.object_set(gt, "globalThis".into(), Value::Object(gt));
+        // Tier-Ω.5.bbbb: `global` is a Node-side alias for globalThis;
+        // many CJS packages do `global.foo = ...` or `global.process`.
+        self.object_set(gt, "global".into(), Value::Object(gt));
         self.globals.insert("globalThis".into(), Value::Object(gt));
+        self.globals.insert("global".into(), Value::Object(gt));
+        // Tier-Ω.5.bbbb: Intl namespace with stub constructors. Real
+        // locale-aware behavior is deferred; the stubs return objects
+        // that survive shape probes and method existence checks. Lifts
+        // packages that gate on `typeof Intl.X === 'function'`.
+        let intl = self.alloc_object(Object::new_ordinary());
+        for ctor_name in &["DateTimeFormat", "NumberFormat", "Collator", "PluralRules", "RelativeTimeFormat", "ListFormat", "Segmenter", "DisplayNames", "Locale"] {
+            let name = (*ctor_name).to_string();
+            let stub = make_native(&name, move |rt, _args| {
+                let o = Object::new_ordinary();
+                let id = rt.alloc_object(o);
+                Ok(Value::Object(id))
+            });
+            let stub_id = self.alloc_object(stub);
+            // Methods on instance proto for shape: format, formatToParts, resolvedOptions.
+            register_method(self, stub_id, "supportedLocalesOf", |_rt, _args| {
+                let o = Object::new_array();
+                let id = _rt.alloc_object(o);
+                _rt.object_set(id, "length".into(), Value::Number(0.0));
+                Ok(Value::Object(id))
+            });
+            self.object_set(intl, ctor_name.to_string(), Value::Object(stub_id));
+        }
+        // getCanonicalLocales(locales) → array of canonical locale tags.
+        register_method(self, intl, "getCanonicalLocales", |rt, _args| {
+            let arr = Object::new_array();
+            let id = rt.alloc_object(arr);
+            rt.object_set(id, "length".into(), Value::Number(0.0));
+            Ok(Value::Object(id))
+        });
+        self.globals.insert("Intl".into(), Value::Object(intl));
     }
 
     /// Tier-Ω.5.k: helpers the compiler emits LoadGlobal+Call into for

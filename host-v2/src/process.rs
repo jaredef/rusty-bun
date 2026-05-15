@@ -33,6 +33,14 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         else { "unknown" }.to_string()
     )));
     set_constant(rt, process, "version", Value::String(Rc::new("v0.1.0-rusty-bun".to_string())));
+    // Tier-Ω.5.pppp: process.versions for fast-glob + many libs that gate
+    // behavior on node major version.
+    let versions = new_object(rt);
+    rt.object_set(versions, "node".into(), Value::String(Rc::new("20.10.0".into())));
+    rt.object_set(versions, "v8".into(), Value::String(Rc::new("11.3.244.8".into())));
+    rt.object_set(versions, "uv".into(), Value::String(Rc::new("1.46.0".into())));
+    rt.object_set(versions, "modules".into(), Value::String(Rc::new("115".into())));
+    set_constant(rt, process, "versions", Value::Object(versions));
     set_constant(rt, process, "pid", Value::Number(std::process::id() as f64));
 
     register_method(rt, process, "cwd", |_rt, _args| {
@@ -76,6 +84,21 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
     register_method(rt, process, "off", |rt, _args| Ok(rt.current_this()));
     register_method(rt, process, "once", |rt, _args| Ok(rt.current_this()));
     register_method(rt, process, "removeListener", |rt, _args| Ok(rt.current_this()));
+
+    // Tier-Ω.5.mmmm: process.getBuiltinModule(name) — Node 22+ API. ohash
+    // calls it at module init to fetch node:crypto without going through
+    // the loader.
+    register_method(rt, process, "getBuiltinModule", |rt, args| {
+        let name = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => return Ok(Value::Undefined),
+        };
+        let stripped = name.strip_prefix("node:").unwrap_or(&name);
+        match rt.globals.get(stripped).cloned() {
+            Some(v) => Ok(v),
+            None => Ok(Value::Undefined),
+        }
+    });
 
     rt.globals.insert("process".into(), Value::Object(process));
 }

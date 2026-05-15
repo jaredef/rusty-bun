@@ -2,7 +2,7 @@
 # Expanded route-2 value probe — covers shape-passers beyond the
 # original 24-package sample.
 set -u
-RB=/media/jaredef/T7/rusty-bun-target/debug/rusty-bun-host-v2
+RB=/media/jaredef/T7/rusty-bun-target/release/rusty-bun-host-v2
 SANDBOX=/tmp/parity-sandbox
 declare -A probes
 
@@ -98,4 +98,4 @@ for pkg in "${!probes[@]}"; do
   fi
 done
 echo "=== EXPANDED ROUTE-2 ==="
-echo "n=$n  pass=$ok  bad=$bad  err=$err"
+echo "n=$n  pass=$ok  bad=$bad  err=$err"; printf "ERR: %s\n" "${errp[@]}"; printf "BAD: %s\n" "${badp[@]}"

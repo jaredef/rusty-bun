@@ -99,6 +99,10 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:constants" | "constants" => "constants",
             "node:string_decoder" | "string_decoder" => "string_decoder",
             "node:buffer" | "buffer" => "buffer",
+            // Tier-Ω.5.kkkk/llll: dns + module stubs.
+            "node:dns" | "dns" | "node:dns/promises" | "dns/promises" => "dns",
+            "node:module" | "module" => "module",
+            "node:http2" | "http2" => "http2",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

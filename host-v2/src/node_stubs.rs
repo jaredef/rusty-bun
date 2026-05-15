@@ -180,6 +180,46 @@ pub fn install_buffer(rt: &mut Runtime) {
     rt.globals.insert("Buffer".into(), Value::Object(buf_ctor));
 }
 
+// Tier-Ω.5.nnnn: node:http2 stub (got advances here past dns).
+pub fn install_http2(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    for m in &["connect", "createServer", "createSecureServer", "constants"] {
+        register_method(rt, ns, m, stub("http2", m));
+    }
+    rt.globals.insert("http2".into(), Value::Object(ns));
+}
+
+// Tier-Ω.5.kkkk: node:dns stub for `got` cluster.
+pub fn install_dns(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    for m in &["lookup", "resolve", "resolve4", "resolve6", "reverse", "setServers", "getServers"] {
+        register_method(rt, ns, m, stub("dns", m));
+    }
+    let promises = new_object(rt);
+    for m in &["lookup", "resolve", "resolve4", "resolve6", "reverse"] {
+        register_method(rt, promises, m, stub("dns/promises", m));
+    }
+    rt.object_set(ns, "promises".into(), Value::Object(promises));
+    rt.globals.insert("dns".into(), Value::Object(ns));
+}
+
+// Tier-Ω.5.llll: node:module stub for `yargs` cluster.
+pub fn install_module(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    register_method(rt, ns, "createRequire", |rt, _args| {
+        // Returns a function that throws if called. Many libraries call
+        // createRequire() at module init merely to capture a reference.
+        let f = new_object(rt);
+        register_method(rt, f, "resolve", stub("module", "require.resolve"));
+        Ok(Value::Object(f))
+    });
+    register_method(rt, ns, "builtinModules", |_rt, _args| Ok(Value::Undefined));
+    let arr = RtObject::new_ordinary();
+    let arr_id = rt.alloc_object(arr);
+    rt.object_set(ns, "builtinModules".into(), Value::Object(arr_id));
+    rt.globals.insert("module".into(), Value::Object(ns));
+}
+
 pub fn install_all(rt: &mut Runtime) {
     install_child_process(rt);
     install_tls(rt);
@@ -187,4 +227,7 @@ pub fn install_all(rt: &mut Runtime) {
     install_constants(rt);
     install_string_decoder(rt);
     install_buffer(rt);
+    install_dns(rt);
+    install_module(rt);
+    install_http2(rt);
 }

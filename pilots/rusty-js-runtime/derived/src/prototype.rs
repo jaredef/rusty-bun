@@ -93,6 +93,19 @@ fn install_object_proto(rt: &mut Runtime, host: ObjectRef) {
         Ok(Value::Boolean(owns))
     });
     register_method(rt, host, "valueOf", |rt, _args| Ok(rt.current_this()));
+    // Tier-Ω.5.jjjj: Object.prototype.propertyIsEnumerable per ECMA-262
+    // §20.1.3.4. Returns true if the receiver has an own enumerable
+    // property at the given key. v1 returns true for any own property
+    // (we don't track enumerable bit precisely).
+    register_method(rt, host, "propertyIsEnumerable", |rt, args| {
+        let key = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined))
+            .as_str().to_string();
+        let owns = match rt.current_this() {
+            Value::Object(id) => rt.obj(id).properties.contains_key(&key),
+            _ => false,
+        };
+        Ok(Value::Boolean(owns))
+    });
     register_method(rt, host, "isPrototypeOf", |rt, args| {
         let target = match args.first() {
             Some(Value::Object(id)) => *id,

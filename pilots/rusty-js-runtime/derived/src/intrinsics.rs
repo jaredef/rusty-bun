@@ -127,6 +127,25 @@ impl Runtime {
             Ok(Value::Object(id))
         });
         let te_id = self.alloc_object(te);
+        // Tier-Ω.5.qqqq: TextEncoder.prototype.encode for pako and any lib
+        // that reaches the encode method via the prototype rather than via
+        // an instance.
+        let te_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, te_proto, "encode", |rt, args| {
+            let s = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                None => String::new(),
+                Some(v) => crate::abstract_ops::to_string(v).as_str().to_string(),
+            };
+            let bytes: Vec<u8> = s.into_bytes();
+            let mut out = Object::new_array();
+            out.set_own("length".into(), Value::Number(bytes.len() as f64));
+            for (i, b) in bytes.iter().enumerate() {
+                out.set_own(i.to_string(), Value::Number(*b as f64));
+            }
+            Ok(Value::Object(rt.alloc_object(out)))
+        });
+        self.object_set(te_id, "prototype".into(), Value::Object(te_proto));
         self.globals.insert("TextEncoder".into(), Value::Object(te_id));
         let td = make_native("TextDecoder", |rt, args| {
             let encoding = match args.first() {
@@ -154,6 +173,23 @@ impl Runtime {
             Ok(Value::Object(id))
         });
         let td_id = self.alloc_object(td);
+        let td_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, td_proto, "decode", |rt, args| {
+            let bytes_id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::String(Rc::new(String::new()))),
+            };
+            let len = rt.array_length(bytes_id);
+            let mut bytes: Vec<u8> = Vec::with_capacity(len);
+            for i in 0..len {
+                if let Value::Number(n) = rt.object_get(bytes_id, &i.to_string()) {
+                    bytes.push(n as u8);
+                }
+            }
+            let s = String::from_utf8_lossy(&bytes).to_string();
+            Ok(Value::String(Rc::new(s)))
+        });
+        self.object_set(td_id, "prototype".into(), Value::Object(td_proto));
         self.globals.insert("TextDecoder".into(), Value::Object(td_id));
     }
 

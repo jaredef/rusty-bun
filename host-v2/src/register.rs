@@ -30,6 +30,24 @@ pub fn set_constant(rt: &mut Runtime, host: ObjectRef, name: &str, value: Value)
     rt.object_set(host, name.into(), value);
 }
 
+/// Allocate a callable Function object directly. Used for constructor
+/// surfaces like `new EventEmitter()` where the global is the function
+/// rather than a wrapper object. Returns the object id.
+pub fn make_callable<F>(rt: &mut Runtime, name: &str, f: F) -> ObjectRef
+where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
+    let native: NativeFn = Rc::new(f);
+    let fn_obj = Object {
+        proto: None,
+        extensible: true,
+        properties: HashMap::new(),
+        internal_kind: InternalKind::Function(FunctionInternals {
+            name: name.to_string(),
+            native,
+        }),
+    };
+    rt.alloc_object(fn_obj)
+}
+
 pub fn arg_string(args: &[Value], i: usize) -> String {
     use rusty_js_runtime::abstract_ops;
     args.get(i)

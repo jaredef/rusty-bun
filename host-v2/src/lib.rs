@@ -8,7 +8,9 @@
 
 pub mod assert;
 pub mod crypto;
+pub mod events;
 pub mod fs;
+pub mod node_stubs;
 pub mod http;
 pub mod https;
 pub mod os;
@@ -46,6 +48,8 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     util::install(rt);
     zlib::install(rt);
     tty::install(rt);
+    events::install(rt);
+    node_stubs::install_all(rt);
     install_builtin_module_resolver(rt);
     // Tier-Ω.5.t: re-snapshot globalThis so host-v2's added globals
     // (path/os/process/fs/...) become visible on globalThis. install_intrinsics
@@ -87,6 +91,14 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             // Tier-Ω.5.y: zlib + tty stubs.
             "node:zlib" | "zlib" => "zlib",
             "node:tty" | "tty" => "tty",
+            "node:events" | "events" => "events",
+            // Tier-Ω.5.bb: six more node:* stubs.
+            "node:child_process" | "child_process" => "child_process",
+            "node:tls" | "tls" => "tls",
+            "node:readline" | "readline" => "readline",
+            "node:constants" | "constants" => "constants",
+            "node:string_decoder" | "string_decoder" => "string_decoder",
+            "node:buffer" | "buffer" => "buffer",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

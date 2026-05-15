@@ -446,8 +446,19 @@ impl Compiler {
                         encode_u16(&mut self.bytecode, idx);
                         emit_captures(&mut self.bytecode, &captures);
                     }
-                    DefaultExportBody::Class { .. } => {
-                        return Err(self.err(*span, "export default class not yet supported"));
+                    DefaultExportBody::Class { name, super_class, members } => {
+                        // Tier-Ω.5.v: lower `export default class [Name?] ...`
+                        // by synthesizing a class expression and letting the
+                        // existing compile_expr path emit it; the resulting
+                        // value is then stored into the module's default slot
+                        // (the StoreLocal below).
+                        let class_expr = Expr::Class {
+                            name: name.clone(),
+                            super_class: super_class.clone().map(Box::new),
+                            members: members.clone(),
+                            span: *span,
+                        };
+                        self.compile_expr(&class_expr)?;
                     }
                 }
                 encode_op(&mut self.bytecode, Op::StoreLocal);
@@ -2264,9 +2275,232 @@ impl Compiler {
                     }
                 }
             }
+            // Tier-Ω.5.v: parenthesized assignment target — unwrap.
+            Expr::Parenthesized { expr, .. } => {
+                return self.compile_plain_assign(span, expr, value);
+            }
+            // Tier-Ω.5.v: destructuring assignment — array/object pattern as
+            // an AssignmentTarget (distinct from a binding declaration).
+            // The leaves are themselves AssignmentTargets (Identifier /
+            // Member / nested pattern), not binding declarations, so we
+            // route each leaf through `assign_target_from_value_on_stack`.
+            Expr::Array { .. } | Expr::Object { .. } => {
+                // Spill RHS into a temp; destructure into the leaves; leave
+                // the source value on the stack as the assignment-expr result.
+                let src = self.alloc_temp("<destr-assign.src>");
+                self.compile_expr(value)?;
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, src);
+                self.emit_destructure_assign(target, src)?;
+                // Result of the assignment expression is the source value.
+                encode_op(&mut self.bytecode, Op::LoadLocal);
+                encode_u16(&mut self.bytecode, src);
+            }
             _ => return Err(self.err(span, "complex assignment target not yet supported")),
         }
         Ok(())
+    }
+
+    /// Tier-Ω.5.v: lower a destructuring **assignment** (LHS is an array or
+    /// object literal acting as an AssignmentTarget). Reads from the value
+    /// in `src_slot`; each leaf is itself an AssignmentTarget (Identifier,
+    /// Member, Parenthesized, or nested Array/Object pattern).
+    fn emit_destructure_assign(
+        &mut self,
+        target: &Expr,
+        src_slot: u16,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expr::Parenthesized { expr, .. } => {
+                self.emit_destructure_assign(expr, src_slot)
+            }
+            Expr::Array { elements, .. } => {
+                use rusty_js_ast::ArrayElement;
+                let mut i: i32 = 0;
+                let n = elements.len();
+                for (idx, el) in elements.iter().enumerate() {
+                    match el {
+                        ArrayElement::Elision { .. } => { i += 1; }
+                        ArrayElement::Expr(leaf) => {
+                            // value = src[i]
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, src_slot);
+                            encode_op(&mut self.bytecode, Op::PushI32);
+                            encode_i32(&mut self.bytecode, i);
+                            encode_op(&mut self.bytecode, Op::GetIndex);
+                            // For destructuring-assignment we don't have
+                            // default-value syntax wired here (would appear
+                            // as Expr::Assign on the leaf); fall through to
+                            // direct leaf store.
+                            if let Expr::Assign { target: lt, value: dv, operator, .. } = leaf {
+                                if matches!(operator, AssignOp::Assign) {
+                                    // Apply default-if-undefined.
+                                    encode_op(&mut self.bytecode, Op::Dup);
+                                    encode_op(&mut self.bytecode, Op::PushUndef);
+                                    encode_op(&mut self.bytecode, Op::StrictEq);
+                                    let j_skip = self.emit_jump(Op::JumpIfFalse);
+                                    encode_op(&mut self.bytecode, Op::Pop);
+                                    self.compile_expr(dv)?;
+                                    self.patch_jump(j_skip);
+                                    self.assign_target_from_stack(lt)?;
+                                    i += 1;
+                                    continue;
+                                }
+                            }
+                            self.assign_target_from_stack(leaf)?;
+                            i += 1;
+                        }
+                        ArrayElement::Spread { expr: rest_target, .. } => {
+                            // rest = __destr_array_rest(src, i)
+                            // Only valid as the last element.
+                            let _ = (idx, n);
+                            let name_idx = self.constants.intern(Constant::String("__destr_array_rest".into()));
+                            encode_op(&mut self.bytecode, Op::LoadGlobal);
+                            encode_u16(&mut self.bytecode, name_idx);
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, src_slot);
+                            encode_op(&mut self.bytecode, Op::PushI32);
+                            encode_i32(&mut self.bytecode, i);
+                            encode_op(&mut self.bytecode, Op::Call);
+                            encode_u8(&mut self.bytecode, 2);
+                            self.assign_target_from_stack(rest_target)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expr::Object { properties, .. } => {
+                use rusty_js_ast::{ObjectProperty, ObjectKey};
+                let mut static_excluded: Vec<String> = Vec::new();
+                for prop in properties {
+                    match prop {
+                        ObjectProperty::Property { key, value: leaf, .. } => {
+                            // value = src[key]
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, src_slot);
+                            match key {
+                                ObjectKey::Identifier { name, .. } => {
+                                    let k = self.constants.intern(Constant::String(name.clone()));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, k);
+                                    static_excluded.push(name.clone());
+                                }
+                                ObjectKey::String { value, .. } => {
+                                    let k = self.constants.intern(Constant::String(value.clone()));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, k);
+                                    static_excluded.push(value.clone());
+                                }
+                                ObjectKey::Number { value, .. } => {
+                                    let name = if value.fract() == 0.0 { format!("{}", *value as i64) } else { format!("{}", value) };
+                                    let k = self.constants.intern(Constant::String(name.clone()));
+                                    encode_op(&mut self.bytecode, Op::GetProp);
+                                    encode_u16(&mut self.bytecode, k);
+                                    static_excluded.push(name);
+                                }
+                                ObjectKey::Computed { expr, .. } => {
+                                    self.compile_expr(expr)?;
+                                    encode_op(&mut self.bytecode, Op::GetIndex);
+                                }
+                            }
+                            // Default-value support on the leaf.
+                            if let Expr::Assign { target: lt, value: dv, operator, .. } = leaf {
+                                if matches!(operator, AssignOp::Assign) {
+                                    encode_op(&mut self.bytecode, Op::Dup);
+                                    encode_op(&mut self.bytecode, Op::PushUndef);
+                                    encode_op(&mut self.bytecode, Op::StrictEq);
+                                    let j_skip = self.emit_jump(Op::JumpIfFalse);
+                                    encode_op(&mut self.bytecode, Op::Pop);
+                                    self.compile_expr(dv)?;
+                                    self.patch_jump(j_skip);
+                                    self.assign_target_from_stack(lt)?;
+                                    continue;
+                                }
+                            }
+                            self.assign_target_from_stack(leaf)?;
+                        }
+                        ObjectProperty::Spread { expr: rest_target, .. } => {
+                            // rest = __destr_object_rest(src, excluded)
+                            let name_idx = self.constants.intern(Constant::String("__destr_object_rest".into()));
+                            encode_op(&mut self.bytecode, Op::LoadGlobal);
+                            encode_u16(&mut self.bytecode, name_idx);
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, src_slot);
+                            encode_op(&mut self.bytecode, Op::NewArray);
+                            encode_u16(&mut self.bytecode, static_excluded.len() as u16);
+                            for (i, k) in static_excluded.iter().enumerate() {
+                                let idx = self.constants.intern(Constant::String(k.clone()));
+                                encode_op(&mut self.bytecode, Op::PushConst);
+                                encode_u16(&mut self.bytecode, idx);
+                                encode_op(&mut self.bytecode, Op::InitIndex);
+                                encode_u32(&mut self.bytecode, i as u32);
+                            }
+                            encode_op(&mut self.bytecode, Op::Call);
+                            encode_u8(&mut self.bytecode, 2);
+                            self.assign_target_from_stack(rest_target)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            // A scalar leaf in destructuring position should not appear here
+            // — the caller dispatches on the literal forms. Defensive store.
+            _ => self.assign_target_from_stack(target),
+        }
+    }
+
+    /// Consume the value on top of the operand stack and assign it to the
+    /// given AssignmentTarget. For nested patterns (Array/Object), spills
+    /// into a fresh temp and recurses through `emit_destructure_assign`.
+    fn assign_target_from_stack(&mut self, target: &Expr) -> Result<(), CompileError> {
+        match target {
+            Expr::Identifier { name, .. } => {
+                self.emit_store_ident(name);
+                Ok(())
+            }
+            Expr::Member { object, property, .. } => {
+                // stack on entry: [value]. We need [object, key?, value] to
+                // emit SetProp/SetIndex. Spill value into a temp first.
+                let tmp_v = self.alloc_temp("<assign-tgt.v>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp_v);
+                self.compile_expr(object)?;
+                match property.as_ref() {
+                    MemberProperty::Identifier { name, .. } => {
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_v);
+                        let idx = self.constants.intern(Constant::String(name.clone()));
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                    MemberProperty::Computed { expr, .. } => {
+                        self.compile_expr(expr)?;
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_v);
+                        encode_op(&mut self.bytecode, Op::SetIndex);
+                    }
+                    MemberProperty::Private { name, .. } => {
+                        encode_op(&mut self.bytecode, Op::LoadLocal);
+                        encode_u16(&mut self.bytecode, tmp_v);
+                        let idx = self.constants.intern(Constant::String(format!("#{}", name)));
+                        encode_op(&mut self.bytecode, Op::SetProp);
+                        encode_u16(&mut self.bytecode, idx);
+                    }
+                }
+                // SetProp / SetIndex leaves the assigned value on top — pop it.
+                encode_op(&mut self.bytecode, Op::Pop);
+                Ok(())
+            }
+            Expr::Parenthesized { expr, .. } => self.assign_target_from_stack(expr),
+            Expr::Array { .. } | Expr::Object { .. } => {
+                // Nested pattern: spill into a temp and recurse.
+                let tmp = self.alloc_temp("<destr-assign.nested>");
+                encode_op(&mut self.bytecode, Op::StoreLocal);
+                encode_u16(&mut self.bytecode, tmp);
+                self.emit_destructure_assign(target, tmp)
+            }
+            _ => Err(self.err(target.span(), "complex assignment target not yet supported")),
+        }
     }
 
     /// Compound assignment with a `MemberExpression` target. Spills the

@@ -605,6 +605,39 @@ impl Runtime {
             rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
             Ok(Value::Object(arr))
         });
+        // Tier-Ω.5.v: Object.create(proto, propertiesObject?). Per
+        // ECMA-262 §20.1.2.2: proto must be Object or null; otherwise
+        // throw TypeError. Subset: properties handled via the `value`
+        // field of each descriptor (matches our defineProperty subset).
+        register_method(self, obj_ctor, "create", |rt, args| {
+            let proto_arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let proto_id = match proto_arg {
+                Value::Null => None,
+                Value::Object(id) => Some(id),
+                _ => return Err(RuntimeError::TypeError(
+                    "Object.create: prototype must be Object or null".into())),
+            };
+            let mut obj = Object::new_ordinary();
+            obj.proto = proto_id;
+            let id = rt.alloc_object(obj);
+            if let Some(Value::Object(props_id)) = args.get(1) {
+                let entries: Vec<(String, Value)> = {
+                    let o = rt.obj(*props_id);
+                    o.properties.iter()
+                        .filter(|(_, d)| d.enumerable)
+                        .map(|(k, d)| (k.clone(), d.value.clone()))
+                        .collect()
+                };
+                for (k, dv) in entries {
+                    let v = match dv {
+                        Value::Object(did) => rt.object_get(did, "value"),
+                        _ => Value::Undefined,
+                    };
+                    rt.object_set(id, k, v);
+                }
+            }
+            Ok(Value::Object(id))
+        });
         // Tier-Ω.5.t: wire `Object.prototype` to the intrinsic %Object.prototype%
         // so consumers can read `Object.prototype.hasOwnProperty` etc.
         // Without this, `var has = Object.prototype.hasOwnProperty` (a dense

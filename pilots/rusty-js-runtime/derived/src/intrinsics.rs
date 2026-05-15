@@ -1307,7 +1307,9 @@ impl Runtime {
         }
     }
 
-    /// Tier-Ω.5.dd: Date global. Real Date.now() + minimal instance shape.
+    /// Tier-Ω.5.aaaa: Date global. Real Gregorian arithmetic for year/
+    /// month/day extraction; ISO-string parsing in the constructor;
+    /// per-spec getter methods.
     fn install_date_global(&mut self) {
         let proto = self.alloc_object(Object::new_ordinary());
         register_method(self, proto, "getTime", |rt, _args| {
@@ -1318,23 +1320,94 @@ impl Runtime {
             let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(0.0)) };
             Ok(rt.object_get(this, "__date_ms"))
         });
+        register_method(self, proto, "getFullYear", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(date_components(ms).0 as f64))
+        });
+        register_method(self, proto, "getMonth", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(date_components(ms).1 as f64))
+        });
+        register_method(self, proto, "getDate", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(date_components(ms).2 as f64))
+        });
+        register_method(self, proto, "getDay", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            // Jan 1 1970 was a Thursday (day 4).
+            let days = (ms / 86_400_000.0).floor() as i64;
+            let dow = ((days % 7) + 7 + 4) % 7;
+            Ok(Value::Number(dow as f64))
+        });
+        register_method(self, proto, "getHours", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(((ms / 3_600_000.0).floor() as i64 % 24) as f64))
+        });
+        register_method(self, proto, "getMinutes", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(((ms / 60_000.0).floor() as i64 % 60) as f64))
+        });
+        register_method(self, proto, "getSeconds", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number(((ms / 1000.0).floor() as i64 % 60) as f64))
+        });
+        register_method(self, proto, "getMilliseconds", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(f64::NAN)) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::Number(f64::NAN)) };
+            Ok(Value::Number((ms as i64 % 1000) as f64))
+        });
+        register_method(self, proto, "getTimezoneOffset", |_rt, _args| Ok(Value::Number(0.0)));
         register_method(self, proto, "toISOString", |rt, _args| {
-            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("".into()))) };
-            let _ms = rt.object_get(this, "__date_ms");
-            Ok(Value::String(Rc::new("1970-01-01T00:00:00.000Z".into())))
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("".into()))) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::String(Rc::new("".into()))) };
+            let (y, mo, d) = date_components(ms);
+            let h = (ms / 3_600_000.0).floor() as i64 % 24;
+            let mi = (ms / 60_000.0).floor() as i64 % 60;
+            let se = (ms / 1000.0).floor() as i64 % 60;
+            let mss = ms as i64 % 1000;
+            Ok(Value::String(Rc::new(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                y, mo + 1, d, h, mi, se, mss))))
+        });
+        register_method(self, proto, "toJSON", |rt, _args| {
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("".into()))) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::String(Rc::new("".into()))) };
+            let (y, mo, d) = date_components(ms);
+            Ok(Value::String(Rc::new(format!("{:04}-{:02}-{:02}T00:00:00.000Z", y, mo + 1, d))))
         });
         register_method(self, proto, "toString", |rt, _args| {
-            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("Invalid Date".into()))) };
-            let _ms = rt.object_get(this, "__date_ms");
-            Ok(Value::String(Rc::new("Thu Jan 01 1970 00:00:00 GMT+0000".into())))
+            let this_id = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("Invalid Date".into()))) };
+            let ms = match rt.object_get(this_id, "__date_ms") { Value::Number(n) => n, _ => return Ok(Value::String(Rc::new("Invalid Date".into()))) };
+            let (y, mo, d) = date_components(ms);
+            Ok(Value::String(Rc::new(format!("{:04}-{:02}-{:02}T00:00:00Z", y, mo + 1, d))))
         });
         let proto_for_ctor = proto;
         let ctor_obj = make_native("Date", move |rt, args| {
             let ms = match args.first() {
-                Some(Value::Number(n)) => *n,
-                _ => {
+                None => {
                     use std::time::{SystemTime, UNIX_EPOCH};
                     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
+                }
+                Some(Value::Number(n)) => *n,
+                Some(Value::String(s)) => parse_date_string(s.as_str()),
+                _ => {
+                    // Multi-arg constructor: (year, monthIdx, day=1, h=0, m=0, s=0, ms=0)
+                    if args.len() >= 2 {
+                        let y = match &args[0] { Value::Number(n) => *n as i64, _ => 0 };
+                        let mo = match &args[1] { Value::Number(n) => *n as i64, _ => 0 };
+                        let d = args.get(2).map(|v| match v { Value::Number(n) => *n as i64, _ => 1 }).unwrap_or(1);
+                        let h = args.get(3).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                        let mi = args.get(4).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                        let se = args.get(5).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                        let mss = args.get(6).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                        (ymd_to_ms(y, mo, d) + h * 3_600_000 + mi * 60_000 + se * 1000 + mss) as f64
+                    } else { 0.0 }
                 }
             };
             let mut o = Object::new_ordinary();
@@ -2008,4 +2081,69 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
         return Err("invalid base64 length");
     }
     Ok(out)
+}
+
+// Tier-Ω.5.aaaa: Gregorian date arithmetic helpers for Date intrinsics.
+//
+// All functions operate on milliseconds since Unix epoch (UTC, no
+// timezone). Sufficient for moment / dayjs / date-fns module-load and
+// basic API exercise; not full IANA-timezone-aware.
+
+/// Compute (year, month-0-based, day-1-based) from epoch-ms.
+fn date_components(ms: f64) -> (i64, i64, i64) {
+    let days = (ms / 86_400_000.0).floor() as i64;
+    // Days since 1970-01-01.
+    // Convert to year, month, day via Gregorian algorithm.
+    let mut z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe/4 - yoe/100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    z = m - 1; // month 0-based
+    let _ = z;
+    (year, m - 1, d)
+}
+
+/// Build epoch-ms from (year, month-0-based, day-1-based).
+fn ymd_to_ms(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month < 2 { year - 1 } else { year };
+    let m = if month < 2 { (month + 9) as i64 } else { (month - 2) as i64 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * m + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days_since_epoch = era * 146097 + doe - 719468;
+    days_since_epoch * 86_400_000
+}
+
+/// Parse a Date string. Supports:
+/// - "YYYY-MM-DD"
+/// - "YYYY-MM-DDTHH:MM:SS"
+/// - "YYYY-MM-DDTHH:MM:SS.sssZ"
+/// Returns f64 ms-since-epoch, or NaN on parse failure.
+fn parse_date_string(s: &str) -> f64 {
+    let s = s.trim();
+    if s.len() < 10 { return f64::NAN; }
+    let y: i64 = match s[0..4].parse() { Ok(v) => v, Err(_) => return f64::NAN };
+    if s.as_bytes()[4] != b'-' { return f64::NAN; }
+    let mo: i64 = match s[5..7].parse() { Ok(v) => v, Err(_) => return f64::NAN };
+    if s.as_bytes()[7] != b'-' { return f64::NAN; }
+    let d: i64 = match s[8..10].parse() { Ok(v) => v, Err(_) => return f64::NAN };
+    let mut ms = ymd_to_ms(y, mo - 1, d);
+    if s.len() >= 19 && s.as_bytes()[10] == b'T' {
+        let h: i64 = s[11..13].parse().unwrap_or(0);
+        let mi: i64 = s[14..16].parse().unwrap_or(0);
+        let se: i64 = s[17..19].parse().unwrap_or(0);
+        ms += h * 3_600_000 + mi * 60_000 + se * 1000;
+        if s.len() >= 23 && s.as_bytes()[19] == b'.' {
+            let mss: i64 = s[20..23].parse().unwrap_or(0);
+            ms += mss;
+        }
+    }
+    ms as f64
 }

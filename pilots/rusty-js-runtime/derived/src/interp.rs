@@ -337,6 +337,24 @@ impl Runtime {
                     let slot = decode_u16(&frame.bytecode, frame.pc) as usize;
                     frame.pc += 2;
                     let v = frame.read_local(slot);
+                    // Tier-Ω.5.jj.diag: tag local-binding-name into the
+                    // diagnostic stash so Op::Call's error includes which
+                    // local was loaded. Compiler's local descriptor carries
+                    // the source name; reuse it for error enrichment.
+                    if slot < frame.bytecode.len() {
+                        // frame.constants and frame.bytecode are slices; we
+                        // need access to locals. The local name lives in
+                        // CompiledModule.locals or FunctionProto.locals,
+                        // both kept on the frame as &[LocalDescriptor] via
+                        // the proto/module reference. Skip if unavailable.
+                    }
+                    // The frame.locals field is Vec<Value>, not descriptors.
+                    // CompiledModule and FunctionProto carry the descriptors.
+                    // Frame doesn't currently carry them; use the bytecode's
+                    // owning structure via the constants pool name if needed
+                    // — for now, just tag with the slot number.
+                    let lname = frame.locals_names.get(slot).map(|d| d.name.clone()).unwrap_or_else(|| format!("<local${}>", slot));
+                    frame.last_property_lookup = Some(lname);
                     frame.push(v);
                 }
                 Op::StoreLocal => {
@@ -1054,6 +1072,7 @@ impl Runtime {
         let mut inner = Frame {
             bytecode: &proto.bytecode,
             constants: &proto.constants,
+            locals_names: &proto.locals,
             locals,
             local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),
@@ -1108,6 +1127,11 @@ fn property_key(v: &Value) -> String {
 pub struct Frame<'a> {
     pub bytecode: &'a [u8],
     pub constants: &'a rusty_js_bytecode::ConstantsPool,
+    /// Tier-Ω.5.jj.diag: parallel to `locals`, carries the compiler's
+    /// local-descriptor names so error messages can name which local
+    /// resolved to an undefined callee. Empty when the frame doesn't
+    /// carry descriptors (legacy paths or hand-built frames).
+    pub locals_names: &'a [rusty_js_bytecode::LocalDescriptor],
     pub locals: Vec<Value>,
     /// Parallel to `locals`. Tier-Ω.5.e: when a nested closure captures
     /// this frame's local slot `i`, `local_cells[i]` becomes
@@ -1154,6 +1178,7 @@ impl<'a> Frame<'a> {
         Self {
             bytecode: &m.bytecode,
             constants: &m.constants,
+            locals_names: &m.locals,
             locals,
             local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),

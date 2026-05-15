@@ -383,11 +383,29 @@ impl<'src> Parser<'src> {
             }
             return Err(self.err_here("expected `target` after `new.`".into()));
         }
-        let callee = if self.is_ident("new") {
+        let mut callee = if self.is_ident("new") {
             self.parse_new_expression()?
         } else {
             self.parse_primary_expression()?
         };
+        // Tier-Ω.5.ppp: consume MemberExpression continuation (`.x` /
+        // `[x]`) so `new X.Y.Z(args)` parses as new (X.Y.Z)(args) per
+        // ECMA-262 §13.3.5. Do NOT consume Call (parentheses) here —
+        // the first `(args)` after the chain belongs to the new.
+        // minimatch's `new Minimatch(pattern, options).match(p)` pattern
+        // depends on this.
+        loop {
+            match self.current_kind() {
+                TokenKind::Punct(Punct::Dot) => {
+                    self.bump()?;
+                    callee = self.consume_member_property(callee, false)?;
+                }
+                TokenKind::Punct(Punct::LBracket) => {
+                    callee = self.consume_computed_member(callee, false)?;
+                }
+                _ => break,
+            }
+        }
         // Optional argument list.
         let arguments = if matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
             self.parse_arguments()?

@@ -378,6 +378,33 @@ impl Compiler {
                 }
                 continue;
             }
+            // Tier-Ω.5.qqq: also pre-allocate class-decl names so a
+            // top-level arrow that references a later-declared class
+            // resolves it as a local upvalue rather than a missing
+            // global. minimatch's `export const minimatch = (...) =>
+            // { ... new Minimatch(...) ... }` over `export class
+            // Minimatch` depends on this. Classes evaluate at their
+            // declaration point in Phase B, so the slot is only
+            // pre-allocated here (no MakeClosure / class-build emit).
+            let class_name: Option<&BindingIdentifier> = match item {
+                ModuleItem::Statement(Stmt::ClassDecl { name: Some(n), .. }) => Some(n),
+                ModuleItem::Export(ExportDeclaration::Declaration { decl_stmt: Some(stmt), .. }) => {
+                    if let Stmt::ClassDecl { name: Some(n), .. } = stmt.as_ref() { Some(n) } else { None }
+                }
+                _ => None,
+            };
+            if let Some(n) = class_name {
+                if !self.pre_allocated_slots.contains_key(&n.name)
+                    && !fn_pre_slots.contains_key(&n.name)
+                    && self.resolve_local(&n.name).is_none()
+                {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: n.name.clone(), kind: VariableKind::Let, depth: 0,
+                    });
+                    self.pre_allocated_slots.insert(n.name.clone(), slot);
+                }
+                continue;
+            }
             // Top-level variable bindings (incl. under `export`).
             let v_opt: Option<&rusty_js_ast::VariableStatement> = match item {
                 ModuleItem::Statement(Stmt::Variable(v)) => Some(v),
@@ -1075,12 +1102,18 @@ impl Compiler {
                 // D.#count }`) resolve `D` via upvalue capture; the slot
                 // is uninitialized at compile-time emission but holds the
                 // constructor by the time any method actually runs.
+                // Tier-Ω.5.qqq: reuse pre-allocated slot if Phase A.4
+                // already created one for this class name.
                 let class_slot = if let Some(n) = name {
-                    Some(self.alloc_local(LocalDescriptor {
-                        name: n.name.clone(),
-                        kind: VariableKind::Let,
-                        depth: 0,
-                    }))
+                    if let Some(s) = self.pre_allocated_slots.get(&n.name).copied() {
+                        Some(s)
+                    } else {
+                        Some(self.alloc_local(LocalDescriptor {
+                            name: n.name.clone(),
+                            kind: VariableKind::Let,
+                            depth: 0,
+                        }))
+                    }
                 } else { None };
                 self.compile_class(*span, name.as_ref(), super_class.as_ref(), members)?;
                 if let Some(slot) = class_slot {

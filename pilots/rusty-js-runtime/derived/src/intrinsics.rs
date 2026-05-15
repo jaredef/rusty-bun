@@ -524,7 +524,17 @@ impl Runtime {
         register_method(self, obj_ctor, "defineProperty", |rt, args| {
             let target = match args.first() {
                 Some(Value::Object(id)) => *id,
-                _ => return Err(RuntimeError::TypeError("Object.defineProperty: target must be an object".into())),
+                other => return Err(RuntimeError::TypeError(format!(
+                    "Object.defineProperty: target must be an object (got {})",
+                    other.map(|v| match v {
+                        Value::Undefined => "undefined".to_string(),
+                        Value::Null => "null".to_string(),
+                        Value::Boolean(_) => "boolean".to_string(),
+                        Value::Number(_) => "number".to_string(),
+                        Value::String(_) => "string".to_string(),
+                        _ => "other".to_string(),
+                    }).unwrap_or_else(|| "missing".into())
+                ))),
             };
             let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined))
                 .as_str().to_string();
@@ -643,6 +653,64 @@ impl Runtime {
                 }
             }
             Ok(Value::Object(id))
+        });
+        // Tier-Ω.5.nn: Object.getPrototypeOf + Object.setPrototypeOf.
+        // axios + many others destructure `const { getPrototypeOf } = Object;`
+        // at module top level. Without these statics, getPrototypeOf is
+        // undefined and `getPrototypeOf(Uint8Array)` errors. The Reflect
+        // variant existed (Ω.5.cc) but consumer code uses Object.X.
+        register_method(self, obj_ctor, "getPrototypeOf", |rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            match v {
+                Value::Object(id) => match rt.obj(id).proto {
+                    Some(p) => Ok(Value::Object(p)),
+                    None => Ok(Value::Null),
+                },
+                _ => Ok(Value::Null),
+            }
+        });
+        register_method(self, obj_ctor, "setPrototypeOf", |rt, args| {
+            let target = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(args.first().cloned().unwrap_or(Value::Undefined)),
+            };
+            let proto = args.get(1).cloned().unwrap_or(Value::Null);
+            let new_proto = match proto {
+                Value::Object(id) => Some(id),
+                Value::Null => None,
+                _ => None,
+            };
+            rt.obj_mut(target).proto = new_proto;
+            Ok(Value::Object(target))
+        });
+        register_method(self, obj_ctor, "create", |rt, args| {
+            let proto_arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let mut obj = Object::new_ordinary();
+            obj.proto = match proto_arg {
+                Value::Object(id) => Some(id),
+                Value::Null => None,
+                _ => return Err(RuntimeError::TypeError("Object.create: prototype must be object or null".into())),
+            };
+            let id = rt.alloc_object(obj);
+            // Properties argument (descriptor map) — implement same shape as defineProperties.
+            if let Some(Value::Object(props_id)) = args.get(1) {
+                let entries: Vec<(String, Value)> = rt.obj(*props_id).properties.iter()
+                    .filter(|(_, d)| d.enumerable)
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                for (k, dv) in entries {
+                    if let Value::Object(did) = dv {
+                        let value = rt.object_get(did, "value");
+                        rt.object_set(id, k, value);
+                    }
+                }
+            }
+            Ok(Value::Object(id))
+        });
+        register_method(self, obj_ctor, "is", |_rt, args| {
+            let a = args.first().cloned().unwrap_or(Value::Undefined);
+            let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+            Ok(Value::Boolean(crate::value::Value::same_value(&a, &b)))
         });
         // Tier-Ω.5.t: wire `Object.prototype` to the intrinsic %Object.prototype%
         // so consumers can read `Object.prototype.hasOwnProperty` etc.

@@ -333,6 +333,36 @@ impl Runtime {
         {
             return Runtime::resolve_module(parent_url, specifier);
         }
+        // Tier-Ω.5.mm: package internal `imports` field (`#name`). chalk
+        // and other packages use this for private subpath imports. Walk
+        // up from the importing file looking for the package's
+        // package.json with an `imports` map containing the key.
+        if specifier.starts_with('#') {
+            let parent_path_str = parent_url.strip_prefix("file://").unwrap_or(parent_url);
+            let parent_path = std::path::Path::new(parent_path_str);
+            let start_dir = parent_path.parent().unwrap_or_else(|| std::path::Path::new("/"));
+            let mut cur: Option<&std::path::Path> = Some(start_dir);
+            while let Some(d) = cur {
+                let candidate = d.join("package.json");
+                if candidate.is_file() {
+                    let pkg = self.read_package_json(&candidate)?;
+                    if let Some(imports) = pkg.raw.get("imports") {
+                        if let Some(target) = imports.get(specifier) {
+                            if let Some(rel) = resolve_exports_target(target, "", importer_kind) {
+                                let pkg_dir = d;
+                                let candidate_path = pkg_dir.join(strip_dot_slash(&rel));
+                                return probe_with_extensions(&candidate_path, specifier);
+                            }
+                        }
+                    }
+                }
+                cur = d.parent();
+            }
+            return Err(RuntimeError::TypeError(format!(
+                "package-internal import '{}' not found in any enclosing package.json's `imports` field",
+                specifier
+            )));
+        }
         // Bare specifier — extract pkg_name + subpath.
         let (pkg_name, subpath) = split_bare_specifier(specifier).ok_or_else(|| {
             RuntimeError::TypeError(format!(

@@ -793,7 +793,13 @@ impl Runtime {
                     let value = frame.pop()?;
                     let obj_v = frame.pop()?;
                     if let Value::Object(id) = &obj_v {
-                        self.object_set(*id, key, value.clone());
+                        // Tier-Ω.5.vvvv: same setter dispatch on identifier-
+                        // keyed writes.
+                        if let Some(setter) = self.find_setter(*id, &key) {
+                            self.call_function(setter, Value::Object(*id), vec![value.clone()])?;
+                        } else {
+                            self.object_set(*id, key, value.clone());
+                        }
                     } else {
                         return Err(RuntimeError::TypeError(
                             format!("SetProp '{}' on non-object ({})", key,
@@ -943,7 +949,15 @@ impl Runtime {
                     let obj_v = frame.pop()?;
                     let key = property_key(&key_v);
                     if let Value::Object(id) = &obj_v {
-                        self.object_set(*id, key, value.clone());
+                        // Tier-Ω.5.vvvv: dispatch accessor setters, mirror of
+                        // Ω.5.uuuu for GetIndex. Without this, writes through
+                        // computed keys to lazy-defined properties silently
+                        // overwrite the descriptor's getter with a data slot.
+                        if let Some(setter) = self.find_setter(*id, &key) {
+                            self.call_function(setter, Value::Object(*id), vec![value.clone()])?;
+                        } else {
+                            self.object_set(*id, key, value.clone());
+                        }
                     } else {
                         return Err(RuntimeError::TypeError("SetIndex on non-object".into()));
                     }

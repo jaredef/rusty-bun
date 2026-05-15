@@ -285,9 +285,23 @@ impl Runtime {
         // Full eval-via-Function would need parser+compiler dependency
         // injection and a Closure-from-FunctionExpression path; deferred.
         // Stub throws a clearer error than "callee is not callable".
-        register_global_fn(self, "Function", |_rt, _args| {
-            // Throw a JS-catchable TypeError-shaped value so user try/catch
-            // observes it. Until Error intrinsics land, a string suffices.
+        // Tier-Ω.5.ccc: Function constructor v1 stub. The single
+        // overwhelmingly-common pattern in real code is the
+        // global-detection idiom `Function('return this')()` (lodash,
+        // many polyfills). Recognize that exact body and return a
+        // closure that yields globalThis. Everything else still
+        // throws — full eval-via-Function needs a parser+compiler
+        // dependency and is deferred.
+        register_global_fn(self, "Function", |rt, args| {
+            let body = match args.last() {
+                Some(Value::String(s)) => s.as_str().trim().to_string(),
+                _ => String::new(),
+            };
+            if body == "return this" || body == "return this;" {
+                let global_obj = rt.globals.get("globalThis").cloned().unwrap_or(Value::Undefined);
+                let f_obj = make_native("<Function('return this')>", move |_rt, _args| Ok(global_obj.clone()));
+                return Ok(Value::Object(rt.alloc_object(f_obj)));
+            }
             Err(RuntimeError::Thrown(Value::String(Rc::new(
                 "TypeError: Function constructor not yet supported in v1".into()))))
         });

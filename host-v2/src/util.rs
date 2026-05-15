@@ -106,15 +106,16 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::Undefined)
     });
 
-    register_method(rt, util, "promisify", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:util promisify: not yet implemented (Tier-Ω.5.s stub)".into(),
-        ))
+    // Tier-Ω.5.ddd: promisify / callbackify v1 stub. Real semantics
+    // (callback-style → Promise-returning wrapper) need a full Promise
+    // implementation in the runtime; for module-load-time evaluation,
+    // returning the input function unchanged lets dependent libraries
+    // (node-fetch, etc.) at least load and probe their namespaces.
+    register_method(rt, util, "promisify", |_rt, args| {
+        Ok(args.first().cloned().unwrap_or(Value::Undefined))
     });
-    register_method(rt, util, "callbackify", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:util callbackify: not yet implemented (Tier-Ω.5.s stub)".into(),
-        ))
+    register_method(rt, util, "callbackify", |_rt, args| {
+        Ok(args.first().cloned().unwrap_or(Value::Undefined))
     });
     register_method(rt, util, "deprecate", |_rt, args| {
         // Return fn unchanged; v1 drops the deprecation warning.

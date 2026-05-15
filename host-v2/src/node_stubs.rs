@@ -102,6 +102,11 @@ pub fn install_buffer(rt: &mut Runtime) {
         };
         Ok(Value::Number(n as f64))
     });
+    // Tier-Ω.5.bbb: Buffer.prototype as a real object so
+    // `Object.create(Buffer.prototype)` (safe-buffer / many polyfills)
+    // and inheritance chains terminate properly.
+    let buf_proto = new_object(rt);
+    rt.object_set(buf_ctor, "prototype".into(), Value::Object(buf_proto));
     rt.object_set(ns, "Buffer".into(), Value::Object(buf_ctor));
     register_method(rt, ns, "Blob", stub("buffer", "Blob"));
     rt.globals.insert("buffer".into(), Value::Object(ns));

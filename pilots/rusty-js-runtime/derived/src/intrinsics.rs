@@ -225,6 +225,31 @@ impl Runtime {
     }
 
     fn install_globals(&mut self) {
+        // Tier-Ω.5.eee: atob / btoa base64 globals (HTML living standard,
+        // also exposed by Node 16+). entities + parse5 depend on atob to
+        // decode their packed trie data at module load.
+        register_global_fn(self, "atob", |_rt, args| {
+            let s = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(RuntimeError::TypeError("atob: expected a string".into())),
+            };
+            // Standard base64 with padding tolerance.
+            let cleaned: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+            let decoded = base64_decode(&cleaned).map_err(|e| RuntimeError::Thrown(
+                Value::String(Rc::new(format!("InvalidCharacterError: {}", e)))
+            ))?;
+            // Per spec atob returns a binary string (one byte per char).
+            let out: String = decoded.iter().map(|&b| b as char).collect();
+            Ok(Value::String(Rc::new(out)))
+        });
+        register_global_fn(self, "btoa", |_rt, args| {
+            let s = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(RuntimeError::TypeError("btoa: expected a string".into())),
+            };
+            let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
+            Ok(Value::String(Rc::new(base64_encode(&bytes))))
+        });
         register_global_fn(self, "parseInt", |_rt, args|{
             let s = if args.is_empty() { return Ok(Value::Number(f64::NAN)); } else { abstract_ops::to_string(&args[0]) };
             let radix = args.get(1).map(|v| abstract_ops::to_number(v) as i32).unwrap_or(10);
@@ -1776,4 +1801,67 @@ fn json_parse_number(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
     let s = std::str::from_utf8(&b[start..*p]).map_err(|_|RuntimeError::TypeError("JSON.parse: bad number".into()))?;
     let n = s.parse::<f64>().map_err(|_|RuntimeError::TypeError("JSON.parse: bad number".into()))?;
     Ok(Value::Number(n))
+}
+
+// Tier-Ω.5.eee: minimal base64 codec for atob/btoa. Standard alphabet,
+// padding required on decode (entities-generated data is well-formed).
+const B64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn base64_encode(input: &[u8]) -> String {
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut i = 0;
+    while i + 3 <= input.len() {
+        let n = ((input[i] as u32) << 16) | ((input[i+1] as u32) << 8) | (input[i+2] as u32);
+        out.push(B64_ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 6) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[(n & 0x3F) as usize] as char);
+        i += 3;
+    }
+    let rem = input.len() - i;
+    if rem == 1 {
+        let n = (input[i] as u32) << 16;
+        out.push(B64_ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let n = ((input[i] as u32) << 16) | ((input[i+1] as u32) << 8);
+        out.push(B64_ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 6) & 0x3F) as usize] as char);
+        out.push('=');
+    }
+    out
+}
+fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
+    let mut lut = [255u8; 256];
+    for (i, &c) in B64_ALPHABET.iter().enumerate() { lut[c as usize] = i as u8; }
+    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        let (a, b, c, d) = (lut[bytes[i] as usize], lut[bytes[i+1] as usize], lut[bytes[i+2] as usize], lut[bytes[i+3] as usize]);
+        if (a | b | c | d) == 255 { return Err("invalid base64 character"); }
+        let n = ((a as u32) << 18) | ((b as u32) << 12) | ((c as u32) << 6) | (d as u32);
+        out.push(((n >> 16) & 0xFF) as u8);
+        out.push(((n >> 8) & 0xFF) as u8);
+        out.push((n & 0xFF) as u8);
+        i += 4;
+    }
+    let rem = bytes.len() - i;
+    if rem == 2 {
+        let (a, b) = (lut[bytes[i] as usize], lut[bytes[i+1] as usize]);
+        if (a | b) == 255 { return Err("invalid base64 character"); }
+        let n = ((a as u32) << 18) | ((b as u32) << 12);
+        out.push(((n >> 16) & 0xFF) as u8);
+    } else if rem == 3 {
+        let (a, b, c) = (lut[bytes[i] as usize], lut[bytes[i+1] as usize], lut[bytes[i+2] as usize]);
+        if (a | b | c) == 255 { return Err("invalid base64 character"); }
+        let n = ((a as u32) << 18) | ((b as u32) << 12) | ((c as u32) << 6);
+        out.push(((n >> 16) & 0xFF) as u8);
+        out.push(((n >> 8) & 0xFF) as u8);
+    } else if rem == 1 {
+        return Err("invalid base64 length");
+    }
+    Ok(out)
 }

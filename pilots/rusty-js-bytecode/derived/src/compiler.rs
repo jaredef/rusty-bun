@@ -181,6 +181,10 @@ pub struct Compiler {
     /// previously declared by `const name = ...` / `function name() {}`.
     /// Resolved at the end of compile_module.
     pending_named_exports: Vec<(String, String)>, // (exported, local_name)
+    /// Tier-Ω.5.ee: names pre-allocated by the function-decl hoisting pass.
+    /// VariableDecl compile path consults this to reuse the pre-allocated
+    /// slot instead of allocating a fresh one. Cleared after the body pass.
+    pre_allocated_slots: std::collections::HashMap<String, u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +285,7 @@ impl Compiler {
             exports: Vec::new(),
             reexport_sources: Vec::new(),
             pending_named_exports: Vec::new(),
+            pre_allocated_slots: std::collections::HashMap::new(),
         }
     }
 
@@ -326,13 +331,40 @@ impl Compiler {
             }
         }
 
+        // Phase A.5: function-declaration hoisting (Tier-Ω.5.ee). Per
+        // ECMA-262 §10.2.1.3 / §14.1.22, FunctionDeclaration is hoisted to
+        // the top of the enclosing function (or module). The dense CJS
+        // idiom `exports = module.exports = objectHash; ... function
+        // objectHash() {...}` depends on this. Pre-allocate the function's
+        // local slot AND emit MakeClosure + StoreLocal so the name is bound
+        // before any other statement runs.
+        for item in &m.body {
+            if let ModuleItem::Statement(Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. }) = item {
+                if let Some(n) = name {
+                    let proto = self.compile_function_proto(Some(n.clone()), *is_async, *is_generator, params, body)?;
+                    let captures = proto.upvalues.clone();
+                    let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                    encode_op(&mut self.bytecode, Op::MakeClosure);
+                    encode_u16(&mut self.bytecode, idx);
+                    emit_captures(&mut self.bytecode, &captures);
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: n.name.clone(), kind: VariableKind::Var, depth: 0,
+                    });
+                    encode_op(&mut self.bytecode, Op::StoreLocal);
+                    encode_u16(&mut self.bytecode, slot);
+                }
+            }
+        }
+
         // Phase B: walk the body in order. Imports already lowered.
         // Statements compile normally. Exports are recorded for phase C
         // (default-export expressions are lowered inline into a synthetic
-        // "<module.default>" local).
+        // "<module.default>" local). FunctionDecl statements are skipped
+        // here because they were hoisted in Phase A.5 above.
         for item in &m.body {
             match item {
                 ModuleItem::Import(_) => { /* lowered in phase A */ }
+                ModuleItem::Statement(Stmt::FunctionDecl { .. }) => { /* hoisted in A.5 */ }
                 ModuleItem::Statement(s) => self.compile_stmt(s)?,
                 ModuleItem::Export(e) => self.compile_export(e)?,
             }
@@ -506,12 +538,17 @@ impl Compiler {
                 for d in &v.declarators {
                     match &d.target {
                         rusty_js_ast::BindingPattern::Identifier(id) => {
-                            // Allocate a local slot for the binding.
-                            let slot = self.alloc_local(LocalDescriptor {
-                                name: id.name.clone(),
-                                kind: v.kind,
-                                depth: 0,
-                            });
+                            // Tier-Ω.5.ee: reuse pre-allocated slot if the
+                            // hoisting pass already created one for this name.
+                            let slot = if let Some(s) = self.pre_allocated_slots.get(&id.name).copied() {
+                                s
+                            } else {
+                                self.alloc_local(LocalDescriptor {
+                                    name: id.name.clone(),
+                                    kind: v.kind,
+                                    depth: 0,
+                                })
+                            };
                             if let Some(init) = &d.init {
                                 self.compile_expr(init)?;
                             } else {
@@ -2051,6 +2088,7 @@ impl Compiler {
             exports: Vec::new(),
             reexport_sources: Vec::new(),
             pending_named_exports: Vec::new(),
+            pre_allocated_slots: std::collections::HashMap::new(),
         };
         let param_count = params.len() as u16;
         // Tier-Ω.5.l: track the rest-parameter slot. Per spec only the
@@ -2120,7 +2158,67 @@ impl Compiler {
                 sub.emit_destructure(pat, *slot)?;
             }
         }
-        for s in body { sub.compile_stmt(s)?; }
+        // Tier-Ω.5.ee: function-declaration hoisting per ECMA-262 §10.2.1.3.
+        // Two-phase to preserve upvalue resolution: phase H1 pre-allocates
+        // ALL top-level var/let/const slots so nested function bodies that
+        // capture them via upvalues find the slots during compilation;
+        // phase H2 emits MakeClosure + StoreLocal for FunctionDecls so the
+        // names are bound before any other statement runs.
+        //
+        // Without H1, hoisting `function inner() { return x }` before its
+        // enclosing function compiles `let x = ...` would make inner's
+        // upvalue resolution miss `x` (it would be `let`-allocated later).
+        let pre_alloc_names: Vec<(String, VariableKind)> = body.iter().flat_map(|s| {
+            let mut out = Vec::new();
+            match s {
+                Stmt::Variable(v) => {
+                    for d in &v.declarators {
+                        for id in d.target.collect_names() {
+                            out.push((id.name.clone(), v.kind));
+                        }
+                    }
+                }
+                Stmt::FunctionDecl { name: Some(n), .. } => {
+                    out.push((n.name.clone(), VariableKind::Var));
+                }
+                _ => {}
+            }
+            out
+        }).collect();
+        let mut pre_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+        for (n, kind) in &pre_alloc_names {
+            if !pre_slots.contains_key(n) {
+                let slot = sub.alloc_local(LocalDescriptor {
+                    name: n.clone(), kind: *kind, depth: 0,
+                });
+                pre_slots.insert(n.clone(), slot);
+            }
+        }
+        // Phase H2: emit closure-bind for each FunctionDecl into its
+        // pre-allocated slot.
+        for s in body {
+            if let Stmt::FunctionDecl { name: Some(n), is_async, is_generator, params, body: fn_body, .. } = s {
+                let proto = sub.compile_function_proto(Some(n.clone()), *is_async, *is_generator, params, fn_body)?;
+                let captures = proto.upvalues.clone();
+                let idx = sub.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut sub.bytecode, Op::MakeClosure);
+                encode_u16(&mut sub.bytecode, idx);
+                emit_captures(&mut sub.bytecode, &captures);
+                if let Some(slot) = pre_slots.get(&n.name).copied() {
+                    encode_op(&mut sub.bytecode, Op::StoreLocal);
+                    encode_u16(&mut sub.bytecode, slot);
+                }
+            }
+        }
+        // Phase H3: compile remaining statements. FunctionDecls were already
+        // hoisted; skip them. Variable declarations re-bind into their
+        // pre-allocated slot rather than allocating a fresh one.
+        sub.pre_allocated_slots = pre_slots;
+        for s in body {
+            if matches!(s, Stmt::FunctionDecl { name: Some(_), .. }) { continue; }
+            sub.compile_stmt(s)?;
+        }
+        sub.pre_allocated_slots.clear();
         encode_op(&mut sub.bytecode, Op::ReturnUndef);
 
         // Back-propagate any new upvalues the sub added to intermediate

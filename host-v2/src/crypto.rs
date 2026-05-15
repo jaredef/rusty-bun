@@ -52,18 +52,87 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::Object(hmac))
     });
 
-    register_method(rt, crypto, "randomBytes", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:crypto randomBytes: not yet implemented (Tier-Ω.5.r stub)".into(),
-        ))
+    // Tier-Ω.5.hhh: real (non-secure) entropy. Replaces the throw-stub
+    // randomBytes and the zeros-stub randomUUID. Source is a wall-clock-
+    // seeded xorshift state shared per Runtime via a thread-local. Not
+    // cryptographically secure (Pin-Art deferred), but produces valid
+    // varying bytes so ulid / nanoid / uuid generate distinct values.
+    register_method(rt, crypto, "randomBytes", |rt, args| {
+        let n = match args.first() {
+            Some(Value::Number(n)) => *n as usize,
+            _ => 0,
+        };
+        let mut bytes_vec = Vec::with_capacity(n);
+        for _ in 0..n { bytes_vec.push(next_random_byte()); }
+        // Return a Uint8Array-like object so .length / indexing work.
+        let arr_obj = rusty_js_runtime::value::Object::new_array();
+        let id = rt.alloc_object(arr_obj);
+        for (i, b) in bytes_vec.iter().enumerate() {
+            rt.object_set(id, i.to_string(), Value::Number(*b as f64));
+        }
+        rt.object_set(id, "length".into(), Value::Number(n as f64));
+        Ok(Value::Object(id))
     });
 
     register_method(rt, crypto, "randomUUID", |_rt, _args| {
-        // Placeholder UUID — enough to satisfy shape probes that string-
-        // check the result. Not cryptographically usable.
-        Ok(Value::String(Rc::new(
-            "00000000-0000-0000-0000-000000000000".into(),
-        )))
+        // v4 UUID: 16 random bytes with version/variant bits set.
+        let mut b = [0u8; 16];
+        for i in 0..16 { b[i] = next_random_byte(); }
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        let s = format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+        );
+        Ok(Value::String(Rc::new(s)))
+    });
+
+    // Tier-Ω.5.hhh: crypto.webcrypto subobject — getRandomValues fills
+    // the input typed-array in place per Web Crypto API. nanoid imports
+    // `{ webcrypto as crypto }` and calls `crypto.getRandomValues(pool)`.
+    let webcrypto = new_object(rt);
+    register_method(rt, webcrypto, "getRandomValues", |rt, args| {
+        let id = match args.first() {
+            Some(Value::Object(id)) => *id,
+            _ => return Err(RuntimeError::TypeError("crypto.getRandomValues: argument must be a typed array".into())),
+        };
+        let length = match rt.object_get(id, &"length".to_string()) {
+            Value::Number(n) => n as usize,
+            _ => 0,
+        };
+        for i in 0..length {
+            rt.object_set(id, i.to_string(), Value::Number(next_random_byte() as f64));
+        }
+        Ok(Value::Object(id))
+    });
+    register_method(rt, webcrypto, "randomUUID", |_rt, _args| {
+        let mut b = [0u8; 16];
+        for i in 0..16 { b[i] = next_random_byte(); }
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        let s = format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+        );
+        Ok(Value::String(Rc::new(s)))
+    });
+    rt.object_set(crypto, "webcrypto".into(), Value::Object(webcrypto));
+    // Tier-Ω.5.hhh: also expose getRandomValues directly on the crypto
+    // namespace so `globalThis.crypto.getRandomValues` works (web style).
+    // ulid + many browser-targeting libs read it this way.
+    register_method(rt, crypto, "getRandomValues", |rt, args| {
+        let id = match args.first() {
+            Some(Value::Object(id)) => *id,
+            _ => return Err(RuntimeError::TypeError("crypto.getRandomValues: argument must be a typed array".into())),
+        };
+        let length = match rt.object_get(id, &"length".to_string()) {
+            Value::Number(n) => n as usize,
+            _ => 0,
+        };
+        for i in 0..length {
+            rt.object_set(id, i.to_string(), Value::Number(next_random_byte() as f64));
+        }
+        Ok(Value::Object(id))
     });
 
     register_method(rt, crypto, "createCipheriv", |_rt, _args| {
@@ -87,4 +156,28 @@ pub fn install(rt: &mut Runtime) {
     set_constant(rt, crypto, "default", Value::Object(crypto));
 
     rt.globals.insert("crypto".into(), Value::Object(crypto));
+}
+
+// Tier-Ω.5.hhh: xorshift64 PRNG seeded once from wall-clock + thread id.
+// Thread-local for cheap mutation. Not cryptographically secure (Pin-Art
+// deferred), but produces valid varying bytes — sufficient for ulid /
+// nanoid / uuid to generate distinct identifiers.
+thread_local! {
+    static PRNG_STATE: std::cell::Cell<u64> = std::cell::Cell::new(seed_prng());
+}
+fn seed_prng() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0xdeadbeef_cafebabe);
+    t ^ 0x9E3779B97F4A7C15
+}
+fn next_random_byte() -> u8 {
+    PRNG_STATE.with(|cell| {
+        let mut x = cell.get();
+        if x == 0 { x = seed_prng(); }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        cell.set(x);
+        (x & 0xff) as u8
+    })
 }

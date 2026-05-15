@@ -90,7 +90,71 @@ pub fn install_buffer(rt: &mut Runtime) {
         };
         let mut o = RtObject::new_ordinary();
         o.set_own("length".into(), Value::Number(n as f64));
+        // Zero-initialized indexable bytes per Node spec.
+        for i in 0..n.min(65536) {
+            o.set_own(i.to_string(), Value::Number(0.0));
+        }
         let id = rt.alloc_object(o);
+        Ok(Value::Object(id))
+    });
+    // Tier-Ω.5.iii: Buffer.allocUnsafe + subarray for nanoid. nanoid
+    // calls Buffer.allocUnsafe(bytes * POOL_SIZE_MULTIPLIER), fills via
+    // crypto.getRandomValues, then slices with subarray.
+    register_method(rt, buf_ctor, "allocUnsafe", |rt, args| {
+        let n = match args.first() {
+            Some(Value::Number(n)) => *n as usize,
+            _ => 0,
+        };
+        let mut o = RtObject::new_ordinary();
+        o.set_own("length".into(), Value::Number(n as f64));
+        // Pre-populate indices with 0 so subsequent SetIndex via
+        // crypto.getRandomValues has slots to write into.
+        for i in 0..n.min(65536) {
+            o.set_own(i.to_string(), Value::Number(0.0));
+        }
+        let id = rt.alloc_object(o);
+        // subarray method on the instance — slices [start..end) without
+        // copying. v1 actually copies; the visible semantics match for
+        // shape probes and indexed reads.
+        register_method(rt, id, "readUInt8", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("Buffer.readUInt8: this must be a Buffer".into())),
+            };
+            let offset = match args.first() {
+                Some(Value::Number(n)) => *n as usize,
+                _ => 0,
+            };
+            let v = rt.object_get(this_id, &offset.to_string());
+            Ok(match v { Value::Number(n) => Value::Number(n), _ => Value::Number(0.0) })
+        });
+        register_method(rt, id, "subarray", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("Buffer.subarray: this must be a Buffer".into())),
+            };
+            let len = match rt.object_get(this_id, &"length".to_string()) {
+                Value::Number(n) => n as usize,
+                _ => 0,
+            };
+            let start = match args.first() {
+                Some(Value::Number(n)) => (*n as i64).max(0) as usize,
+                _ => 0,
+            }.min(len);
+            let end = match args.get(1) {
+                Some(Value::Number(n)) => (*n as i64).max(0) as usize,
+                _ => len,
+            }.min(len);
+            let slice_len = end.saturating_sub(start);
+            let mut o = RtObject::new_ordinary();
+            o.set_own("length".into(), Value::Number(slice_len as f64));
+            let new_id = rt.alloc_object(o);
+            for i in 0..slice_len {
+                let v = rt.object_get(this_id, &(start + i).to_string());
+                rt.object_set(new_id, i.to_string(), v);
+            }
+            Ok(Value::Object(new_id))
+        });
         Ok(Value::Object(id))
     });
     register_method(rt, buf_ctor, "isBuffer", |_rt, _args| Ok(Value::Boolean(false)));

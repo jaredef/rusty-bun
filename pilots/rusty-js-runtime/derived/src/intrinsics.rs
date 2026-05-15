@@ -799,7 +799,32 @@ impl Runtime {
     }
 
     fn install_array_static(&mut self) {
-        let arr_ctor = self.alloc_object(Object::new_ordinary());
+        // Tier-Ω.5.ttt: Array is a real Function (callable) per ECMA-262
+        // §23.1. `new Array(n)` produces an array of length n;
+        // `new Array(v0, v1, ...)` or `Array(v0, ...)` produces an
+        // array of those values. rfdc's `new Array(keys.length)` and
+        // many polyfill patterns depend on this.
+        let arr_proto_ref = self.array_prototype;
+        let arr_ctor_native = make_native("Array", move |rt, args| {
+            let mut o = Object::new_array();
+            if args.len() == 1 {
+                if let Value::Number(n) = &args[0] {
+                    let len = *n as usize;
+                    o.set_own("length".into(), Value::Number(len as f64));
+                    let id = rt.alloc_object(o);
+                    return Ok(Value::Object(id));
+                }
+            }
+            // Variadic form: each arg becomes an element.
+            for (i, v) in args.iter().enumerate() {
+                o.set_own(i.to_string(), v.clone());
+            }
+            o.set_own("length".into(), Value::Number(args.len() as f64));
+            let id = rt.alloc_object(o);
+            let _ = arr_proto_ref;
+            Ok(Value::Object(id))
+        });
+        let arr_ctor = self.alloc_object(arr_ctor_native);
         register_method(self, arr_ctor, "isArray", |rt, args| {
             Ok(Value::Boolean(matches!(args.first(),
                 Some(Value::Object(id)) if matches!(rt.obj(*id).internal_kind, InternalKind::Array))))

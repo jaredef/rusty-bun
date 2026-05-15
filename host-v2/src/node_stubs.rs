@@ -105,6 +105,10 @@ pub fn install_buffer(rt: &mut Runtime) {
     rt.object_set(ns, "Buffer".into(), Value::Object(buf_ctor));
     register_method(rt, ns, "Blob", stub("buffer", "Blob"));
     rt.globals.insert("buffer".into(), Value::Object(ns));
+    // Tier-Ω.5.oo: Buffer also visible as a top-level global per Node
+    // convention. csv-parse + csv-parser + many others call
+    // `Buffer.from(...)` at module level without importing node:buffer.
+    rt.globals.insert("Buffer".into(), Value::Object(buf_ctor));
 }
 
 pub fn install_all(rt: &mut Runtime) {

@@ -95,7 +95,7 @@ pub fn detect_module_kind(resolved_url: &str) -> ModuleKind {
             // alphabet's top is the actual ESM-marker presence, not the
             // package.json type field. Closes the 9-package
             // "expected '(' after import" cluster in cjs-wrapper parse.
-            if let Ok(head) = read_source_head(path, 4096) {
+            if let Ok(head) = read_source_head(path, 65536) {
                 if source_has_esm_markers(&head) { return ModuleKind::ESM; }
             }
             // Fall back to the package.json walk.
@@ -178,17 +178,30 @@ fn source_has_esm_markers(text: &str) -> bool {
 /// `"module"` or `"commonjs"` if found, else None. Avoids pulling a
 /// JSON-parser dep into the runtime crate.
 fn scan_package_type(text: &str) -> Option<String> {
-    // Find `"type"` then the next quoted value.
-    let key_pos = text.find("\"type\"")?;
-    let after = &text[key_pos + 6..];
-    let colon = after.find(':')?;
-    let after = &after[colon + 1..];
-    // Skip whitespace.
-    let after = after.trim_start();
-    if !after.starts_with('"') { return None; }
-    let after = &after[1..];
-    let end = after.find('"')?;
-    Some(after[..end].to_string())
+    // Tier-Ω.5.tt: scan every `"type"` occurrence and return the first
+    // one whose value is `"module"` or `"commonjs"`. Earlier versions
+    // returned the first `"type"` regardless — but package.json's
+    // funding/repository/bugs blocks all carry `"type":"git"` or
+    // `"type":"opencollective"`, and ordering varies. unified +
+    // temporal-polyfill + others have a non-top-level `"type"` first.
+    let mut cursor = 0usize;
+    while let Some(rel) = text[cursor..].find("\"type\"") {
+        let key_pos = cursor + rel;
+        let after = &text[key_pos + 6..];
+        let Some(colon) = after.find(':') else { return None; };
+        let after = &after[colon + 1..];
+        let after = after.trim_start();
+        if let Some(rest) = after.strip_prefix('"') {
+            if let Some(end) = rest.find('"') {
+                let v = &rest[..end];
+                if v == "module" || v == "commonjs" {
+                    return Some(v.to_string());
+                }
+            }
+        }
+        cursor = key_pos + 6;
+    }
+    None
 }
 
 /// Host-supplied callback kinds. The host installs these to customize the
@@ -484,6 +497,13 @@ impl Runtime {
             let source = std::fs::read_to_string(stripped).map_err(|e| {
                 RuntimeError::TypeError(format!("module load: cannot read '{}': {}", stripped, e))
             })?;
+            // Tier-Ω.5.ss: JSON module imports per ESM spec / import-attributes
+            // (`import data from "./x.json" with {type:"json"}`). The default
+            // export is the parsed JSON value. cli-spinners (ora) depends on
+            // this, as do many "data-as-module" packages.
+            if stripped.ends_with(".json") {
+                return self.evaluate_json_module(&source, url);
+            }
             match detect_module_kind(url) {
                 ModuleKind::ESM => self.evaluate_module(&source, url),
                 ModuleKind::CJS => self.evaluate_cjs_module(&source, url),
@@ -895,6 +915,37 @@ impl Runtime {
         let ns = self.alloc_object(Object::new_module_namespace());
         self.populate_cjs_namespace_view(ns, &exports);
         ns
+    }
+
+    /// Tier-Ω.5.ss: JSON module — produce a namespace with a single
+    /// `default` export holding the parsed value, mirroring Node's
+    /// import-attributes JSON module semantics.
+    pub fn evaluate_json_module(&mut self, source: &str, url: &str) -> Result<ObjectRef, RuntimeError> {
+        let value = crate::intrinsics::json_parse(self, source).map_err(|e| {
+            RuntimeError::CompileError(format!("parse (json module): {:?} @url={}", e, url))
+        })?;
+        let ns = self.alloc_object(Object::new_module_namespace());
+        self.object_set(ns, "default".to_string(), value);
+        let empty_ast = Rc::new(AstModule {
+            span: rusty_js_ast::Span::new(0, 0),
+            body: Vec::new(),
+            import_entries: Vec::new(),
+            local_export_entries: Vec::new(),
+            indirect_export_entries: Vec::new(),
+            star_export_entries: Vec::new(),
+        });
+        let empty_bc = Rc::new(CompiledModule {
+            bytecode: Vec::new(), constants: Default::default(),
+            locals: Vec::new(), source_map: Vec::new(),
+            imports: Vec::new(), exports: Vec::new(),
+            reexport_sources: Vec::new(),
+        });
+        self.modules.insert(url.to_string(), Rc::new(RefCell::new(ModuleRecord {
+            url: url.to_string(), status: ModuleStatus::Evaluated,
+            ast: empty_ast, bytecode: empty_bc, namespace: Some(ns),
+            kind: ModuleKind::ESM, cjs_exports: None,
+        })));
+        Ok(ns)
     }
 
     fn populate_cjs_namespace_view(&mut self, ns: ObjectRef, exports: &Value) {

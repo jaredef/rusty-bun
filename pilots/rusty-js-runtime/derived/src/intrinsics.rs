@@ -1596,7 +1596,7 @@ fn json_quote_string(s: &str) -> String {
 
 // ──────────────── JSON.parse (limited recursive-descent) ────────────────
 
-fn json_parse(rt: &mut Runtime, s: &str) -> Result<Value, RuntimeError> {
+pub fn json_parse(rt: &mut Runtime, s: &str) -> Result<Value, RuntimeError> {
     let bytes = s.as_bytes();
     let mut p = 0;
     skip_ws(bytes, &mut p);

@@ -338,6 +338,25 @@ impl Compiler {
         // objectHash() {...}` depends on this. Pre-allocate the function's
         // local slot AND emit MakeClosure + StoreLocal so the name is bound
         // before any other statement runs.
+        // Tier-Ω.5.zz: two-phase module-level hoisting, mirroring the
+        // H1/H2 split in compile_function_proto. H1 pre-allocates slots
+        // for ALL top-level FunctionDecl names FIRST so any sibling
+        // function-decl body compiled in H2 sees later siblings as
+        // local upvalues rather than missing globals. fast-equals,
+        // io-ts-side polyfills, and any module where one top-level
+        // function calls a later sibling depend on this.
+        let mut fn_pre_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+        for item in &m.body {
+            if let ModuleItem::Statement(Stmt::FunctionDecl { name: Some(n), .. }) = item {
+                if !fn_pre_slots.contains_key(&n.name) {
+                    let slot = self.alloc_local(LocalDescriptor {
+                        name: n.name.clone(), kind: VariableKind::Var, depth: 0,
+                    });
+                    fn_pre_slots.insert(n.name.clone(), slot);
+                }
+            }
+        }
+        self.pre_allocated_slots.extend(fn_pre_slots.iter().map(|(k,v)| (k.clone(), *v)));
         for item in &m.body {
             if let ModuleItem::Statement(Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. }) = item {
                 if let Some(n) = name {
@@ -347,9 +366,7 @@ impl Compiler {
                     encode_op(&mut self.bytecode, Op::MakeClosure);
                     encode_u16(&mut self.bytecode, idx);
                     emit_captures(&mut self.bytecode, &captures);
-                    let slot = self.alloc_local(LocalDescriptor {
-                        name: n.name.clone(), kind: VariableKind::Var, depth: 0,
-                    });
+                    let slot = *fn_pre_slots.get(&n.name).expect("function-decl slot pre-allocated above");
                     encode_op(&mut self.bytecode, Op::StoreLocal);
                     encode_u16(&mut self.bytecode, slot);
                 }

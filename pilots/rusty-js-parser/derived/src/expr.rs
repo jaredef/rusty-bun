@@ -522,6 +522,31 @@ impl<'src> Parser<'src> {
                             span,
                         })
                     }
+                    // Tier-Ω.5.yy: function / class expressions at any
+                    // sub-expression position (not just at the head of
+                    // AssignmentExpression). io-ts / rxjs's polyfill
+                    // pattern `... && function(d,b){...}` and many
+                    // boolean-guarded function expressions depend on
+                    // this. `async function` is also recognized so
+                    // `(true && async function(){})` parses.
+                    "function" => self.parse_function_expression(false),
+                    "class" => self.parse_class_expression(),
+                    "async" => {
+                        // Only consume as async-function when the next
+                        // non-whitespace token is `function`. Otherwise
+                        // fall through to plain identifier — bare `async`
+                        // as a value is valid at lower precedence.
+                        let bytes = self.source().as_bytes();
+                        let mut p = span.end;
+                        while p < bytes.len() && bytes[p].is_ascii_whitespace() { p += 1; }
+                        if bytes[p..].starts_with(b"function") {
+                            self.bump()?; // consume `async`
+                            self.parse_function_expression(true)
+                        } else {
+                            self.bump()?;
+                            Ok(Expr::Identifier { name, span })
+                        }
+                    }
                     _ => { self.bump()?; Ok(Expr::Identifier { name, span }) }
                 }
             }

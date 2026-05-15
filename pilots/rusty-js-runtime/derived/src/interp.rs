@@ -934,6 +934,7 @@ impl Runtime {
                     };
                     let is_arrow = matches!(op, Op::MakeArrow);
                     let proto_rc = Rc::new(*proto);
+                    let param_count = proto_rc.params;
                     // Tier-Ω.5.sss: arrow inherits `this` from current
                     // frame. Capture at MakeArrow time so the arrow's
                     // call_function ignores its receiver argument and
@@ -951,6 +952,15 @@ impl Runtime {
                         }),
                     };
                     let id = self.alloc_object(closure);
+                    // Tier-Ω.5.www: set .length per ECMA-262 §10.2.4.
+                    // Function.prototype.length === param count (excluding
+                    // rest and defaults — v1 deviation: includes all
+                    // declared params). remeda's purry idiom does
+                    // `t.length - n.length` for argument-count dispatch;
+                    // without .length, t.length is undefined and the
+                    // arithmetic produces NaN, failing the != 0/1
+                    // checks and throwing 'Wrong number of arguments'.
+                    self.object_set(id, "length".into(), Value::Number(param_count as f64));
                     // Tier-Ω.5.ll: auto-create .prototype on non-arrow
                     // functions per ECMA-262 §10.2.5 (regular functions
                     // have [[ConstructorKind]]: Base). chalk + many other

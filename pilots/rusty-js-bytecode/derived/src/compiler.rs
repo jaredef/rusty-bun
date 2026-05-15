@@ -642,9 +642,12 @@ impl Compiler {
                 for site in frame.break_patches { self.patch_jump_at(site); }
             }
             Stmt::ForOf { left, right, body, await_, .. } => {
-                if *await_ {
-                    return Err(self.err(span, "for-await-of not yet supported"));
-                }
+                // Tier-Ω.5.cc: for-await-of lowers identically to for-of.
+                // The await on each iteration would suspend on the next-
+                // result's Promise; since await is no-op'd (Ω.5.x), the
+                // suspension is dropped. Iterator-protocol-with-async-
+                // iterators handling is queued for a substrate round.
+                let _ = await_;
                 // Allocate hidden slot for the iterator and a binding slot
                 // for the loop variable.
                 let iter_slot = self.alloc_local(LocalDescriptor {

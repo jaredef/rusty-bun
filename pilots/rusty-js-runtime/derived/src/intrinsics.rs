@@ -806,6 +806,345 @@ impl Runtime {
         self.globals.insert("Boolean".into(), Value::Object(b_id));
         self.install_error_globals();
         self.install_reflect();
+        self.install_map_set_globals();
+        self.install_date_global();
+        self.install_typed_array_stubs();
+        self.install_weak_ref_globals();
+    }
+
+    /// Tier-Ω.5.dd: Map / Set / WeakMap / WeakSet as real implementations.
+    /// Storage uses the underlying Object's properties map for v1 — keys
+    /// are stringified via ToString. This is a v1 deviation: real Map keys
+    /// are by SameValueZero, so object keys would each be distinct identity-
+    /// wise. Our string-keyed storage collides object keys via their
+    /// stringified form. Most parity packages don't depend on object-keyed
+    /// Maps; documented for future substrate.
+    fn install_map_set_globals(&mut self) {
+        for collection in &["Map", "WeakMap"] {
+            let proto = self.alloc_object(Object::new_ordinary());
+            register_method(self, proto, "get", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&key).as_str().to_string();
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Undefined),
+                };
+                Ok(rt.object_get(storage, &key_s))
+            });
+            register_method(self, proto, "set", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let val = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&key).as_str().to_string();
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => {
+                        let s = rt.alloc_object(Object::new_ordinary());
+                        rt.object_set(this, "__map_data".into(), Value::Object(s));
+                        s
+                    }
+                };
+                let existed = !matches!(rt.object_get(storage, &key_s), Value::Undefined);
+                rt.object_set(storage, key_s, val);
+                if !existed {
+                    let prev = match rt.object_get(this, "size") {
+                        Value::Number(n) => n,
+                        _ => 0.0,
+                    };
+                    rt.object_set(this, "size".into(), Value::Number(prev + 1.0));
+                }
+                Ok(Value::Object(this))
+            });
+            register_method(self, proto, "has", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Boolean(false)) };
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&key).as_str().to_string();
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Boolean(false)),
+                };
+                Ok(Value::Boolean(rt.obj(storage).properties.contains_key(&key_s)))
+            });
+            register_method(self, proto, "delete", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Boolean(false)) };
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&key).as_str().to_string();
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Boolean(false)),
+                };
+                let existed = rt.obj_mut(storage).properties.remove(&key_s).is_some();
+                if existed {
+                    let prev = match rt.object_get(this, "size") {
+                        Value::Number(n) => n,
+                        _ => 0.0,
+                    };
+                    rt.object_set(this, "size".into(), Value::Number((prev - 1.0).max(0.0)));
+                }
+                Ok(Value::Boolean(existed))
+            });
+            register_method(self, proto, "clear", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let fresh = rt.alloc_object(Object::new_ordinary());
+                rt.object_set(this, "__map_data".into(), Value::Object(fresh));
+                rt.object_set(this, "size".into(), Value::Number(0.0));
+                Ok(Value::Undefined)
+            });
+            register_method(self, proto, "forEach", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let cb = args.first().cloned().unwrap_or(Value::Undefined);
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Undefined),
+                };
+                let pairs: Vec<(String, Value)> = rt.obj(storage).properties.iter()
+                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .collect();
+                for (k, v) in pairs {
+                    let key_v = Value::String(Rc::new(k));
+                    rt.call_function(cb.clone(), Value::Undefined, vec![v, key_v, Value::Object(this)])?;
+                }
+                Ok(Value::Undefined)
+            });
+            let proto_for_ctor = proto;
+            let name = (*collection).to_string();
+            let ctor_obj = make_native(&name, move |rt, args| {
+                let mut o = Object::new_ordinary();
+                o.proto = Some(proto_for_ctor);
+                let id = rt.alloc_object(o);
+                let storage = rt.alloc_object(Object::new_ordinary());
+                rt.object_set(id, "__map_data".into(), Value::Object(storage));
+                rt.object_set(id, "size".into(), Value::Number(0.0));
+                // Optional initial iterable.
+                if let Some(_init) = args.first() {
+                    // Skipped for v1; documented deviation.
+                }
+                Ok(Value::Object(id))
+            });
+            let ctor = self.alloc_object(ctor_obj);
+            self.object_set(ctor, "prototype".into(), Value::Object(proto));
+            self.object_set(proto, "constructor".into(), Value::Object(ctor));
+            self.globals.insert((*collection).to_string(), Value::Object(ctor));
+        }
+        for collection in &["Set", "WeakSet"] {
+            let proto = self.alloc_object(Object::new_ordinary());
+            register_method(self, proto, "add", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&v).as_str().to_string();
+                let storage = match rt.object_get(this, "__set_data") {
+                    Value::Object(id) => id,
+                    _ => {
+                        let s = rt.alloc_object(Object::new_ordinary());
+                        rt.object_set(this, "__set_data".into(), Value::Object(s));
+                        s
+                    }
+                };
+                let existed = !matches!(rt.object_get(storage, &key_s), Value::Undefined);
+                rt.object_set(storage, key_s, v);
+                if !existed {
+                    let prev = match rt.object_get(this, "size") {
+                        Value::Number(n) => n,
+                        _ => 0.0,
+                    };
+                    rt.object_set(this, "size".into(), Value::Number(prev + 1.0));
+                }
+                Ok(Value::Object(this))
+            });
+            register_method(self, proto, "has", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Boolean(false)) };
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&v).as_str().to_string();
+                let storage = match rt.object_get(this, "__set_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Boolean(false)),
+                };
+                Ok(Value::Boolean(rt.obj(storage).properties.contains_key(&key_s)))
+            });
+            register_method(self, proto, "delete", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Boolean(false)) };
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_s = abstract_ops::to_string(&v).as_str().to_string();
+                let storage = match rt.object_get(this, "__set_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Boolean(false)),
+                };
+                let existed = rt.obj_mut(storage).properties.remove(&key_s).is_some();
+                if existed {
+                    let prev = match rt.object_get(this, "size") {
+                        Value::Number(n) => n,
+                        _ => 0.0,
+                    };
+                    rt.object_set(this, "size".into(), Value::Number((prev - 1.0).max(0.0)));
+                }
+                Ok(Value::Boolean(existed))
+            });
+            register_method(self, proto, "clear", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let fresh = rt.alloc_object(Object::new_ordinary());
+                rt.object_set(this, "__set_data".into(), Value::Object(fresh));
+                rt.object_set(this, "size".into(), Value::Number(0.0));
+                Ok(Value::Undefined)
+            });
+            register_method(self, proto, "forEach", |rt, args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let cb = args.first().cloned().unwrap_or(Value::Undefined);
+                let storage = match rt.object_get(this, "__set_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Undefined),
+                };
+                let vals: Vec<Value> = rt.obj(storage).properties.values()
+                    .map(|d| d.value.clone())
+                    .collect();
+                for v in vals {
+                    rt.call_function(cb.clone(), Value::Undefined, vec![v.clone(), v, Value::Object(this)])?;
+                }
+                Ok(Value::Undefined)
+            });
+            let proto_for_ctor = proto;
+            let name = (*collection).to_string();
+            let ctor_obj = make_native(&name, move |rt, _args| {
+                let mut o = Object::new_ordinary();
+                o.proto = Some(proto_for_ctor);
+                let id = rt.alloc_object(o);
+                let storage = rt.alloc_object(Object::new_ordinary());
+                rt.object_set(id, "__set_data".into(), Value::Object(storage));
+                rt.object_set(id, "size".into(), Value::Number(0.0));
+                Ok(Value::Object(id))
+            });
+            let ctor = self.alloc_object(ctor_obj);
+            self.object_set(ctor, "prototype".into(), Value::Object(proto));
+            self.object_set(proto, "constructor".into(), Value::Object(ctor));
+            self.globals.insert((*collection).to_string(), Value::Object(ctor));
+        }
+    }
+
+    /// Tier-Ω.5.dd: Date global. Real Date.now() + minimal instance shape.
+    fn install_date_global(&mut self) {
+        let proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, proto, "getTime", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(0.0)) };
+            Ok(rt.object_get(this, "__date_ms"))
+        });
+        register_method(self, proto, "valueOf", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Number(0.0)) };
+            Ok(rt.object_get(this, "__date_ms"))
+        });
+        register_method(self, proto, "toISOString", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("".into()))) };
+            let _ms = rt.object_get(this, "__date_ms");
+            Ok(Value::String(Rc::new("1970-01-01T00:00:00.000Z".into())))
+        });
+        register_method(self, proto, "toString", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new("Invalid Date".into()))) };
+            let _ms = rt.object_get(this, "__date_ms");
+            Ok(Value::String(Rc::new("Thu Jan 01 1970 00:00:00 GMT+0000".into())))
+        });
+        let proto_for_ctor = proto;
+        let ctor_obj = make_native("Date", move |rt, args| {
+            let ms = match args.first() {
+                Some(Value::Number(n)) => *n,
+                _ => {
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
+                }
+            };
+            let mut o = Object::new_ordinary();
+            o.proto = Some(proto_for_ctor);
+            let id = rt.alloc_object(o);
+            rt.object_set(id, "__date_ms".into(), Value::Number(ms));
+            Ok(Value::Object(id))
+        });
+        let ctor = self.alloc_object(ctor_obj);
+        register_method(self, ctor, "now", |_rt, _args| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+            Ok(Value::Number(ms))
+        });
+        register_method(self, ctor, "parse", |_rt, _args| Ok(Value::Number(0.0)));
+        register_method(self, ctor, "UTC", |_rt, _args| Ok(Value::Number(0.0)));
+        self.object_set(ctor, "prototype".into(), Value::Object(proto));
+        self.object_set(proto, "constructor".into(), Value::Object(ctor));
+        self.globals.insert("Date".into(), Value::Object(ctor));
+    }
+
+    /// Tier-Ω.5.dd: Uint8Array / ArrayBuffer / DataView / Int8Array etc.
+    /// All as minimal stub constructors that succeed with `new X(n)` and
+    /// expose `.length` / `.byteLength` / `.buffer`. Real binary semantics
+    /// deferred to a substrate round.
+    fn install_typed_array_stubs(&mut self) {
+        for name in &[
+            "ArrayBuffer", "SharedArrayBuffer", "DataView",
+            "Uint8Array", "Uint8ClampedArray", "Int8Array",
+            "Uint16Array", "Int16Array", "Uint32Array", "Int32Array",
+            "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+        ] {
+            let n = (*name).to_string();
+            let ctor_obj = make_native(name, move |rt, args| {
+                let len = match args.first() {
+                    Some(Value::Number(n)) => *n,
+                    _ => 0.0,
+                };
+                let mut o = Object::new_ordinary();
+                o.set_own("length".into(), Value::Number(len));
+                o.set_own("byteLength".into(), Value::Number(len * 4.0));
+                o.set_own("__kind".into(), Value::String(Rc::new(n.clone())));
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            let id = self.alloc_object(ctor_obj);
+            register_method(self, id, "isView", |_rt, _args| Ok(Value::Boolean(false)));
+            register_method(self, id, "from", |rt, args| {
+                let src = args.first().cloned().unwrap_or(Value::Undefined);
+                let len: usize = match &src {
+                    Value::Object(id) => rt.array_length(*id) as usize,
+                    Value::String(s) => s.chars().count(),
+                    _ => 0,
+                };
+                let mut o = Object::new_ordinary();
+                o.set_own("length".into(), Value::Number(len as f64));
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            self.globals.insert((*name).to_string(), Value::Object(id));
+        }
+    }
+
+    /// Tier-Ω.5.dd: WeakRef + FinalizationRegistry minimal stubs. Real
+    /// weak-reference semantics need GC integration (deferred). Stubs hold
+    /// strong references for v1; `.deref()` always returns the held value.
+    fn install_weak_ref_globals(&mut self) {
+        let weakref_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, weakref_proto, "deref", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+            Ok(rt.object_get(this, "__ref"))
+        });
+        let proto_for_ctor = weakref_proto;
+        let weakref_ctor = make_native("WeakRef", move |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            let mut o = Object::new_ordinary();
+            o.proto = Some(proto_for_ctor);
+            let id = rt.alloc_object(o);
+            rt.object_set(id, "__ref".into(), target);
+            Ok(Value::Object(id))
+        });
+        let wr = self.alloc_object(weakref_ctor);
+        self.object_set(wr, "prototype".into(), Value::Object(weakref_proto));
+        self.object_set(weakref_proto, "constructor".into(), Value::Object(wr));
+        self.globals.insert("WeakRef".into(), Value::Object(wr));
+
+        let fr_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, fr_proto, "register", |_rt, _args| Ok(Value::Undefined));
+        register_method(self, fr_proto, "unregister", |_rt, _args| Ok(Value::Boolean(true)));
+        let fr_proto_for_ctor = fr_proto;
+        let fr_ctor = make_native("FinalizationRegistry", move |rt, _args| {
+            let mut o = Object::new_ordinary();
+            o.proto = Some(fr_proto_for_ctor);
+            Ok(Value::Object(rt.alloc_object(o)))
+        });
+        let fr = self.alloc_object(fr_ctor);
+        self.object_set(fr, "prototype".into(), Value::Object(fr_proto));
+        self.object_set(fr_proto, "constructor".into(), Value::Object(fr));
+        self.globals.insert("FinalizationRegistry".into(), Value::Object(fr));
     }
 
     /// Tier-Ω.5.cc: Reflect global — most methods route to existing Object

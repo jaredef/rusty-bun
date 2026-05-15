@@ -804,6 +804,65 @@ impl Runtime {
         });
         let b_id = self.alloc_object(b_obj);
         self.globals.insert("Boolean".into(), Value::Object(b_id));
+        self.install_error_globals();
+    }
+
+    /// Tier-Ω.5.z: Error + TypeError + RangeError + SyntaxError + ReferenceError
+    /// + URIError + EvalError constructors. Each is callable; carrying a
+    /// .prototype so `class X extends Error {}` works (the dense pattern
+    /// in real packages: ulid, joi, commander, luxon all use it).
+    /// The Error.prototype object exposes .name and .message so duck-type
+    /// checks pass; instance shape is `{name, message, stack:""}`.
+    fn install_error_globals(&mut self) {
+        for (name, default_name) in &[
+            ("Error", "Error"),
+            ("TypeError", "TypeError"),
+            ("RangeError", "RangeError"),
+            ("SyntaxError", "SyntaxError"),
+            ("ReferenceError", "ReferenceError"),
+            ("URIError", "URIError"),
+            ("EvalError", "EvalError"),
+            ("AggregateError", "AggregateError"),
+        ] {
+            let proto_id = self.alloc_object(Object::new_ordinary());
+            self.object_set(proto_id, "name".into(), Value::String(Rc::new((*default_name).to_string())));
+            self.object_set(proto_id, "message".into(), Value::String(Rc::new("".to_string())));
+            register_method(self, proto_id, "toString", |rt, _args| {
+                let this = rt.current_this();
+                let (name, message) = match &this {
+                    Value::Object(id) => {
+                        let n = rt.object_get(*id, "name");
+                        let m = rt.object_get(*id, "message");
+                        (abstract_ops::to_string(&n).as_str().to_string(),
+                         abstract_ops::to_string(&m).as_str().to_string())
+                    }
+                    _ => ("Error".into(), "".into()),
+                };
+                let out = if message.is_empty() { name } else { format!("{}: {}", name, message) };
+                Ok(Value::String(Rc::new(out)))
+            });
+
+            let default_name = (*default_name).to_string();
+            let proto_for_ctor = proto_id;
+            let ctor_obj = make_native(name, move |rt, args| {
+                // Allocate a fresh Error instance with proto = Error.prototype.
+                let mut o = Object::new_ordinary();
+                o.proto = Some(proto_for_ctor);
+                let id = rt.alloc_object(o);
+                if let Some(msg) = args.first() {
+                    let m = abstract_ops::to_string(msg).as_str().to_string();
+                    rt.object_set(id, "message".into(), Value::String(Rc::new(m)));
+                }
+                rt.object_set(id, "name".into(), Value::String(Rc::new(default_name.clone())));
+                rt.object_set(id, "stack".into(), Value::String(Rc::new("".into())));
+                Ok(Value::Object(id))
+            });
+            let ctor_id = self.alloc_object(ctor_obj);
+            self.object_set(ctor_id, "prototype".into(), Value::Object(proto_id));
+            // proto.constructor = ctor (per spec).
+            self.object_set(proto_id, "constructor".into(), Value::Object(ctor_id));
+            self.globals.insert((*name).to_string(), Value::Object(ctor_id));
+        }
     }
 
     fn install_symbol_static(&mut self) {

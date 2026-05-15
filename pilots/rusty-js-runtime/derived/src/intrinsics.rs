@@ -878,6 +878,22 @@ impl Runtime {
         });
         let b_id = self.alloc_object(b_obj);
         self.globals.insert("Boolean".into(), Value::Object(b_id));
+        // Tier-Ω.5.pp: Proxy as a stub constructor. v1 deviation: the
+        // proxy doesn't actually intercept operations; it's a transparent
+        // pass-through that returns the target as-is. This lets `new
+        // Proxy(target, handler)` not crash; access still goes through
+        // the underlying target. Many packages create proxies for
+        // deprecation guards or namespace shims where the trap-handling
+        // isn't actually exercised during shape probe.
+        let proxy_obj = make_native("Proxy", |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            // Return target directly; trap-handling deferred.
+            let _ = (rt, args);
+            Ok(target)
+        });
+        let proxy_id = self.alloc_object(proxy_obj);
+        self.globals.insert("Proxy".into(), Value::Object(proxy_id));
+
         // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
         let bi_obj = make_native("BigInt", |_rt, args| {
             let v = args.first().cloned().unwrap_or(Value::Undefined);

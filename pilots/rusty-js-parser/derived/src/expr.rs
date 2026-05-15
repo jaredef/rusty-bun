@@ -592,6 +592,28 @@ impl<'src> Parser<'src> {
                 properties.push(ObjectProperty::Property {
                     key, value: func, shorthand: false, span: Span::new(prop_start, end),
                 });
+            } else if self.looks_like_async_method_shorthand() {
+                // Tier-Ω.5.vv: `async name(...) { body }` object method
+                // shorthand. Drop async semantics in v1 (runtime treats it
+                // as a regular function); the parse-past is what unblocks
+                // p-limit + many others.
+                let prop_start = self.lookahead_span().start;
+                self.bump()?; // consume `async`
+                let key = self.parse_object_key()?;
+                let params = self.parse_function_parameters()?;
+                let body = self.parse_function_body()?;
+                let end = self.last_span_end();
+                let func = Expr::Function {
+                    name: None,
+                    is_async: true,
+                    is_generator: false,
+                    params,
+                    body,
+                    span: Span::new(prop_start, end),
+                };
+                properties.push(ObjectProperty::Property {
+                    key, value: func, shorthand: false, span: Span::new(prop_start, end),
+                });
             } else if self.looks_like_accessor_shorthand() {
                 // Tier-Ω.5.p.parse: getter/setter shorthand `get name() { body }` /
                 // `set name(v) { body }`. v1 deviation: drop accessor-descriptor
@@ -649,13 +671,34 @@ impl<'src> Parser<'src> {
                     });
                 } else {
                     // Bare shorthand `{ x }` — value is Identifier with same name.
+                    // Tier-Ω.5.uu: also accept `{ x = expr }` (CoverInitializedName
+                    // from the spec's cover grammar). This form is only meaningful
+                    // when the surrounding object literal is later reinterpreted
+                    // as an AssignmentPattern (destructuring); syntactically it
+                    // must parse. emit_destructure_assign already consumes
+                    // Expr::Assign leaves with AssignOp::Assign as default-value.
+                    // p-limit / many libs depend on this.
                     let (name, key_span) = match &key {
                         ObjectKey::Identifier { name, span } => (name.clone(), *span),
                         _ => return Err(self.err_here("only identifier keys support shorthand".into())),
                     };
-                    let value = Expr::Identifier { name, span: key_span };
+                    let ident = Expr::Identifier { name: name.clone(), span: key_span };
+                    let value = if matches!(self.current_kind(), TokenKind::Punct(Punct::Assign)) {
+                        self.bump()?;
+                        let default = self.parse_assignment_expression()?;
+                        let end = default.span().end;
+                        Expr::Assign {
+                            operator: rusty_js_ast::AssignOp::Assign,
+                            target: Box::new(ident),
+                            value: Box::new(default),
+                            span: Span::new(key_span.start, end),
+                        }
+                    } else {
+                        ident
+                    };
+                    let val_end = value.span().end;
                     properties.push(ObjectProperty::Property {
-                        key, value, shorthand: true, span: Span::new(prop_start, key_span.end),
+                        key, value, shorthand: true, span: Span::new(prop_start, val_end),
                     });
                 }
             }
@@ -718,6 +761,28 @@ impl<'src> Parser<'src> {
     /// non-whitespace source byte (after the identifier's bytes) starts
     /// a property-key shape: identifier-start, string quote, digit, or `[`.
     /// If followed by `(`, `:`, `,`, `}`, or `=`, it's a plain key.
+    fn looks_like_async_method_shorthand(&self) -> bool {
+        let is_async_ident = matches!(self.current_kind(), TokenKind::Ident(n) if n == "async");
+        if !is_async_ident { return false; }
+        let src = self.source().as_bytes();
+        let span = self.lookahead_span();
+        let mut j = span.end;
+        // Allow space/tab only; an unescaped newline after `async` makes it
+        // an expression (`async\n foo` is `async; foo` per ASI).
+        while j < src.len() {
+            match src[j] {
+                b' ' | b'\t' => j += 1,
+                _ => break,
+            }
+        }
+        match src.get(j) {
+            Some(&b) if b.is_ascii_alphabetic() || b == b'_' || b == b'$' => true,
+            Some(&b'"') | Some(&b'\'') => true,
+            Some(&b'[') => true,
+            _ => false,
+        }
+    }
+
     fn looks_like_accessor_shorthand(&self) -> bool {
         let is_accessor_ident = match self.current_kind() {
             TokenKind::Ident(n) => n == "get" || n == "set",

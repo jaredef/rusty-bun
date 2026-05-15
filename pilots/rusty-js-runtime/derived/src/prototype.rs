@@ -694,6 +694,33 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
 // ──────────────── %Function.prototype% ────────────────
 
 fn install_function_proto(rt: &mut Runtime, host: ObjectRef) {
+    // Tier-Ω.5.yyy: Function.prototype.toString returns a generic
+    // "function NAME() { [native code] }" string. Per ECMA-262
+    // §20.2.3.5 real toString returns source for user functions and
+    // "[native code]" for natives; v1 returns the native-shape for
+    // all functions. object-hash detects native functions by regex-
+    // matching this output. Sufficient for the duck-test.
+    register_method(rt, host, "toString", |rt, _args| {
+        let this = rt.current_this();
+        let s = match &this {
+            Value::Object(id) => {
+                let name = match &rt.obj(*id).internal_kind {
+                    InternalKind::Function(f) => f.name.clone(),
+                    InternalKind::Closure(c) => {
+                        // FunctionProto carries no name field directly;
+                        // use a generic placeholder for closures.
+                        let _ = c;
+                        "anonymous".to_string()
+                    }
+                    InternalKind::BoundFunction(_) => "bound".to_string(),
+                    _ => return Err(RuntimeError::TypeError("Function.prototype.toString: not a function".into())),
+                };
+                format!("function {}() {{ [native code] }}", name)
+            }
+            _ => return Err(RuntimeError::TypeError("Function.prototype.toString: not a function".into())),
+        };
+        Ok(Value::String(Rc::new(s)))
+    });
     register_method(rt, host, "call", |rt, args| {
         let f = rt.current_this();
         let this_arg = args.first().cloned().unwrap_or(Value::Undefined);

@@ -330,6 +330,17 @@ impl Runtime {
             Err(RuntimeError::Thrown(Value::String(Rc::new(
                 "TypeError: Function constructor not yet supported in v1".into()))))
         });
+        // Tier-Ω.5.yyy: expose Function.prototype on the Function
+        // global. The intrinsic %Function.prototype% is the same
+        // function_prototype that backs all callable instances. Adding
+        // it here lets `Function.prototype.toString.call(f)` (object-
+        // hash, immer-style native-function detection) resolve.
+        if let Some(fp) = self.function_prototype {
+            if let Some(Value::Object(fn_global)) = self.globals.get("Function").cloned() {
+                self.object_set(fn_global, "prototype".into(), Value::Object(fp));
+                self.object_set(fp, "constructor".into(), Value::Object(fn_global));
+            }
+        }
     }
 
     fn install_math(&mut self) {

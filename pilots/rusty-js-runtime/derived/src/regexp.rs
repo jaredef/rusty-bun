@@ -20,7 +20,7 @@ use crate::abstract_ops;
 use crate::interp::{Runtime, RuntimeError};
 use crate::intrinsics::make_native;
 use crate::value::{
-    InternalKind, Object, ObjectRef, PropertyDescriptor, RegExpInternals, Value,
+    CompiledRegex, InternalKind, Object, ObjectRef, PropertyDescriptor, RegExpInternals, Value,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -87,7 +87,7 @@ impl Runtime {
 
 /// Allocate a RegExp instance and populate its accessor own-properties.
 pub fn new_regexp(rt: &mut Runtime, pattern: &str, flags: &str) -> Result<ObjectRef, RuntimeError> {
-    let compiled = translate(pattern, flags).ok();
+    let compiled = compile_either(pattern, flags);
     let internals = RegExpInternals {
         source: Rc::new(pattern.to_string()),
         flags: Rc::new(flags.to_string()),
@@ -140,6 +140,19 @@ fn translate(pattern: &str, flags: &str) -> Result<regex::Regex, String> {
         format!("(?{}){}", flag_set, pattern)
     };
     regex::Regex::new(&prefixed).map_err(|e| format!("{}", e))
+}
+
+/// Tier-Ω.5.ggg: dual-engine compile. Try the Rust `regex` crate first
+/// (fast for the patterns it supports). On rejection, fall back to the
+/// hand-rolled backtracking engine which supports lookaround.
+pub fn compile_either(pattern: &str, flags: &str) -> Option<CompiledRegex> {
+    if let Ok(r) = translate(pattern, flags) {
+        return Some(CompiledRegex::Rust(r));
+    }
+    if let Ok(h) = crate::regex_hand::compile(pattern, flags) {
+        return Some(CompiledRegex::Hand(h));
+    }
+    None
 }
 
 // ──────────────── %RegExp.prototype% ────────────────
@@ -222,13 +235,7 @@ pub fn regexp_exec(rt: &mut Runtime, this_id: ObjectRef, input: &str) -> Result<
             _ => unreachable!(),
         };
         let rx = re.compiled.as_ref().unwrap();
-        rx.captures_at(input, start).map(|caps| {
-            let m0 = caps.get(0).unwrap();
-            let groups: Vec<Option<String>> = (0..caps.len())
-                .map(|i| caps.get(i).map(|m| m.as_str().to_string()))
-                .collect();
-            (m0.start(), m0.end(), groups)
-        })
+        rx.captures_at(input, start)
     };
 
     match captures_opt {
@@ -308,7 +315,7 @@ fn install_string_regex_methods(rt: &mut Runtime) {
             None => return Err(RuntimeError::TypeError(
                 "String.prototype.match: regex pattern unsupported".into())),
         };
-        let matches: Vec<String> = rx.find_iter(&s).map(|m| m.as_str().to_string()).collect();
+        let matches: Vec<String> = rx.find_iter_owned(&s).into_iter().map(|(_,_,s)| s).collect();
         if matches.is_empty() { return Ok(Value::Null); }
         let arr = rt.alloc_object(Object::new_array());
         for (i, m) in matches.iter().enumerate() {
@@ -330,8 +337,8 @@ fn install_string_regex_methods(rt: &mut Runtime) {
             None => return Err(RuntimeError::TypeError(
                 "String.prototype.search: regex pattern unsupported".into())),
         };
-        match rx.find(&s) {
-            Some(m) => Ok(Value::Number(byte_to_char_index(&s, m.start()) as f64)),
+        match rx.find_first(&s) {
+            Some((start, _)) => Ok(Value::Number(byte_to_char_index(&s, start) as f64)),
             None => Ok(Value::Number(-1.0)),
         }
     });
@@ -377,7 +384,7 @@ fn install_string_regex_methods(rt: &mut Runtime) {
                     None => return Err(RuntimeError::TypeError(
                         "String.prototype.split: regex pattern unsupported".into())),
                 };
-                rx.split(&s).map(|p| p.to_string()).collect()
+                rx.split_str(&s)
             }
             Some(sep_v) => {
                 let sep = abstract_ops::to_string(sep_v).as_str().to_string();
@@ -432,7 +439,7 @@ fn string_replace_impl(
             let needle = abstract_ops::to_string(&pat).as_str().to_string();
             let escaped = regex::escape(&needle);
             let rx = regex::Regex::new(&escaped).map_err(|e| RuntimeError::TypeError(format!("{}", e)))?;
-            (rx, force_global)
+            (CompiledRegex::Rust(rx), force_global)
         }
     };
 
@@ -445,9 +452,9 @@ fn string_replace_impl(
     if !is_callable {
         let repl_s = abstract_ops::to_string(&repl).as_str().to_string();
         let out = if is_global {
-            rx.replace_all(s, repl_s.as_str()).into_owned()
+            rx.replace_all_lit(s, repl_s.as_str())
         } else {
-            rx.replacen(s, 1, repl_s.as_str()).into_owned()
+            rx.replacen_lit(s, 1, repl_s.as_str())
         };
         return Ok(Value::String(Rc::new(out)));
     }
@@ -455,9 +462,7 @@ fn string_replace_impl(
     // Function replacer — collect match ranges, then invoke the function
     // for each match and stitch the output. We split the borrow so we
     // can call back into the runtime.
-    let matches: Vec<(usize, usize, String)> = rx.find_iter(s)
-        .map(|m| (m.start(), m.end(), m.as_str().to_string()))
-        .collect();
+    let matches: Vec<(usize, usize, String)> = rx.find_iter_owned(s);
     let take_n = if is_global { matches.len() } else { matches.len().min(1) };
     let mut out = String::new();
     let mut cursor = 0usize;

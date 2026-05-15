@@ -219,8 +219,124 @@ pub enum InternalKind {
 pub struct RegExpInternals {
     pub source: Rc<String>,
     pub flags: Rc<String>,
-    pub compiled: Option<regex::Regex>,
+    /// Compiled engine. Tier-Ω.5.ggg: tries the Rust `regex` crate first
+    /// (fast for simple patterns); falls back to the hand-rolled
+    /// backtracking engine for JS-only features (lookaround in
+    /// particular). None means both engines rejected the pattern.
+    pub compiled: Option<CompiledRegex>,
     pub last_index: usize,
+}
+
+#[derive(Debug)]
+pub enum CompiledRegex {
+    Rust(regex::Regex),
+    Hand(crate::regex_hand::HandRolledRegex),
+}
+
+// HandRolledRegex needs Debug — it has it derived in regex_hand.rs.
+
+impl Clone for CompiledRegex {
+    fn clone(&self) -> Self {
+        match self {
+            CompiledRegex::Rust(r) => CompiledRegex::Rust(r.clone()),
+            CompiledRegex::Hand(h) => CompiledRegex::Hand(h.clone()),
+        }
+    }
+}
+
+impl CompiledRegex {
+    pub fn is_match(&self, input: &str) -> bool {
+        match self {
+            CompiledRegex::Rust(r) => r.is_match(input),
+            CompiledRegex::Hand(h) => crate::regex_hand::is_match(h, input),
+        }
+    }
+    /// Find first match starting at byte offset `start`. Returns
+    /// (match_byte_start, match_byte_end, captures_as_strings).
+    pub fn captures_at(&self, input: &str, start: usize) -> Option<(usize, usize, Vec<Option<String>>)> {
+        match self {
+            CompiledRegex::Rust(r) => r.captures_at(input, start).map(|caps| {
+                let m0 = caps.get(0).unwrap();
+                let groups: Vec<Option<String>> = (0..caps.len())
+                    .map(|i| caps.get(i).map(|m| m.as_str().to_string()))
+                    .collect();
+                (m0.start(), m0.end(), groups)
+            }),
+            CompiledRegex::Hand(h) => crate::regex_hand::find_at(h, input, start).map(|m| {
+                let groups: Vec<Option<String>> = m.captures.iter().map(|c| c.map(|(s,e)| input[s..e].to_string())).collect();
+                (m.start, m.end, groups)
+            }),
+        }
+    }
+    /// Iterate non-overlapping matches; each yields (byte_start, byte_end, matched_str).
+    pub fn find_iter_owned(&self, input: &str) -> Vec<(usize, usize, String)> {
+        match self {
+            CompiledRegex::Rust(r) => r.find_iter(input).map(|m| (m.start(), m.end(), m.as_str().to_string())).collect(),
+            CompiledRegex::Hand(h) => {
+                let mut out = Vec::new();
+                let mut start = 0;
+                while start <= input.len() {
+                    match crate::regex_hand::find_at(h, input, start) {
+                        Some(m) => {
+                            let end = m.end;
+                            out.push((m.start, end, input[m.start..end].to_string()));
+                            // Avoid zero-width infinite loops.
+                            start = if end == m.start { end + 1 } else { end };
+                        }
+                        None => break,
+                    }
+                }
+                out
+            }
+        }
+    }
+    /// Find first match anywhere in input.
+    pub fn find_first(&self, input: &str) -> Option<(usize, usize)> {
+        self.captures_at(input, 0).map(|(s,e,_)| (s,e))
+    }
+    /// Split `input` on each match, returning the pieces between matches.
+    pub fn split_str(&self, input: &str) -> Vec<String> {
+        match self {
+            CompiledRegex::Rust(r) => r.split(input).map(|s| s.to_string()).collect(),
+            CompiledRegex::Hand(_) => {
+                let matches = self.find_iter_owned(input);
+                let mut out = Vec::new();
+                let mut cursor = 0;
+                for (ms, me, _) in matches {
+                    out.push(input[cursor..ms].to_string());
+                    cursor = me;
+                }
+                out.push(input[cursor..].to_string());
+                out
+            }
+        }
+    }
+    /// Replace at most `n` matches with the given literal replacement string.
+    /// Replacement does NOT honor $1..$9 backreferences yet (v1 deviation).
+    pub fn replacen_lit(&self, input: &str, n: usize, repl: &str) -> String {
+        match self {
+            CompiledRegex::Rust(r) => r.replacen(input, n, repl).into_owned(),
+            CompiledRegex::Hand(_) => {
+                let matches = self.find_iter_owned(input);
+                let mut out = String::new();
+                let mut cursor = 0;
+                for (i, (ms, me, _)) in matches.into_iter().enumerate() {
+                    if i >= n { break; }
+                    out.push_str(&input[cursor..ms]);
+                    out.push_str(repl);
+                    cursor = me;
+                }
+                out.push_str(&input[cursor..]);
+                out
+            }
+        }
+    }
+    pub fn replace_all_lit(&self, input: &str, repl: &str) -> String {
+        match self {
+            CompiledRegex::Rust(r) => r.replace_all(input, repl).into_owned(),
+            CompiledRegex::Hand(_) => self.replacen_lit(input, usize::MAX, repl),
+        }
+    }
 }
 
 #[derive(Debug)]

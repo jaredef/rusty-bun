@@ -1666,10 +1666,34 @@ impl Runtime {
             let default_name = (*default_name).to_string();
             let proto_for_ctor = proto_id;
             let ctor_obj = make_native(name, move |rt, args| {
-                // Allocate a fresh Error instance with proto = Error.prototype.
-                let mut o = Object::new_ordinary();
-                o.proto = Some(proto_for_ctor);
-                let id = rt.alloc_object(o);
+                // Tier-Ω.5.ffff: when invoked via super(...) from a
+                // derived class, the receiver is the already-allocated
+                // derived-instance. Mutate it in place rather than
+                // allocating a fresh one — otherwise `class E extends
+                // Error { constructor(m) { super(m); } }; new E('hi')`
+                // produces an E with empty .message because the Error
+                // native allocates a sibling Object and discards it
+                // (Op::CallMethod takes call_function's return Object
+                // as the result, overwriting the synthesized this).
+                let receiver_id = match rt.current_this() {
+                    Value::Object(id) => {
+                        // Use receiver iff it's an ordinary (not
+                        // already an Error-shaped) object. The derived
+                        // class's Op::New synthesized this with proto
+                        // wired to the derived ctor's prototype, which
+                        // already inherits from Error.prototype.
+                        Some(id)
+                    }
+                    _ => None,
+                };
+                let id = match receiver_id {
+                    Some(id) => id,
+                    None => {
+                        let mut o = Object::new_ordinary();
+                        o.proto = Some(proto_for_ctor);
+                        rt.alloc_object(o)
+                    }
+                };
                 if let Some(msg) = args.first() {
                     let m = abstract_ops::to_string(msg).as_str().to_string();
                     rt.object_set(id, "message".into(), Value::String(Rc::new(m)));

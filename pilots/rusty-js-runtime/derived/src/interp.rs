@@ -1160,9 +1160,22 @@ impl Runtime {
         // so alloc_object auto-wires %Array.prototype%.
         let mut locals: Vec<Value> = Vec::new();
         let rest_slot = proto.rest_param_slot;
+        let args_slot = proto.arguments_slot;
+        // Tier-Ω.5.zzz: allocate the `arguments` Array up-front so the
+        // slot-population loop can store it at args_slot.
+        let arguments_value: Option<Value> = if args_slot.is_some() {
+            let mut arr = crate::value::Object::new_array();
+            arr.set_own("length".into(), Value::Number(args.len() as f64));
+            for (k, v) in args.iter().enumerate() {
+                arr.set_own(k.to_string(), v.clone());
+            }
+            Some(Value::Object(self.alloc_object(arr)))
+        } else { None };
         for (i, _) in proto.locals.iter().enumerate() {
             let slot = i as u16;
-            if Some(slot) == rest_slot {
+            if Some(slot) == args_slot {
+                locals.push(arguments_value.clone().unwrap_or(Value::Undefined));
+            } else if Some(slot) == rest_slot {
                 let mut rest = crate::value::Object::new_array();
                 let tail: Vec<Value> = if (i as usize) < args.len() {
                     args[i as usize..].to_vec()

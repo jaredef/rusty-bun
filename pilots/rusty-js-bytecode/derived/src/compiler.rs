@@ -46,6 +46,13 @@ pub struct FunctionProto {
     /// from this index onward into a single Array bound to this slot.
     /// None for ordinary parameter lists.
     pub rest_param_slot: Option<u16>,
+    /// Tier-Ω.5.zzz: slot for the magic `arguments` local. Populated by
+    /// call_function with an Array of the actual args. None when not
+    /// allocated (arrow bodies skip this; only non-arrow function-decl /
+    /// function-expression bodies get it). Indexed reads `arguments[i]`
+    /// resolve via Array indexing; .length, .slice, etc. work via the
+    /// Array prototype chain.
+    pub arguments_slot: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -2348,6 +2355,18 @@ impl Compiler {
                 sub.emit_destructure(pat, *slot)?;
             }
         }
+        // Tier-Ω.5.zzz: allocate the `arguments` slot. Populated by
+        // call_function at invocation with an Array of the actual
+        // received arguments. Per ECMA-262 §10.2.4 the slot exists
+        // for non-arrow functions; v1 always allocates for any
+        // function — arrow bodies will resolve `arguments` via
+        // upvalue from the enclosing function's slot anyway, and
+        // an unused local in an arrow's own frame costs one Value.
+        let arguments_slot = Some(sub.alloc_local(LocalDescriptor {
+            name: "arguments".to_string(),
+            kind: VariableKind::Var,
+            depth: 0,
+        }));
         // Tier-Ω.5.ee: function-declaration hoisting per ECMA-262 §10.2.1.3.
         // Two-phase to preserve upvalue resolution: phase H1 pre-allocates
         // ALL top-level var/let/const slots so nested function bodies that
@@ -2428,6 +2447,7 @@ impl Compiler {
             locals: sub.locals,
             upvalues: sub.upvalues,
             rest_param_slot,
+            arguments_slot,
         })
     }
 

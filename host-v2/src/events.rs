@@ -282,5 +282,14 @@ pub fn install(rt: &mut Runtime) {
     let ns = new_object(rt);
     rt.object_set(ns, "EventEmitter".into(), Value::Object(ctor));
     rt.object_set(ns, "default".into(), Value::Object(ctor));
+    // Tier-Ω.5.gggg: events.on / events.once static helpers. Real spec
+    // returns async iterator / Promise; v1 stubs return undefined so
+    // the import-time presence-check passes and downstream
+    // Object.assign(nodeImports, {on, finished}) doesn't bind
+    // undefined.
+    register_method(rt, ns, "on", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ns, "once", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ns, "setMaxListeners", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ns, "listenerCount", |_rt, _args| Ok(Value::Number(0.0)));
     rt.globals.insert("events".into(), Value::Object(ns));
 }

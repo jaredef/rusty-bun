@@ -85,7 +85,7 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             // Tier-Ω.5.s: assert / https / stream / url / util stubs.
             "node:assert" | "assert" => "assert",
             "node:https" | "https" => "https",
-            "node:stream" | "stream" => "stream",
+            "node:stream" | "stream" | "node:stream/promises" | "stream/promises" | "node:stream/web" | "stream/web" | "node:stream/consumers" | "stream/consumers" => "stream",
             "node:url" | "url" => "url",
             "node:util" | "util" => "util",
             // Tier-Ω.5.y: zlib + tty stubs.

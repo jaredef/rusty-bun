@@ -1076,7 +1076,18 @@ impl Runtime {
                     // constructing the inner frame (or the native call's
                     // current_new_target).
                     self.pending_new_target = Some(callee.clone());
-                    let ret = self.call_function(callee, this_obj.clone(), args)?;
+                    let callee_hint = frame.last_property_lookup.clone();
+                    let ret = self.call_function(callee, this_obj.clone(), args).map_err(|e| match e {
+                        RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
+                            // Tier-Ω.5.hhhh: Op::New now appends the
+                            // LoadGlobal/LoadLocal hint per Doc 723
+                            // route-(b). Before, bare `new X()` with X
+                            // undefined produced unannotated 'callee is
+                            // not callable: undefined' (below threshold).
+                            RuntimeError::TypeError(format!("{} (new-callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
+                        }
+                        other => other,
+                    })?;
                     let result = match ret {
                         Value::Object(_) => ret,
                         _ => this_obj,

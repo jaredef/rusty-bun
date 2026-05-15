@@ -19,16 +19,12 @@ pub fn install(rt: &mut Runtime) {
             )))
         });
     }
-    register_method(rt, stream, "pipeline", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:stream pipeline: not yet implemented (Tier-Ω.5.s stub)".into(),
-        ))
-    });
-    register_method(rt, stream, "finished", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:stream finished: not yet implemented (Tier-Ω.5.s stub)".into(),
-        ))
-    });
+    // Tier-Ω.5.gggg: stream.pipeline / .finished return undefined
+    // (instead of throwing). get-stream and many libs import these
+    // for presence-checks at module-load and only call them at
+    // runtime — letting the import succeed is the substrate goal.
+    register_method(rt, stream, "pipeline", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, stream, "finished", |_rt, _args| Ok(Value::Undefined));
 
     set_constant(rt, stream, "default", Value::Object(stream));
     rt.globals.insert("stream".into(), Value::Object(stream));

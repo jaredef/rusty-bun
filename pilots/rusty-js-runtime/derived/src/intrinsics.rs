@@ -101,6 +101,60 @@ impl Runtime {
             Ok(Value::Object(id))
         });
         self.globals.insert("Intl".into(), Value::Object(intl));
+        // Tier-Ω.5.iiii: TextEncoder / TextDecoder per WHATWG Encoding
+        // spec. v1 deviation: only UTF-8 supported; encode returns a
+        // Uint8Array-shaped object (length + indexed bytes); decode
+        // reads bytes back as JS string. Sufficient for jose / ky /
+        // get-stream / many crypto + stream-using packages.
+        let te = make_native("TextEncoder", |rt, _args| {
+            let mut o = Object::new_ordinary();
+            o.set_own("encoding".into(), Value::String(Rc::new("utf-8".to_string())));
+            let id = rt.alloc_object(o);
+            register_method(rt, id, "encode", |rt, args| {
+                let s = match args.first() {
+                    Some(Value::String(s)) => s.as_str().to_string(),
+                    None => String::new(),
+                    Some(v) => crate::abstract_ops::to_string(v).as_str().to_string(),
+                };
+                let bytes: Vec<u8> = s.into_bytes();
+                let mut out = Object::new_array();
+                out.set_own("length".into(), Value::Number(bytes.len() as f64));
+                for (i, b) in bytes.iter().enumerate() {
+                    out.set_own(i.to_string(), Value::Number(*b as f64));
+                }
+                Ok(Value::Object(rt.alloc_object(out)))
+            });
+            Ok(Value::Object(id))
+        });
+        let te_id = self.alloc_object(te);
+        self.globals.insert("TextEncoder".into(), Value::Object(te_id));
+        let td = make_native("TextDecoder", |rt, args| {
+            let encoding = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => "utf-8".to_string(),
+            };
+            let mut o = Object::new_ordinary();
+            o.set_own("encoding".into(), Value::String(Rc::new(encoding)));
+            let id = rt.alloc_object(o);
+            register_method(rt, id, "decode", |rt, args| {
+                let bytes_id = match args.first() {
+                    Some(Value::Object(id)) => *id,
+                    _ => return Ok(Value::String(Rc::new(String::new()))),
+                };
+                let len = rt.array_length(bytes_id);
+                let mut bytes: Vec<u8> = Vec::with_capacity(len);
+                for i in 0..len {
+                    if let Value::Number(n) = rt.object_get(bytes_id, &i.to_string()) {
+                        bytes.push(n as u8);
+                    }
+                }
+                let s = String::from_utf8_lossy(&bytes).to_string();
+                Ok(Value::String(Rc::new(s)))
+            });
+            Ok(Value::Object(id))
+        });
+        let td_id = self.alloc_object(td);
+        self.globals.insert("TextDecoder".into(), Value::Object(td_id));
     }
 
     /// Tier-Ω.5.k: helpers the compiler emits LoadGlobal+Call into for

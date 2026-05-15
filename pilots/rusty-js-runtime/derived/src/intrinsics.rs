@@ -758,6 +758,13 @@ impl Runtime {
         // 'hasOwnProperty' of undefined".
         if let Some(proto) = self.object_prototype {
             self.object_set(obj_ctor, "prototype".into(), Value::Object(proto));
+            // Tier-Ω.5.lll: Object.prototype.constructor = Object. Per
+            // ECMA-262 §20.1.3.1. Without this, plain-object `.constructor`
+            // returns undefined, breaking type-tag idioms like dequal's
+            // `(ctor=foo.constructor) === bar.constructor` followed by
+            // `ctor === Date` / `ctor === RegExp` / `ctor === Array`
+            // dispatch.
+            self.object_set(proto, "constructor".into(), Value::Object(obj_ctor));
         }
         self.globals.insert("Object".into(), Value::Object(obj_ctor));
     }

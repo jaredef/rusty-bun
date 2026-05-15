@@ -355,9 +355,21 @@ impl Compiler {
         //
         //   Phase A.6 (Ω.5.qq) is now folded into A.4.
         let mut fn_pre_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+        // Helper: collect function-decl name from a body item, including
+        // export-wrapped form `export function f(){}`.
         for item in &m.body {
-            // Function-decl names.
-            if let ModuleItem::Statement(Stmt::FunctionDecl { name: Some(n), .. }) = item {
+            // Function-decl names. Tier-Ω.5.mmm: also recognize
+            // `export function f(){}` so f's slot is pre-allocated before
+            // f's body compiles — required for self-recursion to capture
+            // f as a local upvalue rather than a missing global.
+            let fn_name: Option<&BindingIdentifier> = match item {
+                ModuleItem::Statement(Stmt::FunctionDecl { name: Some(n), .. }) => Some(n),
+                ModuleItem::Export(ExportDeclaration::Declaration { decl_stmt: Some(stmt), .. }) => {
+                    if let Stmt::FunctionDecl { name: Some(n), .. } = stmt.as_ref() { Some(n) } else { None }
+                }
+                _ => None,
+            };
+            if let Some(n) = fn_name {
                 if !fn_pre_slots.contains_key(&n.name) {
                     let slot = self.alloc_local(LocalDescriptor {
                         name: n.name.clone(), kind: VariableKind::Var, depth: 0,
@@ -392,9 +404,21 @@ impl Compiler {
         }
         self.pre_allocated_slots.extend(fn_pre_slots.iter().map(|(k,v)| (k.clone(), *v)));
         for item in &m.body {
-            if let ModuleItem::Statement(Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. }) = item {
+            // Pull the inner FunctionDecl out (whether direct or
+            // wrapped under `export function f(){}`).
+            let fn_parts: Option<(&Option<BindingIdentifier>, bool, bool, &Vec<Parameter>, &Vec<Stmt>)> = match item {
+                ModuleItem::Statement(Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. }) =>
+                    Some((name, *is_async, *is_generator, params, body)),
+                ModuleItem::Export(ExportDeclaration::Declaration { decl_stmt: Some(stmt), .. }) => {
+                    if let Stmt::FunctionDecl { name, is_async, is_generator, params, body, .. } = stmt.as_ref() {
+                        Some((name, *is_async, *is_generator, params, body))
+                    } else { None }
+                }
+                _ => None,
+            };
+            if let Some((name, is_async, is_generator, params, body)) = fn_parts {
                 if let Some(n) = name {
-                    let proto = self.compile_function_proto(Some(n.clone()), *is_async, *is_generator, params, body)?;
+                    let proto = self.compile_function_proto(Some(n.clone()), is_async, is_generator, params, body)?;
                     let captures = proto.upvalues.clone();
                     let idx = self.constants.intern(Constant::Function(Box::new(proto)));
                     encode_op(&mut self.bytecode, Op::MakeClosure);

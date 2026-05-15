@@ -1054,3 +1054,31 @@ Discipline against decoration: if a session skips this protocol and re-derives s
 1. Expand the value-probe corpus to all 62 shape-passers for a full real-value parity reading.
 2. Lift the regex-engine narrowness (largest shared gap; would cascade through glob/path packages).
 3. Wire real crypto entropy (small; lifts ulid + corrects uuid semantics).
+
+---
+
+## RESUME VECTOR EXTENSION 2 — 2026-05-15 late evening (post-pause expansion via routes 1 + 2 + Doc 721 §VI.6 escalation)
+
+**State at this anchor: shape 79/118 (66.9% of entry-resolved); expanded route-2 47/71 (66%) real-value pass rate; thirty-eight substrate moves total this session.** Up from the protocol-driven pause point's 47/118 real-substrate-completion.
+
+**Substrate moves (Ω.5.qq through Ω.5.iiii)**. Engine layer: forward-ref hoisting at module scope, optional-chain method short-circuit, JSON-module imports, CoverInitializedName, async method shorthand, tagged-template literals, function/class as primary-expression, three-phase top-level binding pre-allocation, destructure-pattern pre-allocation, arrow `this` lexical capture, function-decl self-recursion, class-decl pre-allocation, new-Member-chain parser, upvalue-cell-promotion namespace-builder fix. Intrinsics layer: hand-rolled regex engine with lookaround (~600 lines, fancy-regex equivalent for JS subset), Buffer prototype + methods, real crypto entropy (xorshift64), atob/btoa, Object.prototype.constructor, String.toLocale variants, Array as Function constructor, Set ctor iterable + @@iterator, Promise as real Function, closure .length, Function.prototype.toString, Date methods + ISO parsing (Howard Hinnant Gregorian), arguments object, Array.splice, TextEncoder/TextDecoder, Intl stubs, global alias, process.nextTick + listeners, Error native receiver-mutation under super. Diagnostic-instrumentation layer (route b per Doc 721 §VI.6): Op::GetProp + Op::New + In tag enrichment.
+
+**Corpus articulations stacked (six new this session).**
+- Doc 714 §VI Consequence 14: bidirectional substrate↔parity traceability as a Pin-Art property of the rusty-bun apparatus.
+- Doc 714 §VI Consequence 15: Doc 722 in application — predict-then-check discipline running against the engagement; observable behavior shift recorded.
+- Doc 722: named recognitions as operating instruments — the reflexive structure of corpus articulations as productive constraints on subsequent work. Three claims (local / cross-engagement / general); three falsifiers.
+- Doc 723: diagnostic tags as semiotic signs — layer-indexed interpretation in pipeline-DAG topologies. Three claims (operational / compositional / structural); three interpretive layers A/B/C named.
+- Doc 723 first amendment: Layer-B misreading + Layer-D constructive probe-substrate. Layer-B claim revised (tag chains are candidates, not identifications); Layer-D added (probe-substrate is the fourth interpretive layer; must be Pin-Art-structured for hypotheses to be testable).
+- Doc 723 second amendment: threshold of diagnostic semanticity (three axes: chain depth × tag specificity × kind information); two routes to raise threshold-crossing capacity — (a) denser Layer-D additive per-failure, (b) richer engine tags compounding per-site. Empirical record: pluralize chase resolved in three rounds (uuu enrichment → trace → vvv replace-callback per-spec).
+- Doc 721 §VI.6 amendment: Step 6 — ladder-up when below-threshold. Formalized as a protocol step distinct from Step 5's iteration. Empirical record: jose/ky/get-stream cluster resolved by Op::New hint enrichment (Ω.5.hhhh) + one TextEncoder substrate fix (Ω.5.iiii) lifting four packages.
+
+**Methodology operationalized.** Three artifacts at host/tools/:
+- `host/tools/probe-builder.sh` (Doc 723 Layer-D): named feature-combination probe-construction substrate with bisect mode.
+- `host/tools/route2-value-probe.sh` (Doc 721 §III route 2): 24-package value-exercise probe.
+- `host/tools/route2-expanded-probe.sh` (route 2 expanded): 71-package value-exercise probe.
+
+**Open scope.** The engagement now operates in the reflexive regime (Doc 722). Each route-(b) instrumentation move compounds across all future faults at the chosen site. The discipline is: predict before patch (Doc 722); read tag chain at layers A/B/C (Doc 723); if below threshold, escalate per Doc 721 §VI.6 Step 6; if hypothesis structurally precise, single-line probe falsifies/confirms; if structurally imprecise, Layer-D probe-substrate's bisect surfaces the load-bearing combination.
+
+**Resume protocol.** Read this anchor first. Read `/home/jaredef/rusty-bun/seed.md §VII`'s status block for telos-anchored state. Read the prior RESUME VECTOR anchors for the route-1 / route-2 pivot histories. The substrate moves are committed (38 commits Ω.5.qq through Ω.5.iiii). The corpus articulations are published at jaredfoy.com via the corpus-master → resolve → seed pipeline.
+
+**The engagement's open trajectory remains.** Continue route-1 (per-package walks on residual 39 failures), continue route-2 expansion (probe-substrate growth + Op::* tag enrichment per Doc 721 §VI.6), or new corpus articulations as recognitions surface. The Pin-Art property (Doc 714 C14) holds across all 38 substrate moves so far: each named, each traceable bidirectionally to specific package failure(s), each compounding via Doc 722's reflexive structure.

@@ -102,7 +102,7 @@ impl<'src> Parser<'src> {
         Ok(Stmt::Expression { expr, span: Span::new(start, end) })
     }
 
-    fn parse_variable_statement(&mut self) -> Result<VariableStatement, ParseError> {
+    pub(crate) fn parse_variable_statement(&mut self) -> Result<VariableStatement, ParseError> {
         let start = self.lookahead_span().start;
         let kind = match self.current_kind() {
             TokenKind::Ident(s) if s == "var" => VariableKind::Var,

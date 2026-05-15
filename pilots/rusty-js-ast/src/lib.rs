@@ -514,12 +514,18 @@ pub enum ExportDeclaration {
     /// binding the declaration introduces.
     Declaration {
         span: Span,
-        /// Opaque span of the underlying declaration. Future rounds
-        /// replace this with the typed declaration AST.
+        /// Opaque span of the underlying declaration. Retained for v1
+        /// compatibility with paths that still skip the body.
         decl_span: Span,
         /// Names introduced by the declaration. Computed by the parser
         /// at parse time (e.g., `export const {a, b} = obj` yields ["a", "b"]).
         names: Vec<BindingIdentifier>,
+        /// Tier-Ω.5.kk: the typed underlying declaration (when the parser
+        /// captured one — Var/Let/Const, FunctionDecl, ClassDecl). None
+        /// when the parser fell back to opaque skipping. The compiler
+        /// runs the inner statement so initializers, bodies, etc. produce
+        /// their bytecode and bind their slots.
+        decl_stmt: Option<Box<Stmt>>,
     },
     /// `export { ... } [from ModuleSpecifier];` — local or indirect re-export
     /// depending on presence of `from`.

@@ -499,27 +499,31 @@ impl Compiler {
                     exported: "default".to_string(), local: slot,
                 });
             }
-            ExportDeclaration::Declaration { names, .. } => {
-                // Tier-Ω.5.ii: alloc local slots for each exported name so
-                // references in the module body resolve as locals rather
-                // than globals. Closes the TS-compiled-enum pattern
-                //   export var DecodingMode;
-                //   (function (DecodingMode) { ... })(DecodingMode || (DecodingMode = {}));
-                // entities + parse5 use this pattern; without local slots,
-                // `DecodingMode` resolves as a global → undefined →
-                // OR-fallback assigns to the global → but the IIFE was
-                // already called with undefined. The parser discards the
-                // decl's body (initializer expressions), so the slot
-                // starts at undefined; this matches the var-hoisting
-                // semantics for un-initialized vars.
-                for n in names {
-                    if self.resolve_local(&n.name).is_none() {
-                        self.alloc_local(LocalDescriptor {
-                            name: n.name.clone(),
-                            kind: VariableKind::Var,
-                            depth: 0,
-                        });
+            ExportDeclaration::Declaration { names, decl_stmt, .. } => {
+                // Tier-Ω.5.kk: if the parser captured the typed inner
+                // declaration, compile it as a normal statement so its
+                // initializers / function bodies / class bodies run and
+                // bind their slots. arktype + @ark/util need this so
+                // `export const noSuggest = (s) => ...` actually creates
+                // the binding's value rather than leaving the slot at
+                // undefined (Ω.5.ii fixed slot allocation but not
+                // initializer execution).
+                if let Some(stmt) = decl_stmt {
+                    self.compile_stmt(stmt)?;
+                } else {
+                    // Fallback path: alloc slots so references resolve as
+                    // locals (matches Ω.5.ii). Initializers were discarded.
+                    for n in names {
+                        if self.resolve_local(&n.name).is_none() {
+                            self.alloc_local(LocalDescriptor {
+                                name: n.name.clone(),
+                                kind: VariableKind::Var,
+                                depth: 0,
+                            });
+                        }
                     }
+                }
+                for n in names {
                     self.pending_named_exports.push((n.name.clone(), n.name.clone()));
                 }
             }

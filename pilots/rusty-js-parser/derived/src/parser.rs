@@ -251,11 +251,12 @@ impl<'src> Parser<'src> {
         }
         // export Declaration / export VariableStatement / export Const-Let-Var
         let decl_start = self.lookahead.span.start;
-        let (decl_span, names) = self.parse_declaration_for_export()?;
+        let (decl_span, names, decl_stmt) = self.parse_declaration_for_export()?;
         Ok(ExportDeclaration::Declaration {
             span: Span::new(start, decl_span.end),
             decl_span: Span::new(decl_start, decl_span.end),
             names,
+            decl_stmt,
         })
     }
 
@@ -456,75 +457,46 @@ impl<'src> Parser<'src> {
         Ok(Span::new(start, self.last_span_end()))
     }
 
-    fn parse_declaration_for_export(&mut self) -> Result<(Span, Vec<BindingIdentifier>), ParseError> {
+    fn parse_declaration_for_export(&mut self) -> Result<(Span, Vec<BindingIdentifier>, Option<Box<Stmt>>), ParseError> {
         let start = self.lookahead.span.start;
-        // Capture binding names from the declaration head as best-effort.
         let mut names: Vec<BindingIdentifier> = Vec::new();
         let is_func = self.is_ident("function") || self.is_ident("async");
         let is_class = self.is_ident("class");
         let is_let = self.is_ident("let");
         let is_const = self.is_ident("const");
         let is_var = self.is_ident("var");
-        if is_func {
-            // Tier-Ω.5.gg: parse the full FunctionDeclaration via the
-            // typed statement parser instead of skipping braces blindly.
-            // The lexer's brace-vs-template-substitution disambiguation
-            // requires the parser to drive token goals; skip_balanced
-            // mistakes a `${expr}` closing `}` for the function's `}`,
-            // pollutes lexer state, and trips a later template as
-            // unterminated. See trajectory Ω.5.gg.
+        let stmt_opt: Option<Box<Stmt>> = if is_func {
             let is_async_kw = self.is_ident("async");
             if is_async_kw { self.bump_regexp()?; }
             let stmt = self.parse_function_decl_stmt(is_async_kw)?;
             if let Stmt::FunctionDecl { name: Some(bi), .. } = &stmt {
                 names.push(bi.clone());
             }
+            Some(Box::new(stmt))
         } else if is_class {
-            // Tier-Ω.5.gg: same hazard for class bodies — method bodies
-            // may contain template-with-substitutions whose `}` would
-            // unbalance skip_balanced. Use the typed class statement
-            // parser instead.
             let stmt = self.parse_class_decl_stmt()?;
             if let Stmt::ClassDecl { name: Some(bi), .. } = &stmt {
                 names.push(bi.clone());
             }
+            Some(Box::new(stmt))
         } else if is_let || is_const || is_var {
-            self.bump_regexp()?;
-            loop {
-                // Each declarator: BindingIdentifier or destructure.
-                if let TokenKind::Ident(n) = &self.lookahead.kind {
-                    names.push(BindingIdentifier { name: n.clone(), span: self.lookahead.span });
-                    self.bump_regexp()?;
-                } else if self.is_punct(Punct::LBrace) {
-                    // Destructure: walk balanced, pull out top-level identifiers
-                    // followed by `:` (rename) or comma/brace (bare).
-                    let bracket_start = self.lookahead.span;
-                    self.bump_regexp()?;
-                    self.extract_destructure_names_object(&mut names)?;
-                    let _ = bracket_start;
-                } else if self.is_punct(Punct::LBracket) {
-                    self.bump_regexp()?;
-                    self.extract_destructure_names_array(&mut names)?;
-                } else {
-                    break;
+            // Tier-Ω.5.kk: parse the variable statement properly so its
+            // initializer expressions land as bytecode. arktype +
+            // @ark/util's `export const noSuggest = (s) => ...` requires
+            // the initializer to run, otherwise noSuggest's namespace
+            // entry stays undefined and dependent modules' top-level
+            // `noSuggest("x")` fails at call time.
+            let vs = self.parse_variable_statement()?;
+            for d in &vs.declarators {
+                for id in d.target.collect_names() {
+                    names.push(id.clone());
                 }
-                // Optional initializer `= <expr>` — typed AssignmentExpression.
-                if self.is_punct(Punct::Assign) {
-                    self.bump_regexp()?;
-                    let _ = self.parse_assignment_expression()?;
-                }
-                if self.is_punct(Punct::Comma) {
-                    self.bump_regexp()?;
-                    continue;
-                }
-                break;
             }
-            self.consume_semicolon();
+            Some(Box::new(Stmt::Variable(vs)))
         } else {
-            // Fallback: treat as opaque statement span.
-            return Ok((self.skip_statement_or_decl()?, names));
-        }
-        Ok((Span::new(start, self.last_span_end()), names))
+            return Ok((self.skip_statement_or_decl()?, names, None));
+        };
+        Ok((Span::new(start, self.last_span_end()), names, stmt_opt))
     }
 
     fn extract_destructure_names_object(&mut self, out: &mut Vec<BindingIdentifier>) -> Result<(), ParseError> {

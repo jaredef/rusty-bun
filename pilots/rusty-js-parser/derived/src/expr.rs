@@ -335,6 +335,18 @@ impl<'src> Parser<'src> {
                         span: Span::new(start, end),
                     };
                 }
+                TokenKind::Template { .. } => {
+                    // Tier-Ω.5.ww: tagged template literal. Lower to a Call
+                    // where the first argument is an Array of the quasi
+                    // strings and the remaining arguments are the
+                    // interpolation expressions. v1 deviation: the strings
+                    // array does not carry `.raw` (so String.raw returns
+                    // cooked values), but most tag uses don't depend on
+                    // `.raw`. camelcase / consola / styled-components
+                    // patterns parse.
+                    let start = expr.span().start;
+                    expr = self.parse_tagged_template(expr, start)?;
+                }
                 _ => break,
             }
         }
@@ -761,6 +773,53 @@ impl<'src> Parser<'src> {
     /// non-whitespace source byte (after the identifier's bytes) starts
     /// a property-key shape: identifier-start, string quote, digit, or `[`.
     /// If followed by `(`, `:`, `,`, `}`, or `=`, it's a plain key.
+    fn parse_tagged_template(&mut self, tag: Expr, start: usize) -> Result<Expr, ParseError> {
+        use crate::token::TemplatePart;
+        use rusty_js_ast::{ArrayElement, Argument};
+        // Parse the template literal into an Expr::TemplateLiteral first,
+        // then convert into a Call with [Array(quasis), ...expressions].
+        let tpl = match self.current_kind().clone() {
+            TokenKind::Template { cooked, part, .. } => {
+                let tspan = self.lookahead_span();
+                match part {
+                    TemplatePart::NoSubstitution => {
+                        let value = cooked.unwrap_or_default();
+                        self.bump()?;
+                        Expr::TemplateLiteral {
+                            quasis: vec![std::rc::Rc::new(value)],
+                            expressions: Vec::new(),
+                            span: tspan,
+                        }
+                    }
+                    TemplatePart::Head => self.parse_template_with_substitutions(tspan.start)?,
+                    _ => return Err(self.err_here("unexpected template part for tag".into())),
+                }
+            }
+            _ => return Err(self.err_here("expected template after tag".into())),
+        };
+        let (quasis, expressions, end) = match tpl {
+            Expr::TemplateLiteral { quasis, expressions, span } => (quasis, expressions, span.end),
+            _ => unreachable!(),
+        };
+        let strings_arr = Expr::Array {
+            elements: quasis.iter().map(|q| ArrayElement::Expr(Expr::StringLiteral {
+                value: (**q).clone(),
+                span: Span::new(start, end),
+            })).collect(),
+            span: Span::new(start, end),
+        };
+        let mut arguments: Vec<Argument> = vec![Argument::Expr(strings_arr)];
+        for e in expressions {
+            arguments.push(Argument::Expr(e));
+        }
+        Ok(Expr::Call {
+            callee: Box::new(tag),
+            arguments,
+            optional: false,
+            span: Span::new(start, end),
+        })
+    }
+
     fn looks_like_async_method_shorthand(&self) -> bool {
         let is_async_ident = matches!(self.current_kind(), TokenKind::Ident(n) if n == "async");
         if !is_async_ident { return false; }

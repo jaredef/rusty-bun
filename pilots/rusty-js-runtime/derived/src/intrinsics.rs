@@ -805,6 +805,94 @@ impl Runtime {
         let b_id = self.alloc_object(b_obj);
         self.globals.insert("Boolean".into(), Value::Object(b_id));
         self.install_error_globals();
+        self.install_reflect();
+    }
+
+    /// Tier-Ω.5.cc: Reflect global — most methods route to existing Object
+    /// statics. has/get/set/deleteProperty/ownKeys/getPrototypeOf used by
+    /// many packages doing duck-type checks.
+    fn install_reflect(&mut self) {
+        let r = self.alloc_object(Object::new_ordinary());
+        register_method(self, r, "has", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let key_s = abstract_ops::to_string(&key).as_str().to_string();
+            let id = match obj {
+                Value::Object(id) => id,
+                _ => return Err(RuntimeError::TypeError("Reflect.has: target must be object".into())),
+            };
+            let mut cur = Some(id);
+            let mut found = false;
+            while let Some(c) = cur {
+                if rt.obj(c).properties.contains_key(&key_s) { found = true; break; }
+                cur = rt.obj(c).proto;
+            }
+            Ok(Value::Boolean(found))
+        });
+        register_method(self, r, "get", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let key_s = abstract_ops::to_string(&key).as_str().to_string();
+            match obj {
+                Value::Object(id) => Ok(rt.object_get(id, &key_s)),
+                _ => Err(RuntimeError::TypeError("Reflect.get: target must be object".into())),
+            }
+        });
+        register_method(self, r, "set", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let val = args.get(2).cloned().unwrap_or(Value::Undefined);
+            let key_s = abstract_ops::to_string(&key).as_str().to_string();
+            match obj {
+                Value::Object(id) => { rt.object_set(id, key_s, val); Ok(Value::Boolean(true)) }
+                _ => Err(RuntimeError::TypeError("Reflect.set: target must be object".into())),
+            }
+        });
+        register_method(self, r, "deleteProperty", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let key_s = abstract_ops::to_string(&key).as_str().to_string();
+            match obj {
+                Value::Object(id) => {
+                    rt.obj_mut(id).properties.remove(&key_s);
+                    Ok(Value::Boolean(true))
+                }
+                _ => Err(RuntimeError::TypeError("Reflect.deleteProperty: target must be object".into())),
+            }
+        });
+        register_method(self, r, "ownKeys", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            match obj {
+                Value::Object(id) => {
+                    let keys: Vec<String> = rt.obj(id).properties.keys().cloned().collect();
+                    let arr = rt.alloc_object(Object::new_array());
+                    for (i, k) in keys.iter().enumerate() {
+                        rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+                    }
+                    rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
+                    Ok(Value::Object(arr))
+                }
+                _ => Err(RuntimeError::TypeError("Reflect.ownKeys: target must be object".into())),
+            }
+        });
+        register_method(self, r, "getPrototypeOf", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            match obj {
+                Value::Object(id) => match rt.obj(id).proto {
+                    Some(p) => Ok(Value::Object(p)),
+                    None => Ok(Value::Null),
+                },
+                _ => Ok(Value::Null),
+            }
+        });
+        // defineProperty / construct / apply — alias existing logic.
+        if let Some(v) = self.globals.get("Object").cloned() {
+            if let Value::Object(oid) = v {
+                let dp = self.object_get(oid, "defineProperty");
+                if !matches!(dp, Value::Undefined) { self.object_set(r, "defineProperty".into(), dp); }
+            }
+        }
+        self.globals.insert("Reflect".into(), Value::Object(r));
     }
 
     /// Tier-Ω.5.z: Error + TypeError + RangeError + SyntaxError + ReferenceError

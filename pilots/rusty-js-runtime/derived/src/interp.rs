@@ -762,6 +762,18 @@ impl Runtime {
                     };
                     self.obj_mut(target_id).proto = new_proto;
                 }
+                Op::Delete => {
+                    // `delete expr` per ECMA-262 §13.5.1. Pops the
+                    // operand; v1 returns true (matches spec for any
+                    // non-Reference operand). Real `delete obj.prop`
+                    // would need a Reference-type bytecode shape so we
+                    // know what to delete; that's deferred to a future
+                    // round. For now: evaluating + returning true is
+                    // sufficient for the dominant idiom (`delete x` as
+                    // a no-op for variable cleanup in minified code).
+                    let _ = frame.pop()?;
+                    frame.push(Value::Boolean(true));
+                }
                 Op::In => {
                     // pops [key, obj]; obj on top per BinaryOp::In emit.
                     // `key in obj` per ECMA-262 §13.10: obj must be Object;

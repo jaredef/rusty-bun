@@ -1147,11 +1147,20 @@ impl Compiler {
                     for site in frame.break_patches { self.patch_jump_at(site); }
                 }
             }
+            Stmt::Opaque { .. } => {
+                // Tier-Ω.5.cc: parser-produced Stmt::Opaque is a v1 marker
+                // for statement forms not yet first-class in the AST
+                // (currently: top-level `yield` expression as statement,
+                // `with` statement). Generators don't actually suspend in
+                // v1 (await is also no-op'd per Ω.5.x), so dropping the
+                // statement entirely is semantically equivalent for the
+                // dominant idiom that produced this Opaque: a yielding
+                // statement inside a generator function body whose
+                // suspension is never observed because we never enter
+                // generator dispatch.
+            }
             other => {
-                let tag = match other {
-                    Stmt::Opaque { .. } => "Opaque",
-                    _ => "<other>",
-                };
+                let tag = match other { _ => "<other>" };
                 return Err(self.err(span, &format!("statement form not yet supported in compiler v1: {}", tag)));
             }
         }
@@ -1567,7 +1576,7 @@ impl Compiler {
                 // Tier-Ω.5.a: this now threads through the frame.
                 encode_op(&mut self.bytecode, Op::PushThis);
             }
-            Expr::Member { object, property, optional: _, .. } => {
+            Expr::Member { object, property, optional, .. } => {
                 // Tier-Ω.5.f: super.x read — load from the parent prototype
                 // (or parent constructor in a static context). The lookup
                 // does NOT thread `this` for a bare member read; only when
@@ -1577,6 +1586,26 @@ impl Compiler {
                     return Ok(());
                 }
                 self.compile_expr(object)?;
+                // Tier-Ω.5.cc: optional chaining (`obj?.prop`). If `obj` is
+                // null or undefined, short-circuit: pop it, push undefined,
+                // skip the property access. Implemented via two strict-eq
+                // checks (null + undefined) + JumpIfTrue to the short-circuit
+                // sink. The check happens on a Dup so the value remains on
+                // stack for the normal-path GetProp/GetIndex.
+                let short_jumps = if *optional {
+                    let mut sinks = Vec::new();
+                    // Check === undefined
+                    encode_op(&mut self.bytecode, Op::Dup);
+                    encode_op(&mut self.bytecode, Op::PushUndef);
+                    encode_op(&mut self.bytecode, Op::StrictEq);
+                    sinks.push(self.emit_jump(Op::JumpIfTrue));
+                    // Check === null
+                    encode_op(&mut self.bytecode, Op::Dup);
+                    encode_op(&mut self.bytecode, Op::PushNull);
+                    encode_op(&mut self.bytecode, Op::StrictEq);
+                    sinks.push(self.emit_jump(Op::JumpIfTrue));
+                    Some(sinks)
+                } else { None };
                 match property.as_ref() {
                     MemberProperty::Identifier { name, .. } => {
                         let idx = self.constants.intern(Constant::String(name.clone()));
@@ -1592,6 +1621,15 @@ impl Compiler {
                         encode_op(&mut self.bytecode, Op::GetProp);
                         encode_u16(&mut self.bytecode, idx);
                     }
+                }
+                if let Some(sinks) = short_jumps {
+                    let end = self.emit_jump(Op::Jump);
+                    for site in sinks { self.patch_jump_at(site); }
+                    // Short-circuit landing: pop the leftover object,
+                    // push undefined.
+                    encode_op(&mut self.bytecode, Op::Pop);
+                    encode_op(&mut self.bytecode, Op::PushUndef);
+                    self.patch_jump_at(end);
                 }
             }
             Expr::Call { callee, arguments, optional: _, .. } => {

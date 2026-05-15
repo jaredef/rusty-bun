@@ -687,7 +687,21 @@ impl Runtime {
             frame.write_local(*slot as usize, v.clone());
         }
         self.run_frame_module(&mut frame)?;
-        let locals = frame.locals.clone();
+        // Tier-Ω.5.jjj: read locals through the cell promotion seam.
+        // If a slot was promoted to an upvalue cell (because a nested
+        // closure captured it), frame.locals[slot] now holds Undefined
+        // and the live value lives in frame.local_cells[slot]. The
+        // namespace builder previously read locals directly and saw
+        // Undefined for every captured export. ufo + many ESM packages
+        // with nested closures that capture top-level fn-decls failed
+        // this way: shape probe passed (52 keys) but values were
+        // Undefined for half the exports.
+        let mut locals = frame.locals.clone();
+        for (i, slot) in locals.iter_mut().enumerate() {
+            if let Some(Some(cell)) = frame.local_cells.get(i) {
+                *slot = cell.borrow().clone();
+            }
+        }
 
         // Populate the namespace from bytecode.exports. The compiler
         // records (exported, local-slot) pairs; the runtime reads each

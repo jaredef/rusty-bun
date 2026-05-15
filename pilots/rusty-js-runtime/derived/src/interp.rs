@@ -762,6 +762,27 @@ impl Runtime {
                     };
                     self.obj_mut(target_id).proto = new_proto;
                 }
+                Op::In => {
+                    // pops [key, obj]; obj on top per BinaryOp::In emit.
+                    // `key in obj` per ECMA-262 §13.10: obj must be Object;
+                    // otherwise TypeError. Returns true if the key (own or
+                    // prototype-chain) exists; walks the prototype chain.
+                    let obj_v = frame.pop()?;
+                    let key_v = frame.pop()?;
+                    let obj_id = match obj_v {
+                        Value::Object(id) => id,
+                        _ => return Err(RuntimeError::TypeError(
+                            "Cannot use 'in' operator on non-object".into())),
+                    };
+                    let key = property_key(&key_v);
+                    let mut cur = Some(obj_id);
+                    let mut found = false;
+                    while let Some(c) = cur {
+                        if self.obj(c).properties.contains_key(&key) { found = true; break; }
+                        cur = self.obj(c).proto;
+                    }
+                    frame.push(Value::Boolean(found));
+                }
                 Op::Instanceof => {
                     // pops [obj, ctor]; ctor on top.
                     let ctor_v = frame.pop()?;

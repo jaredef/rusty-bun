@@ -704,7 +704,12 @@ impl Runtime {
     /// `Number.MAX_SAFE_INTEGER` / `Number.isInteger`, so this closure
     /// is load-bearing for the parity corpus.
     fn install_number_static(&mut self) {
-        let num = self.alloc_object(Object::new_ordinary());
+        // Tier-Ω.5.z: Number is also callable: `Number("3") === 3`.
+        let num_obj = make_native("Number", |_rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            Ok(Value::Number(abstract_ops::to_number(&v)))
+        });
+        let num = self.alloc_object(num_obj);
         // Constants per ECMA-262 §21.1.2.
         self.object_set(num, "MAX_SAFE_INTEGER".into(), Value::Number(9007199254740991.0));
         self.object_set(num, "MIN_SAFE_INTEGER".into(), Value::Number(-9007199254740991.0));
@@ -755,6 +760,50 @@ impl Runtime {
             self.object_set(num, "prototype".into(), Value::Object(proto));
         }
         self.globals.insert("Number".into(), Value::Object(num));
+        self.install_string_global();
+        self.install_boolean_global();
+    }
+
+    /// Tier-Ω.5.z: `String(x)` callable — coerces to string per ToString.
+    /// `new String(x)` (wrapper object) deferred; v1 returns the primitive.
+    /// Carries `String.prototype` for the dense `String.prototype.X`
+    /// access idiom (axios, etc.) used by polyfills + duck-type checks.
+    fn install_string_global(&mut self) {
+        let str_obj = make_native("String", |_rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            Ok(Value::String(Rc::new(abstract_ops::to_string(&v).as_str().to_string())))
+        });
+        let str_id = self.alloc_object(str_obj);
+        register_method(self, str_id, "fromCharCode", |_rt, args| {
+            let mut s = String::new();
+            for a in args {
+                let n = abstract_ops::to_number(a);
+                if let Some(c) = char::from_u32(n as u32) { s.push(c); }
+            }
+            Ok(Value::String(Rc::new(s)))
+        });
+        register_method(self, str_id, "fromCodePoint", |_rt, args| {
+            let mut s = String::new();
+            for a in args {
+                let n = abstract_ops::to_number(a);
+                if let Some(c) = char::from_u32(n as u32) { s.push(c); }
+            }
+            Ok(Value::String(Rc::new(s)))
+        });
+        if let Some(proto) = self.string_prototype {
+            self.object_set(str_id, "prototype".into(), Value::Object(proto));
+        }
+        self.globals.insert("String".into(), Value::Object(str_id));
+    }
+
+    /// Tier-Ω.5.z: `Boolean(x)` callable — coerces to boolean per ToBoolean.
+    fn install_boolean_global(&mut self) {
+        let b_obj = make_native("Boolean", |_rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            Ok(Value::Boolean(abstract_ops::to_boolean(&v)))
+        });
+        let b_id = self.alloc_object(b_obj);
+        self.globals.insert("Boolean".into(), Value::Object(b_id));
     }
 
     fn install_symbol_static(&mut self) {

@@ -338,21 +338,55 @@ impl Compiler {
         // objectHash() {...}` depends on this. Pre-allocate the function's
         // local slot AND emit MakeClosure + StoreLocal so the name is bound
         // before any other statement runs.
-        // Tier-Ω.5.zz: two-phase module-level hoisting, mirroring the
-        // H1/H2 split in compile_function_proto. H1 pre-allocates slots
-        // for ALL top-level FunctionDecl names FIRST so any sibling
-        // function-decl body compiled in H2 sees later siblings as
-        // local upvalues rather than missing globals. fast-equals,
-        // io-ts-side polyfills, and any module where one top-level
-        // function calls a later sibling depend on this.
+        // Tier-Ω.5.zz / Ω.5.aaa: three-phase module-level hoisting.
+        //
+        //   A.4 pre-allocates slots for ALL top-level bindings —
+        //        function-decl names AND const/let/var names (incl.
+        //        names under `export ...`). Must run BEFORE any
+        //        function body is compiled, otherwise a hoisted
+        //        function-decl body that references a later top-level
+        //        `var X = ...` resolves X as a free global rather than
+        //        a local upvalue (acorn's `function binop(){ return
+        //        new TokenType() }` over `var TokenType = ...` failed
+        //        because TokenType's slot didn't yet exist).
+        //
+        //   A.5 (this block) compiles each function-decl body and
+        //        emits MakeClosure + StoreLocal into its A.4 slot.
+        //
+        //   Phase A.6 (Ω.5.qq) is now folded into A.4.
         let mut fn_pre_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
         for item in &m.body {
+            // Function-decl names.
             if let ModuleItem::Statement(Stmt::FunctionDecl { name: Some(n), .. }) = item {
                 if !fn_pre_slots.contains_key(&n.name) {
                     let slot = self.alloc_local(LocalDescriptor {
                         name: n.name.clone(), kind: VariableKind::Var, depth: 0,
                     });
                     fn_pre_slots.insert(n.name.clone(), slot);
+                }
+                continue;
+            }
+            // Top-level variable bindings (incl. under `export`).
+            let v_opt: Option<&rusty_js_ast::VariableStatement> = match item {
+                ModuleItem::Statement(Stmt::Variable(v)) => Some(v),
+                ModuleItem::Export(ExportDeclaration::Declaration { decl_stmt: Some(stmt), .. }) => {
+                    if let Stmt::Variable(v) = stmt.as_ref() { Some(v) } else { None }
+                }
+                _ => None,
+            };
+            if let Some(v) = v_opt {
+                for d in &v.declarators {
+                    if let rusty_js_ast::BindingPattern::Identifier(id) = &d.target {
+                        if !self.pre_allocated_slots.contains_key(&id.name)
+                            && !fn_pre_slots.contains_key(&id.name)
+                            && self.resolve_local(&id.name).is_none()
+                        {
+                            let slot = self.alloc_local(LocalDescriptor {
+                                name: id.name.clone(), kind: v.kind, depth: 0,
+                            });
+                            self.pre_allocated_slots.insert(id.name.clone(), slot);
+                        }
+                    }
                 }
             }
         }

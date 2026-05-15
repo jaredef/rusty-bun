@@ -726,10 +726,27 @@ impl Runtime {
                     // receiver before calling so re-entrant access works.
                     let v = match &obj_v {
                         Value::Object(id) => {
-                            let getter = self.find_getter(*id, &key);
-                            match getter {
-                                Some(g) => self.call_function(g, obj_v.clone(), Vec::new())?,
-                                None => self.object_get(*id, &key),
+                            // Tier-Ω.5.nnn: only check for accessor when the
+                            // descriptor actually has one. Walking find_getter
+                            // for every prop access has a cost; gate on
+                            // direct-property existence first.
+                            let has_accessor = {
+                                let mut cur = Some(*id);
+                                let mut found = false;
+                                while let Some(c) = cur {
+                                    if let Some(d) = self.obj(c).properties.get(&key) {
+                                        if d.getter.is_some() { found = true; }
+                                        break;
+                                    }
+                                    cur = self.obj(c).proto;
+                                }
+                                found
+                            };
+                            if has_accessor {
+                                let getter = self.find_getter(*id, &key).unwrap();
+                                self.call_function(getter, obj_v.clone(), Vec::new())?
+                            } else {
+                                self.object_get(*id, &key)
                             }
                         }
                         Value::String(s) if key == "length" => Value::Number(s.chars().count() as f64),

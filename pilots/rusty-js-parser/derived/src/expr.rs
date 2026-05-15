@@ -32,7 +32,8 @@ impl<'src> Parser<'src> {
             while p < bytes.len() && bytes[p].is_ascii_whitespace() { p += 1; }
             if bytes[p..].starts_with(b"function") {
                 self.bump()?; // consume `async`
-                return self.parse_function_expression(true);
+                let f = self.parse_function_expression(true)?;
+                return self.continue_lhs_continuation(f);
             }
             let starts_paren = bytes.get(p) == Some(&b'(');
             let starts_ident = p < bytes.len() &&
@@ -69,10 +70,12 @@ impl<'src> Parser<'src> {
         }
         // FunctionExpression / ClassExpression.
         if self.is_ident("function") {
-            return self.parse_function_expression(false);
+            let f = self.parse_function_expression(false)?;
+            return self.continue_lhs_continuation(f);
         }
         if self.is_ident("class") {
-            return self.parse_class_expression();
+            let c = self.parse_class_expression()?;
+            return self.continue_lhs_continuation(c);
         }
 
         let left = self.parse_conditional_expression()?;
@@ -288,13 +291,22 @@ impl<'src> Parser<'src> {
     // ───────────────── LeftHandSideExpression: member + call + new ─────────────────
 
     pub(crate) fn parse_left_hand_side_expression(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = if self.is_ident("new") {
+        let expr = if self.is_ident("new") {
             self.parse_new_expression()?
         } else {
             self.parse_primary_expression()?
         };
+        self.continue_lhs_continuation(expr)
+    }
 
-        // CallExpression / MemberExpression continuation.
+    /// Tier-Ω.5.xx: run the Member/Call/Tagged-Template continuation loop
+    /// against an already-parsed primary expression. Lets callers that
+    /// short-circuit primary-expression parsing (function expression,
+    /// class expression at expression position) still pick up `(...)` /
+    /// `.x` / `?.x` / `\`tpl\`` continuations — without which the UMD
+    /// idiom `(function(){...}(this, factory))` and `}.constructor`-style
+    /// access on a function expression fail.
+    pub(crate) fn continue_lhs_continuation(&mut self, mut expr: Expr) -> Result<Expr, ParseError> {
         loop {
             match self.current_kind() {
                 TokenKind::Punct(Punct::Dot) => {

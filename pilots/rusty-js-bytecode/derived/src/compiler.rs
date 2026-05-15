@@ -2887,10 +2887,14 @@ impl Compiler {
             match m {
                 ClassMember::Method { kind, params, body, name: m_name, is_static, is_async, is_generator, span: m_span } => {
                     if matches!(kind, MethodKind::Constructor) { continue; }
-                    if !matches!(kind, MethodKind::Method) {
-                        return Err(self.err(*m_span,
-                            "getter / setter class members not yet supported"));
-                    }
+                    // Tier-Ω.5.u (v1 deviation): getter / setter class members
+                    // are lowered as plain function-valued properties on the
+                    // prototype (instance) or constructor (static). Real
+                    // accessor-descriptor semantics — calling the getter on
+                    // property read, calling the setter on property write —
+                    // are deferred to the substrate round that wires
+                    // Object.defineProperty's get/set fields end-to-end.
+                    // Mirrors the object-literal treatment landed in Ω.5.p.parse.
                     if *is_async || *is_generator {
                         return Err(self.err(*m_span,
                             "async / generator class methods not yet supported"));

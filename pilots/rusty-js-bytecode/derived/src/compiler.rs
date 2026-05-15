@@ -898,15 +898,21 @@ impl Compiler {
                 }
             }
             Stmt::ClassDecl { name, super_class, members, span } => {
-                // Lower the class definition; result (the constructor function)
-                // is left on the stack, then bound to a local under `name`.
-                self.compile_class(*span, name.as_ref(), super_class.as_ref(), members)?;
-                if let Some(n) = name {
-                    let slot = self.alloc_local(LocalDescriptor {
+                // Tier-Ω.5.x: pre-allocate the class-name local BEFORE
+                // compile_class emits the method bodies. Method bodies that
+                // reference the class by name (e.g. `static get() { return
+                // D.#count }`) resolve `D` via upvalue capture; the slot
+                // is uninitialized at compile-time emission but holds the
+                // constructor by the time any method actually runs.
+                let class_slot = if let Some(n) = name {
+                    Some(self.alloc_local(LocalDescriptor {
                         name: n.name.clone(),
                         kind: VariableKind::Let,
                         depth: 0,
-                    });
+                    }))
+                } else { None };
+                self.compile_class(*span, name.as_ref(), super_class.as_ref(), members)?;
+                if let Some(slot) = class_slot {
                     encode_op(&mut self.bytecode, Op::StoreLocal);
                     encode_u16(&mut self.bytecode, slot);
                 } else {
@@ -1445,6 +1451,18 @@ impl Compiler {
             }
             Expr::Unary { operator, argument, .. } => {
                 self.compile_expr(argument)?;
+                // Tier-Ω.5.x: `await expr` lowers to just `expr` — the
+                // suspension semantics are dropped in v1. The argument's
+                // value is already on the stack; for a Promise that's the
+                // Promise object itself, not its resolved value (which is
+                // the spec-correct behavior on no-async-runtime). Consumer
+                // code that depends on resolved values will fail downstream;
+                // code that uses await defensively (e.g. `await x` where x
+                // is non-Promise) gets the value through unchanged.
+                if matches!(operator, UnaryOp::Await) {
+                    // No-op: argument value stays on stack.
+                    return Ok(());
+                }
                 let op = match operator {
                     UnaryOp::Plus => Op::Pos,
                     UnaryOp::Minus => Op::Neg,
@@ -1453,7 +1471,7 @@ impl Compiler {
                     UnaryOp::Typeof => Op::Typeof,
                     UnaryOp::Void => Op::Void,
                     UnaryOp::Delete => Op::Delete,
-                    UnaryOp::Await => return Err(self.err(e.span(), "await not yet supported")),
+                    UnaryOp::Await => unreachable!(), // handled above
                 };
                 encode_op(&mut self.bytecode, op);
             }

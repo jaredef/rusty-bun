@@ -874,8 +874,18 @@ impl Runtime {
                     let key_v = frame.pop()?;
                     let obj_id = match obj_v {
                         Value::Object(id) => id,
-                        _ => return Err(RuntimeError::TypeError(
-                            "Cannot use 'in' operator on non-object".into())),
+                        _ => {
+                            // Tier-Ω.5.dddd: enrich with last-property-lookup
+                            // hint per Doc 723's route-(b) discipline.
+                            let hint = frame.last_property_lookup.clone()
+                                .map(|s| format!(" (rhs='{}')", s)).unwrap_or_default();
+                            let key_s = match &key_v {
+                                Value::String(s) => format!("'{}'", s.as_str()),
+                                _ => format!("{:?}", key_v),
+                            };
+                            return Err(RuntimeError::TypeError(
+                                format!("Cannot use 'in' operator on non-object: {} in {:?}{}", key_s, obj_v, hint)));
+                        }
                     };
                     let key = property_key(&key_v);
                     let mut cur = Some(obj_id);

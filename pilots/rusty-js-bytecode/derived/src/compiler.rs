@@ -422,7 +422,14 @@ impl Compiler {
             };
             if let Some(v) = v_opt {
                 for d in &v.declarators {
-                    if let rusty_js_ast::BindingPattern::Identifier(id) = &d.target {
+                    // Tier-Ω.5.dddd: pre-allocate every identifier the
+                    // declarator's pattern binds, including destructure
+                    // patterns ({a,b} = ..., [a,b] = ...). chalk's
+                    // supports-color uses `const {env} = process;`
+                    // followed by a function-decl that references `env`
+                    // as upvalue — without pre-allocation, the function's
+                    // body resolved `env` as a missing global.
+                    for id in d.target.collect_names() {
                         if !self.pre_allocated_slots.contains_key(&id.name)
                             && !fn_pre_slots.contains_key(&id.name)
                             && self.resolve_local(&id.name).is_none()
@@ -728,7 +735,18 @@ impl Compiler {
                             // init into a hidden source slot, allocate every
                             // bound name as a local under v.kind, then walk
                             // the pattern.
+                            //
+                            // Tier-Ω.5.dddd: reuse pre-allocated slots if
+                            // Phase A.4 already created them — otherwise
+                            // hoisted function decls' upvalue captures
+                            // point at the wrong slot (the pre-allocated
+                            // one stays Undefined; this fresh one gets
+                            // the value).
                             for id in pat.collect_names() {
+                                if self.pre_allocated_slots.contains_key(&id.name) {
+                                    // Slot already exists; skip re-alloc.
+                                    continue;
+                                }
                                 self.alloc_local(LocalDescriptor {
                                     name: id.name.clone(),
                                     kind: v.kind,

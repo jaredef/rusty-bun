@@ -921,6 +921,11 @@ impl Runtime {
                     };
                     let is_arrow = matches!(op, Op::MakeArrow);
                     let proto_rc = Rc::new(*proto);
+                    // Tier-Ω.5.sss: arrow inherits `this` from current
+                    // frame. Capture at MakeArrow time so the arrow's
+                    // call_function ignores its receiver argument and
+                    // uses this captured value instead.
+                    let bound_this = if is_arrow { Some(frame.this_value.clone()) } else { None };
                     let closure = Object {
                         proto: None,
                         extensible: true,
@@ -929,6 +934,7 @@ impl Runtime {
                             proto: proto_rc,
                             upvalues: Vec::new(),
                             is_arrow,
+                            bound_this,
                         }),
                     };
                     let id = self.alloc_object(closure);
@@ -1079,7 +1085,16 @@ impl Runtime {
         let (proto_opt, native_opt, effective_this, effective_args) = {
             let o = self.obj(id);
             match &o.internal_kind {
-                crate::value::InternalKind::Closure(c) => (Some(c.proto.clone()), None, this, args),
+                crate::value::InternalKind::Closure(c) => {
+                    // Tier-Ω.5.sss: arrow functions use their captured
+                    // bound_this (set at MakeArrow time) regardless of
+                    // the receiver argument. Regular closures use the
+                    // passed receiver.
+                    let actual_this = if c.is_arrow {
+                        c.bound_this.clone().unwrap_or(Value::Undefined)
+                    } else { this };
+                    (Some(c.proto.clone()), None, actual_this, args)
+                }
                 crate::value::InternalKind::Function(f) => (None, Some(f.native.clone()), this, args),
                 crate::value::InternalKind::BoundFunction(b) => {
                     // One level of unwrap is sufficient for v1; nested

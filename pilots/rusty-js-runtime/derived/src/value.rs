@@ -391,6 +391,11 @@ pub struct ClosureInternals {
     /// that captured the same binding.
     pub upvalues: Vec<UpvalueCell>,
     pub is_arrow: bool,
+    /// Tier-Ω.5.sss: lexically captured `this` at arrow-creation site.
+    /// Arrow functions inherit `this` from the enclosing scope per
+    /// ECMA-262 §10.2.1.4; call_function ignores the receiver argument
+    /// for arrows and substitutes this value.
+    pub bound_this: Option<Value>,
 }
 
 /// Native function (intrinsic) backed by a Rust callback.

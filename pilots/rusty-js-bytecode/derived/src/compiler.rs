@@ -1755,7 +1755,7 @@ impl Compiler {
                 let is_method = matches!(callee.as_ref(), Expr::Member { .. });
                 let has_spread = Self::args_has_spread(arguments);
                 if is_method {
-                    if let Expr::Member { object, property, optional: _, .. } = callee.as_ref() {
+                    if let Expr::Member { object, property, optional: mem_optional, .. } = callee.as_ref() {
                         if has_spread {
                             // Tier-Ω.5.k: lower `obj.f(...args)` as
                             //   __apply(method, receiver, argsArray)
@@ -1798,6 +1798,22 @@ impl Compiler {
                             // Push receiver, then method (looked up via GetProp /
                             // GetIndex), then args, then CallMethod n.
                             self.compile_expr(object)?;
+                            // Tier-Ω.5.rr: optional-chain method call `obj?.m(...)`.
+                            // If obj is null/undefined, short-circuit the entire
+                            // call expression to undefined. The receiver is
+                            // already on the stack; check it, branch to a sink
+                            // that pops + pushes undef + skips past CallMethod.
+                            let opt_sinks: Vec<usize> = if *mem_optional {
+                                encode_op(&mut self.bytecode, Op::Dup);
+                                encode_op(&mut self.bytecode, Op::PushUndef);
+                                encode_op(&mut self.bytecode, Op::StrictEq);
+                                let s1 = self.emit_jump(Op::JumpIfTrue);
+                                encode_op(&mut self.bytecode, Op::Dup);
+                                encode_op(&mut self.bytecode, Op::PushNull);
+                                encode_op(&mut self.bytecode, Op::StrictEq);
+                                let s2 = self.emit_jump(Op::JumpIfTrue);
+                                vec![s1, s2]
+                            } else { Vec::new() };
                             // Duplicate receiver so we can use it for the method
                             // lookup without losing it for the CallMethod consumer.
                             encode_op(&mut self.bytecode, Op::Dup);
@@ -1826,6 +1842,16 @@ impl Compiler {
                             }
                             encode_op(&mut self.bytecode, Op::CallMethod);
                             encode_u8(&mut self.bytecode, n as u8);
+                            if !opt_sinks.is_empty() {
+                                let done = self.emit_jump(Op::Jump);
+                                for s in opt_sinks { self.patch_jump_at(s); }
+                                // Short-circuit landing: pop the leftover
+                                // receiver (still on stack from initial push),
+                                // push undefined as the call's result.
+                                encode_op(&mut self.bytecode, Op::Pop);
+                                encode_op(&mut self.bytecode, Op::PushUndef);
+                                self.patch_jump_at(done);
+                            }
                         }
                     }
                 } else if has_spread {

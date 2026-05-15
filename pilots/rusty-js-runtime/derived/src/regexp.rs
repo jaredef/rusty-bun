@@ -86,6 +86,13 @@ impl Runtime {
             Ok(Value::Object(new_regexp(rt, &pattern, &flags)?))
         });
 
+        // Tier-Ω.5.wwww: expose RegExp.prototype so libs that capture
+        // RegExp.prototype.toString at module init (yup, validator, …)
+        // see a real function rather than undefined.
+        if let Some(Value::Object(ctor_id)) = self.globals.get("RegExp").cloned() {
+            self.object_set(ctor_id, "prototype".into(), Value::Object(proto));
+        }
+
         install_string_regex_methods(self);
     }
 }

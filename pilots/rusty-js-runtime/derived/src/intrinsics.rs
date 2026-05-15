@@ -1848,6 +1848,20 @@ impl Runtime {
                 _ => Ok(Value::Undefined),
             }
         });
+        // Tier-Ω.5.wwww: Symbol.prototype with a toString that returns the
+        // description. yup captures Symbol.prototype.toString at module init.
+        let sym_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, sym_proto, "toString", |rt, _args| {
+            match rt.current_this() {
+                Value::String(s) if s.starts_with("@@sym:") => {
+                    let body = s.strip_prefix("@@sym:").unwrap_or(&s);
+                    let desc = body.split_once(':').map(|(_, d)| d).unwrap_or(body);
+                    Ok(Value::String(Rc::new(format!("Symbol({})", desc))))
+                }
+                v => Ok(Value::String(Rc::new(crate::abstract_ops::to_string(&v).as_str().to_string()))),
+            }
+        });
+        self.object_set(sym, "prototype".into(), Value::Object(sym_proto));
         self.globals.insert("Symbol".into(), Value::Object(sym));
     }
 

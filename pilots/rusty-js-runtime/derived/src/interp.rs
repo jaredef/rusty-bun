@@ -763,9 +763,22 @@ impl Runtime {
                             } else { Value::Undefined }
                         }
                         Value::Undefined | Value::Null => {
+                            // Tier-Ω.5.uuu: enrich the fault with the
+                            // last LoadLocal/GetProp hint. Doc 723's
+                            // threshold-of-diagnostic-semanticity finding
+                            // (2026-05-15) named that single-tag faults
+                            // are below-threshold for Layer-D bisect.
+                            // Adding the source-side name of the value
+                            // that resolved to undefined raises the
+                            // signal level — `(receiver='X')` tags the
+                            // local whose load preceded this access.
+                            let receiver_hint = frame.last_property_lookup.clone()
+                                .map(|s| format!(" (receiver='{}')", s))
+                                .unwrap_or_default();
                             return Err(RuntimeError::TypeError(
-                                format!("Cannot read property '{}' of {}", key,
-                                    if matches!(obj_v, Value::Undefined) { "undefined" } else { "null" })
+                                format!("Cannot read property '{}' of {}{}", key,
+                                    if matches!(obj_v, Value::Undefined) { "undefined" } else { "null" },
+                                    receiver_hint)
                             ));
                         }
                         _ => Value::Undefined,

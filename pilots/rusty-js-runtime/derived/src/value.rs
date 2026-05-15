@@ -181,6 +181,8 @@ impl Object {
             writable: true,
             enumerable: true,
             configurable: true,
+            getter: None,
+            setter: None,
         });
     }
 }
@@ -191,6 +193,13 @@ pub struct PropertyDescriptor {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
+    /// Tier-Ω.5.nnn: accessor-descriptor support. If `getter` is Some(fn),
+    /// reads of this property invoke the getter with `this` = the
+    /// receiver object. If `setter` is Some(fn), writes invoke it.
+    /// When both are None, this is a data property and `value` is the
+    /// stored value (existing semantics).
+    pub getter: Option<Value>,
+    pub setter: Option<Value>,
 }
 
 #[derive(Debug)]

@@ -500,7 +500,7 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
         value: Value::Object(fn_id),
         writable: true,
         enumerable: false,
-        configurable: true,
+        configurable: true, getter: None, setter: None,
     });
 }
 

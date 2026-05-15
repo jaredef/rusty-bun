@@ -582,8 +582,24 @@ impl Runtime {
                 Value::Object(id) => id,
                 _ => return Err(RuntimeError::TypeError("Object.defineProperty: descriptor must be an object".into())),
             };
-            let value = rt.object_get(desc_id, "value");
-            rt.object_set(target, key, value);
+            // Tier-Ω.5.nnn: accessor-descriptor support. If the descriptor
+            // has a `get` or `set` function, store as accessor; else
+            // treat as data descriptor (existing semantics).
+            let getter = rt.object_get(desc_id, "get");
+            let setter = rt.object_get(desc_id, "set");
+            let has_getter = matches!(&getter, Value::Object(_));
+            let has_setter = matches!(&setter, Value::Object(_));
+            if has_getter || has_setter {
+                rt.obj_mut(target).properties.insert(key, crate::value::PropertyDescriptor {
+                    value: Value::Undefined,
+                    writable: false, enumerable: true, configurable: true,
+                    getter: if has_getter { Some(getter) } else { None },
+                    setter: if has_setter { Some(setter) } else { None },
+                });
+            } else {
+                let value = rt.object_get(desc_id, "value");
+                rt.object_set(target, key, value);
+            }
             Ok(Value::Object(target))
         });
         register_method(self, obj_ctor, "defineProperties", |rt, args| {
@@ -605,8 +621,21 @@ impl Runtime {
             };
             for (k, dv) in entries {
                 if let Value::Object(did) = dv {
-                    let value = rt.object_get(did, "value");
-                    rt.object_set(target, k, value);
+                    let getter = rt.object_get(did, "get");
+                    let setter = rt.object_get(did, "set");
+                    let has_getter = matches!(&getter, Value::Object(_));
+                    let has_setter = matches!(&setter, Value::Object(_));
+                    if has_getter || has_setter {
+                        rt.obj_mut(target).properties.insert(k, crate::value::PropertyDescriptor {
+                            value: Value::Undefined,
+                            writable: false, enumerable: true, configurable: true,
+                            getter: if has_getter { Some(getter) } else { None },
+                            setter: if has_setter { Some(setter) } else { None },
+                        });
+                    } else {
+                        let value = rt.object_get(did, "value");
+                        rt.object_set(target, k, value);
+                    }
                 }
             }
             Ok(Value::Object(target))

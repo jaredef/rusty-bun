@@ -83,10 +83,10 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
 pub fn iter_result_value(rt: &mut Runtime, v: Value) -> Value {
     let id = rt.alloc_object(Object::new_ordinary());
     rt.obj_mut(id).properties.insert("value".into(), PropertyDescriptor {
-        value: v, writable: true, enumerable: true, configurable: true,
+        value: v, writable: true, enumerable: true, configurable: true, getter: None, setter: None,
     });
     rt.obj_mut(id).properties.insert("done".into(), PropertyDescriptor {
-        value: Value::Boolean(false), writable: true, enumerable: true, configurable: true,
+        value: Value::Boolean(false), writable: true, enumerable: true, configurable: true, getter: None, setter: None,
     });
     Value::Object(id)
 }
@@ -95,10 +95,10 @@ pub fn iter_result_value(rt: &mut Runtime, v: Value) -> Value {
 pub fn iter_result_done(rt: &mut Runtime) -> Value {
     let id = rt.alloc_object(Object::new_ordinary());
     rt.obj_mut(id).properties.insert("value".into(), PropertyDescriptor {
-        value: Value::Undefined, writable: true, enumerable: true, configurable: true,
+        value: Value::Undefined, writable: true, enumerable: true, configurable: true, getter: None, setter: None,
     });
     rt.obj_mut(id).properties.insert("done".into(), PropertyDescriptor {
-        value: Value::Boolean(true), writable: true, enumerable: true, configurable: true,
+        value: Value::Boolean(true), writable: true, enumerable: true, configurable: true, getter: None, setter: None,
     });
     Value::Object(id)
 }

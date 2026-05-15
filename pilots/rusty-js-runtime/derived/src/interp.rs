@@ -203,6 +203,34 @@ impl Runtime {
     /// numeric-indexed own property + 1 (own-only, prototype walk skipped
     /// for this synthetic key). Matches the spec semantics close enough
     /// for the v1 surface without maintaining a separate length slot.
+    /// Tier-Ω.5.nnn: walk the prototype chain looking for an accessor
+    /// getter at `key`. Returns the getter function (Value::Object) if
+    /// found, None for data properties or no-property.
+    pub fn find_getter(&self, id: ObjectRef, key: &str) -> Option<Value> {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let o = self.obj(c);
+            if let Some(d) = o.properties.get(key) {
+                return d.getter.clone();
+            }
+            cur = o.proto;
+        }
+        None
+    }
+    /// Tier-Ω.5.nnn: walk the prototype chain looking for an accessor
+    /// setter at `key`. Returns the setter function if found.
+    pub fn find_setter(&self, id: ObjectRef, key: &str) -> Option<Value> {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let o = self.obj(c);
+            if let Some(d) = o.properties.get(key) {
+                return d.setter.clone();
+            }
+            cur = o.proto;
+        }
+        None
+    }
+
     pub fn object_get(&self, id: ObjectRef, key: &str) -> Value {
         if key == "length" {
             let o = self.obj(id);
@@ -693,8 +721,17 @@ impl Runtime {
                     frame.pc += 2;
                     let key = self.constant_name(frame, idx)?;
                     let obj_v = frame.pop()?;
+                    // Tier-Ω.5.nnn: invoke accessor getter if present along
+                    // the prototype chain. Captures the getter function +
+                    // receiver before calling so re-entrant access works.
                     let v = match &obj_v {
-                        Value::Object(id) => self.object_get(*id, &key),
+                        Value::Object(id) => {
+                            let getter = self.find_getter(*id, &key);
+                            match getter {
+                                Some(g) => self.call_function(g, obj_v.clone(), Vec::new())?,
+                                None => self.object_get(*id, &key),
+                            }
+                        }
                         Value::String(s) if key == "length" => Value::Number(s.chars().count() as f64),
                         Value::String(_) => {
                             // Primitive string method auto-boxing: route to

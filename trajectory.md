@@ -1024,3 +1024,33 @@ Discipline against decoration: if a session skips this protocol and re-derives s
 3. **Different corpus basket** — current basket curated against a specific usage pattern; a different basket (e.g., narrowly framework-focused, or specifically TypeScript-compiled-output-focused) would surface different alphabet tops and different protocol-applications.
 
 **On resume:** read this anchor first. The protocol-driven phase is paused, not abandoned. Forward work picks up by selecting one of the three extensions above (or a fourth the keeper articulates). The state of the working code, the inventory, and the methodology persists; the trajectory's per-round table records what was built; this anchor records why we paused and what comes next if work resumes.
+
+---
+
+## RESUME VECTOR EXTENSION — 2026-05-15 (route-1 substrate batch + route-2 pivot)
+
+**Route-1 substrate batch (Ω.5.qq → Ω.5.eee, eleven moves):** forward-ref hoist in module scope (.qq); optional-chain method call short-circuit (.rr); JSON module imports + smarter package.json `type` scan (.ss + .tt); CoverInitializedName + async method shorthand in object literals (.uu + .vv); tagged-template literals + String.raw (.ww); function/class as primary-expression position (.yy); two-phase module hoisting (.zz); three-phase top-level binding pre-allocation (.aaa); Buffer.prototype (.bbb); Function('return this') stub (.ccc); util.promisify passthrough (.ddd); atob/btoa globals (.eee).
+
+**Shape-probe parity trajectory:** 50 → 62/118 across the eleven moves (twelve terminal flips — unified, p-limit, valibot, camelcase, moment, loglevel, ts-pattern, dayjs, micromark, acorn, decimal.js, marked). Crossed 50% parity-of-entry-resolved (52.5%). The last four moves landed substrate without flipping terminals — chain-recursion per Doc 721 §VI.5 dominates the residual.
+
+**Route-2 pivot:** keeper directed pivot to route-2 (different evaluation probe — exercise namespace values rather than `Object.keys` shape). Probe artifact at `host/tools/route2-value-probe.sh` carries 24 hand-curated value-tests for well-known exports of currently-shape-passing packages.
+
+**Route-2 first reading (n=24):**
+- 8 pass real value-exercise: defu, commander, mitt, bignumber.js, kleur, deepmerge, picocolors, colorette.
+- 1 BAD (semantic-wrong): uuid returns the all-zeros UUID `00000000-...-000000000000`, indicating crypto.getRandomValues is a no-op rather than filling buffer.
+- 15 ERR (throws under exercise): ansi-colors, pluralize, object-hash, ufo, p-defer, micromatch, nanoid, change-case, remeda, dequal, rfdc, picomatch, ulid, minimatch, pathe.
+
+**Real-value pass rate on sample: 33%.** Extrapolating from this slice, shape-probe parity of 62/118 substantially overstates real parity. Sample is biased toward packages with well-known typical use; full sweep would be more rigorous.
+
+**Substrate gaps surfaced by route-2 (not visible at shape level):**
+1. **Regex engine narrowness** (3 packages: micromatch, picomatch, pathe): rejects negative-lookahead `(?!...)`, lookahead `(?=...)`, certain bracket-alternation. Rust's `regex` crate doesn't support lookaround; lift requires `fancy-regex` or hand-rolling.
+2. **node:crypto stubs** (ulid, uuid-semantic): `randomBytes` is stubbed-to-throw; `getRandomValues` is no-op rather than filling.
+3. **Class-as-callable** (rfdc, p-defer, change-case, dequal): factory-style exports produce `callee is not callable: Object(kind=ordinary)`. Class-construction path leaves the instance not recognized as callable.
+4. **Buffer.allocUnsafe + subarray** (nanoid): Buffer stub missing these.
+
+**Route-2 finding:** the shape-probe measures **module-load reachability**; the value-probe measures **call-time correctness**. The engagement's telos (byte-identical output against Bun) actually wants the latter; the shape-probe was a proxy that route-1 saturated against.
+
+**Three legitimate route-2 continuations:**
+1. Expand the value-probe corpus to all 62 shape-passers for a full real-value parity reading.
+2. Lift the regex-engine narrowness (largest shared gap; would cascade through glob/path packages).
+3. Wire real crypto entropy (small; lifts ulid + corrects uuid semantics).

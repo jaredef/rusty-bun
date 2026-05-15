@@ -228,6 +228,61 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         rt.object_set(out, "length".into(), Value::Number(j as f64));
         Ok(Value::Object(out))
     });
+    // Tier-Ω.5.xxx: Array.prototype.splice per ECMA-262 §23.1.3.31.
+    // Removes deleteCount elements starting at start, optionally
+    // inserting items in their place. Returns the removed elements.
+    // object-hash uses splice on its internal stream buffer.
+    register_method(rt, host, "splice", |rt, args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.splice: this is not an Array".into())),
+        };
+        let len = rt.array_length(id) as i64;
+        let start_arg = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as i64;
+        let start = clamp_index(start_arg, len);
+        let delete_count = match args.get(1) {
+            Some(v) => (abstract_ops::to_number(v) as i64).max(0).min(len - start),
+            None => len - start,
+        };
+        let items: Vec<Value> = args.iter().skip(2).cloned().collect();
+        // Collect removed slice into a new array.
+        let removed = rt.alloc_object(Object::new_array());
+        for j in 0..delete_count {
+            let v = rt.object_get(id, &(start + j).to_string());
+            rt.object_set(removed, j.to_string(), v);
+        }
+        rt.object_set(removed, "length".into(), Value::Number(delete_count as f64));
+        // Shift tail by (items.len() - delete_count).
+        let new_len = len - delete_count + items.len() as i64;
+        let shift = items.len() as i64 - delete_count;
+        if shift > 0 {
+            // Move tail right (iterate from end).
+            let mut i = len - 1;
+            while i >= start + delete_count {
+                let v = rt.object_get(id, &i.to_string());
+                rt.object_set(id, (i + shift).to_string(), v);
+                i -= 1;
+            }
+        } else if shift < 0 {
+            // Move tail left.
+            let mut i = start + delete_count;
+            while i < len {
+                let v = rt.object_get(id, &i.to_string());
+                rt.object_set(id, (i + shift).to_string(), v);
+                i += 1;
+            }
+            // Remove trailing slots.
+            for i in new_len..len {
+                rt.obj_mut(id).properties.remove(&i.to_string());
+            }
+        }
+        // Insert items.
+        for (k, v) in items.into_iter().enumerate() {
+            rt.object_set(id, (start + k as i64).to_string(), v);
+        }
+        rt.object_set(id, "length".into(), Value::Number(new_len as f64));
+        Ok(Value::Object(removed))
+    });
     register_method(rt, host, "concat", |rt, args| {
         let id = match rt.current_this() {
             Value::Object(id) => id,

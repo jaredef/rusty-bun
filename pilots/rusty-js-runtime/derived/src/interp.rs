@@ -769,14 +769,20 @@ impl Runtime {
                     let target_v = frame.pop()?;
                     let target_id = match target_v {
                         Value::Object(id) => id,
-                        _ => return Err(RuntimeError::TypeError(
-                            "SetPrototype: target is not an object".into())),
+                        // Tier-Ω.5.ll: lenient — non-object target is a
+                        // no-op rather than a throw. Packages doing
+                        // duck-type-guarded setPrototypeOf rely on this.
+                        _ => continue,
                     };
                     let new_proto = match proto_v {
                         Value::Object(id) => Some(id),
                         Value::Null => None,
-                        _ => return Err(RuntimeError::TypeError(
-                            "SetPrototype: proto must be Object or Null".into())),
+                        // Tier-Ω.5.ll: lenient — undefined / primitive proto
+                        // treated as "leave target's prototype unchanged"
+                        // (matches the dominant package idiom where
+                        // `class B extends X` with X undefined wants
+                        // class-without-parent rather than crash).
+                        _ => { let _ = target_id; continue; }
                     };
                     self.obj_mut(target_id).proto = new_proto;
                 }
@@ -872,6 +878,18 @@ impl Runtime {
                         }),
                     };
                     let id = self.alloc_object(closure);
+                    // Tier-Ω.5.ll: auto-create .prototype on non-arrow
+                    // functions per ECMA-262 §10.2.5 (regular functions
+                    // have [[ConstructorKind]]: Base). chalk + many other
+                    // packages rely on `function F() {}; F.prototype.X = ...`
+                    // — without auto-creation, F.prototype is undefined.
+                    // Arrow functions correctly do not get .prototype.
+                    if !is_arrow {
+                        let mut proto_obj = Object::new_ordinary();
+                        proto_obj.set_own("constructor".into(), Value::Object(id));
+                        let proto_id = self.alloc_object(proto_obj);
+                        self.object_set(id, "prototype".into(), Value::Object(proto_id));
+                    }
                     frame.push(Value::Object(id));
                 }
 

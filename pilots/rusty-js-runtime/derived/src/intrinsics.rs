@@ -810,6 +810,26 @@ impl Runtime {
         });
         let b_id = self.alloc_object(b_obj);
         self.globals.insert("Boolean".into(), Value::Object(b_id));
+        // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
+        let bi_obj = make_native("BigInt", |_rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            match v {
+                Value::BigInt(s) => Ok(Value::BigInt(s)),
+                Value::Number(n) => Ok(Value::BigInt(std::rc::Rc::new(format!("{}", n as i64)))),
+                Value::String(s) => {
+                    let trimmed = s.trim();
+                    Ok(Value::BigInt(std::rc::Rc::new(trimmed.to_string())))
+                }
+                Value::Boolean(b) => Ok(Value::BigInt(std::rc::Rc::new(if b { "1".into() } else { "0".into() }))),
+                _ => Err(RuntimeError::Thrown(Value::String(std::rc::Rc::new(
+                    "TypeError: Cannot convert to BigInt".into()
+                )))),
+            }
+        });
+        let bi_id = self.alloc_object(bi_obj);
+        register_method(self, bi_id, "asIntN", |_rt, args| Ok(args.get(1).cloned().unwrap_or(Value::Undefined)));
+        register_method(self, bi_id, "asUintN", |_rt, args| Ok(args.get(1).cloned().unwrap_or(Value::Undefined)));
+        self.globals.insert("BigInt".into(), Value::Object(bi_id));
         self.install_error_globals();
         self.install_reflect();
         self.install_map_set_globals();

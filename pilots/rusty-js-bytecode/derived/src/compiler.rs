@@ -356,6 +356,45 @@ impl Compiler {
             }
         }
 
+        // Phase A.6 (Tier-Ω.5.qq): pre-allocate slots for top-level
+        // let/const/var bindings (including those under `export`). Without
+        // this, an arrow defined earlier that references a later top-level
+        // const captures it as a free name rather than a local upvalue, so
+        // the call observes undefined. arktype's @ark/util/strings.js
+        // depends on this (anchoredRegex references anchoredSource declared
+        // two lines below).
+        for item in &m.body {
+            match item {
+                ModuleItem::Statement(Stmt::Variable(v)) => {
+                    for d in &v.declarators {
+                        if let rusty_js_ast::BindingPattern::Identifier(id) = &d.target {
+                            if !self.pre_allocated_slots.contains_key(&id.name) && self.resolve_local(&id.name).is_none() {
+                                let slot = self.alloc_local(LocalDescriptor {
+                                    name: id.name.clone(), kind: v.kind, depth: 0,
+                                });
+                                self.pre_allocated_slots.insert(id.name.clone(), slot);
+                            }
+                        }
+                    }
+                }
+                ModuleItem::Export(ExportDeclaration::Declaration { decl_stmt: Some(stmt), .. }) => {
+                    if let Stmt::Variable(v) = stmt.as_ref() {
+                        for d in &v.declarators {
+                            if let rusty_js_ast::BindingPattern::Identifier(id) = &d.target {
+                                if !self.pre_allocated_slots.contains_key(&id.name) && self.resolve_local(&id.name).is_none() {
+                                    let slot = self.alloc_local(LocalDescriptor {
+                                        name: id.name.clone(), kind: v.kind, depth: 0,
+                                    });
+                                    self.pre_allocated_slots.insert(id.name.clone(), slot);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Phase B: walk the body in order. Imports already lowered.
         // Statements compile normally. Exports are recorded for phase C
         // (default-export expressions are lowered inline into a synthetic

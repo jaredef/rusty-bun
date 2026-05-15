@@ -83,7 +83,22 @@ pub fn detect_module_kind(resolved_url: &str) -> ModuleKind {
         "mjs" => ModuleKind::ESM,
         "cjs" => ModuleKind::CJS,
         _ => {
-            // .js or unknown — walk up to find the nearest package.json.
+            // .js or unknown.
+            //
+            // Tier-Ω.5.hh: source-sniff for ESM markers BEFORE the
+            // package.json walk. Many `.js` files in the parity corpus are
+            // ESM-shape (top-level `import`/`export`) but live under a
+            // package.json with no `"type":"module"` (or with `"type":
+            // "commonjs"` from a transitive dep's package layout). Per the
+            // top-of-alphabet conjecture (Doc 714 §VI Consequence 11) +
+            // cross-pipeline diagnostic (Doc 720): the kind-detection
+            // alphabet's top is the actual ESM-marker presence, not the
+            // package.json type field. Closes the 9-package
+            // "expected '(' after import" cluster in cjs-wrapper parse.
+            if let Ok(head) = read_source_head(path, 4096) {
+                if source_has_esm_markers(&head) { return ModuleKind::ESM; }
+            }
+            // Fall back to the package.json walk.
             let mut cur = path.parent();
             while let Some(d) = cur {
                 let candidate = d.join("package.json");
@@ -105,6 +120,58 @@ pub fn detect_module_kind(resolved_url: &str) -> ModuleKind {
             ModuleKind::CJS
         }
     }
+}
+
+/// Tier-Ω.5.hh: read the first `n` bytes of `path` for ESM-marker sniffing.
+fn read_source_head(path: &std::path::Path, n: usize) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; n];
+    let read = f.read(&mut buf)?;
+    buf.truncate(read);
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+/// Tier-Ω.5.hh: sniff for ESM markers — top-level `import` or `export`
+/// keywords outside strings/comments. v1 heuristic: line-start match
+/// after skipping leading whitespace + a small set of common shebang /
+/// "use strict" / block-comment prefixes. False positives (`import` in
+/// a string at line start) are tolerable for the parity-corpus shape;
+/// false negatives (ESM file with import not at line start) are rare.
+fn source_has_esm_markers(text: &str) -> bool {
+    // Strip a leading shebang line if present.
+    let mut t = text;
+    if t.starts_with("#!") {
+        if let Some(nl) = t.find('\n') { t = &t[nl+1..]; }
+    }
+    // Look for line-start `import` or `export` keywords with a word
+    // boundary after (to avoid matching `importFoo`). Allow leading
+    // whitespace per line.
+    for line in t.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("import") {
+            let rest = &trimmed[6..];
+            if rest.is_empty() { return true; }
+            let c = rest.chars().next().unwrap();
+            // `import` keyword: next char is space, '{', '*', '"', '\''.
+            if c.is_whitespace() || c == '{' || c == '*' || c == '"' || c == '\'' || c == '(' {
+                // Reject `import(` only if it's specifically dynamic
+                // import at expression position. At line-start that's
+                // less common; for the kind-sniff we'd accept it but
+                // be conservative — `import(` alone doesn't imply ESM.
+                if c != '(' { return true; }
+            }
+        }
+        if trimmed.starts_with("export") {
+            let rest = &trimmed[6..];
+            if rest.is_empty() { return true; }
+            let c = rest.chars().next().unwrap();
+            if c.is_whitespace() || c == '{' || c == '*' || c == '"' || c == '\'' {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Minimal `"type"` field scan over package.json text. Returns

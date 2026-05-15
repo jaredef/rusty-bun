@@ -469,8 +469,34 @@ impl<'src> Parser<'src> {
                             }
                             return Err(self.err_here("expected `meta` after `import.`".into()));
                         }
-                        // dynamic import(...) — opaque for v1
-                        self.opaque_until_top_terminator()
+                        // Tier-Ω.5.ff: dynamic `import(specifier)` lowered
+                        // as a synthesized call to a global `__dynamic_import`
+                        // helper. v1 deviation: the helper is a stub that
+                        // throws on actual invocation; static-side compile
+                        // succeeds so packages whose dynamic-import is inside
+                        // conditional branches (never driven during shape
+                        // probe) pass without erroring at compile time.
+                        self.bump()?; // consume `import`
+                        if !matches!(self.current_kind(), TokenKind::Punct(Punct::LParen)) {
+                            return Err(self.err_here("expected '(' after `import`".into()));
+                        }
+                        self.bump()?; // consume '('
+                        let arg = self.parse_assignment_expression()?;
+                        if !matches!(self.current_kind(), TokenKind::Punct(Punct::RParen)) {
+                            return Err(self.err_here("expected ')' in dynamic import()".into()));
+                        }
+                        let end = self.lookahead_span().end;
+                        self.bump()?; // consume ')'
+                        let span = Span::new(span.start, end);
+                        Ok(Expr::Call {
+                            callee: Box::new(Expr::Identifier {
+                                name: "__dynamic_import".into(),
+                                span,
+                            }),
+                            arguments: vec![rusty_js_ast::Argument::Expr(arg)],
+                            optional: false,
+                            span,
+                        })
                     }
                     _ => { self.bump()?; Ok(Expr::Identifier { name, span }) }
                 }

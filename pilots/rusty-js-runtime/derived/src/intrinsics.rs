@@ -35,6 +35,12 @@ impl Runtime {
         self.install_test_record();
         self.install_destructure_helpers();
         self.install_spread_helpers();
+        // Tier-Ω.5.ff: dynamic import stub.
+        register_global_fn(self, "__dynamic_import", |_rt, _args| {
+            Err(RuntimeError::Thrown(Value::String(Rc::new(
+                "TypeError: dynamic import() not yet supported (Tier-Ω.5.ff stub)".into()
+            ))))
+        });
         self.install_global_this();
     }
 

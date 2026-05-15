@@ -91,6 +91,60 @@ export { sibling };'
 # F51: simple runner — instantiate class and read field
 FEATURE_RUNNER[run_construct]='const inst = new C("x");
 console.log("v:", inst.v);'
+# F52: runner via TOP-LEVEL ARROW that itself constructs the class
+# (matches minimatch's `export const minimatch = (...) => new
+# Minimatch(...)` pattern — calling INTO an arrow that internally
+# constructs the class).
+FEATURE_RUNNER[run_via_arrow]='const inst = entry("x", "pat");
+console.log("v:", inst);'
+
+# F61: pre-class module-level arrow that references the class
+# (matching minimatch's `export const makeRe = (p, opts = {}) =>
+# new Minimatch(p, opts).makeRe();` BEFORE class Minimatch declared).
+FEATURE_MODULE_CONST[mod_arrow_refs_class]='const helper = (p, opts = {}) => "h:" + p;
+const entry = (p, pattern, opts = {}) => new C(p, opts).v;'
+# F62: also includes property writes onto the arrow AFTER class
+# (minimatch.AST = AST style)
+FEATURE_CLASS_POST[arrow_prop_writes_after_class]='entry.theClass = C;
+entry.helper = helper;
+export { entry };'
+# F63: TWO module-level arrows where the second references the class
+FEATURE_MODULE_CONST[two_mod_arrows]='const helper = (p, opts = {}) => "h:" + p + JSON.stringify(opts);
+const sibling = (p, opts = {}) => helper(p, opts);
+const entry = (p, pattern, opts = {}) => new C(p, opts).v;'
+
+# F71: class method that uses Set + spread (matching minimatch's
+# `[...new Set(this.braceExpand())]`)
+FEATURE_CLASS_METHODS[helper_set_spread]='    constructor(p, opts = {}) { this.p = p; this.opts = opts; this.make(); }
+    make() { this.globSet = [...new Set(this.helper_method())]; this.v = this.globSet[0]; }
+    helper_method() { return [helper(this.p, this.opts)]; }'
+
+# F81: class with TEN methods (broader surface, more upvalues per class
+# build — closer to minimatch which has many)
+FEATURE_CLASS_METHODS[ctor_ten_methods]='    constructor(p, opts = {}) { this.p = p; this.opts = opts; this.make(); }
+    make() { this.v = this.helper_method(); }
+    helper_method() { return helper(this.p, this.opts); }
+    m3() { return helper("m3", {}); }
+    m4() { return helper("m4", {}); }
+    m5() { return helper("m5", {}); }
+    m6() { return helper("m6", {}); }
+    m7() { return helper("m7", {}); }
+    m8() { return helper("m8", {}); }
+    m9() { return helper("m9", {}); }
+    m10() { return helper("m10", {}); }'
+
+# F91: class with field initializers (`= value`) not just declarations
+FEATURE_CLASS_FIELDS[fields_with_init]='    a = null;
+    b = 0;
+    c = "";
+    d = [];
+    e = {};
+    constructor_only_marker;'
+
+# F92: nullish coalescing in field defaults
+FEATURE_CLASS_FIELDS[fields_nullish]='    options = null;
+    set = [];
+    pattern = "";'
 
 # ───────────────────── emitter ─────────────────────
 emit_probe() {
@@ -157,6 +211,17 @@ bisect_for_fault() {
         "mod_const_arrow_default,fields_3,ctor_heavy_then_make,run_construct"
         "mod_const_arrow_default,fields_18,ctor_heavy_then_make,run_construct"
         "mod_const_arrow_default,fields_18,helper_two_args,assign_to_arrow_after,run_construct"
+        # Newer named features (post-first-bisect)
+        "mod_arrow_refs_class,fields_0,helper_two_args,run_via_arrow"
+        "mod_arrow_refs_class,fields_18,helper_two_args,run_via_arrow"
+        "mod_arrow_refs_class,fields_18,helper_set_spread,run_via_arrow"
+        "mod_arrow_refs_class,fields_18,helper_set_spread,arrow_prop_writes_after_class,run_via_arrow"
+        "two_mod_arrows,fields_18,helper_two_args,run_via_arrow"
+        "two_mod_arrows,fields_18,helper_set_spread,run_via_arrow"
+        "two_mod_arrows,fields_18,helper_set_spread,arrow_prop_writes_after_class,run_via_arrow"
+        "two_mod_arrows,fields_with_init,helper_set_spread,arrow_prop_writes_after_class,run_via_arrow"
+        "two_mod_arrows,fields_18,ctor_ten_methods,arrow_prop_writes_after_class,run_via_arrow"
+        "two_mod_arrows,fields_nullish,ctor_ten_methods,arrow_prop_writes_after_class,run_via_arrow"
     )
     for fs in "${feature_sets[@]}"; do
         local out="$OUT_DIR/$(echo "$fs" | tr ',' '_').mjs"

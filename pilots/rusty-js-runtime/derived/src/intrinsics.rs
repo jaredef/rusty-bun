@@ -1227,15 +1227,41 @@ impl Runtime {
                 }
                 Ok(Value::Undefined)
             });
+            // Tier-Ω.5.rrr: @@iterator returns a values-iterator. Per
+            // spec Set.prototype[Symbol.iterator] === Set.prototype.values.
+            // Required for `[...new Set(arr)]` to spread.
+            register_method(self, proto, "@@iterator", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                make_set_values_iterator(rt, this)
+            });
+            register_method(self, proto, "values", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                make_set_values_iterator(rt, this)
+            });
             let proto_for_ctor = proto;
             let name = (*collection).to_string();
-            let ctor_obj = make_native(&name, move |rt, _args| {
+            let ctor_obj = make_native(&name, move |rt, args| {
                 let mut o = Object::new_ordinary();
                 o.proto = Some(proto_for_ctor);
                 let id = rt.alloc_object(o);
                 let storage = rt.alloc_object(Object::new_ordinary());
                 rt.object_set(id, "__set_data".into(), Value::Object(storage));
                 rt.object_set(id, "size".into(), Value::Number(0.0));
+                // Tier-Ω.5.rrr: populate from iterable arg. Per spec
+                // `new Set(iterable)` calls .add for each yielded value.
+                if let Some(arg) = args.first() {
+                    if let Ok(values) = collect_iterable(rt, arg.clone()) {
+                        let mut size = 0.0_f64;
+                        for v in values {
+                            let key_s = abstract_ops::to_string(&v).as_str().to_string();
+                            if matches!(rt.object_get(storage, &key_s), Value::Undefined) {
+                                rt.object_set(storage, key_s, v);
+                                size += 1.0;
+                            }
+                        }
+                        rt.object_set(id, "size".into(), Value::Number(size));
+                    }
+                }
                 Ok(Value::Object(id))
             });
             let ctor = self.alloc_object(ctor_obj);
@@ -1595,6 +1621,52 @@ impl Runtime {
 
 /// Drain an iterable's @@iterator into a Vec<Value>. Used by
 /// Object.fromEntries / Array.from.
+/// Tier-Ω.5.rrr: build a values-iterator for a Set. The iterator object
+/// snapshots the Set's current values into a private array and exposes a
+/// next() that yields each in turn. Sufficient for `[...new Set(arr)]`
+/// spread.
+pub(crate) fn make_set_values_iterator(rt: &mut Runtime, set_id: crate::value::ObjectRef) -> Result<Value, RuntimeError> {
+    let values: Vec<Value> = match rt.object_get(set_id, "__set_data") {
+        Value::Object(storage) => {
+            rt.obj(storage).properties.values().map(|d| d.value.clone()).collect()
+        }
+        _ => Vec::new(),
+    };
+    // Build an iterator object: { __idx: 0, __vals: [v0,v1,...], next() }
+    let iter = rt.alloc_object(Object::new_ordinary());
+    let vals_arr = rt.alloc_object(Object::new_array());
+    for (i, v) in values.iter().enumerate() {
+        rt.object_set(vals_arr, i.to_string(), v.clone());
+    }
+    rt.object_set(vals_arr, "length".into(), Value::Number(values.len() as f64));
+    rt.object_set(iter, "__vals".into(), Value::Object(vals_arr));
+    rt.object_set(iter, "__idx".into(), Value::Number(0.0));
+    register_method(rt, iter, "next", |rt, _args| {
+        let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+        let idx = match rt.object_get(this, "__idx") {
+            Value::Number(n) => n as usize,
+            _ => 0,
+        };
+        let vals = match rt.object_get(this, "__vals") {
+            Value::Object(id) => id,
+            _ => return Ok(Value::Undefined),
+        };
+        let len = rt.array_length(vals);
+        let result = rt.alloc_object(Object::new_ordinary());
+        if idx >= len {
+            rt.object_set(result, "done".into(), Value::Boolean(true));
+            rt.object_set(result, "value".into(), Value::Undefined);
+        } else {
+            let v = rt.object_get(vals, &idx.to_string());
+            rt.object_set(result, "done".into(), Value::Boolean(false));
+            rt.object_set(result, "value".into(), v);
+            rt.object_set(this, "__idx".into(), Value::Number((idx + 1) as f64));
+        }
+        Ok(Value::Object(result))
+    });
+    Ok(Value::Object(iter))
+}
+
 pub(crate) fn collect_iterable(rt: &mut Runtime, src: Value) -> Result<Vec<Value>, RuntimeError> {
     let id = match src {
         Value::Object(id) => id,

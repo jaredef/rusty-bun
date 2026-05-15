@@ -71,9 +71,14 @@ impl Runtime {
                 }
                 Some(v) => {
                     let p = abstract_ops::to_string(v).as_str().to_string();
-                    let f = abstract_ops::to_string(
-                        &args.get(1).cloned().unwrap_or(Value::Undefined)
-                    ).as_str().to_string();
+                    // Tier-Ω.5.eeee: undefined flags arg → no flags
+                    // (ECMA-262 §22.2.4.1). Earlier we coerced via
+                    // to_string which produced literal "undefined" and
+                    // failed flag validation on each char.
+                    let f = match args.get(1).cloned().unwrap_or(Value::Undefined) {
+                        Value::Undefined | Value::Null => String::new(),
+                        v => abstract_ops::to_string(&v).as_str().to_string(),
+                    };
                     (p, f)
                 }
                 None => (String::new(), String::new()),

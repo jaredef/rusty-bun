@@ -814,7 +814,23 @@ impl Runtime {
                     let obj_v = frame.pop()?;
                     let key = property_key(&key_v);
                     let v = match obj_v {
-                        Value::Object(id) => self.object_get(id, &key),
+                        // Tier-Ω.5.uuuu: dispatch accessor getters from
+                        // computed-key reads. Op::GetProp already did this
+                        // (Ω.5.nnn); Op::GetIndex did not, so non-identifier
+                        // keys ("~standard", "with space") bypassed lazy
+                        // accessors installed via Object.defineProperty.
+                        // zod's defineLazy install on inst["~standard"] is
+                        // the load-bearing case — without this dispatch,
+                        // ZodType.init's Object.assign(inst["~standard"],
+                        // {jsonSchema:...}) got undefined and bailed out
+                        // of every schema-construction path.
+                        Value::Object(id) => {
+                            if let Some(getter) = self.find_getter(id, &key) {
+                                self.call_function(getter, Value::Object(id), Vec::new())?
+                            } else {
+                                self.object_get(id, &key)
+                            }
+                        },
                         Value::String(s) => {
                             if let Ok(i) = key.parse::<usize>() {
                                 s.chars().nth(i)

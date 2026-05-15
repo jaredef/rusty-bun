@@ -3161,12 +3161,12 @@ impl Compiler {
                     // statements; but the method itself parses + compiles
                     // so the surrounding class shape is reachable.
                     let _ = (is_async, is_generator);
-                    let method_key = match m_name {
-                        ClassMemberName::Identifier { name, .. } => name.clone(),
-                        ClassMemberName::String { value, .. } => value.clone(),
+                    let method_key: Option<String> = match m_name {
+                        ClassMemberName::Identifier { name, .. } => Some(name.clone()),
+                        ClassMemberName::String { value, .. } => Some(value.clone()),
                         ClassMemberName::Number { value, .. } => {
-                            if value.fract() == 0.0 { format!("{}", *value as i64) }
-                            else { format!("{}", value) }
+                            Some(if value.fract() == 0.0 { format!("{}", *value as i64) }
+                            else { format!("{}", value) })
                         }
                         ClassMemberName::Private { name, .. } => {
                             // Tier-Ω.5.w: private method names use the same
@@ -3174,12 +3174,9 @@ impl Compiler {
                             // member-access path on Private already reads
                             // via this key (see MemberProperty::Private
                             // compile sites).
-                            format!("#{}", name)
+                            Some(format!("#{}", name))
                         }
-                        ClassMemberName::Computed { .. } => {
-                            return Err(self.err(*m_span,
-                                "computed class member names not yet supported"));
-                        }
+                        ClassMemberName::Computed { .. } => None,
                     };
 
                     // Push class context: not the constructor, so super(...)
@@ -3197,59 +3194,79 @@ impl Compiler {
                     let m_idx = self.constants.intern(Constant::Function(Box::new(m_proto)));
 
                     // Push the target object on the stack first, then the
-                    // method closure, then SetProp.
+                    // method closure, then SetProp / SetIndex.
                     let target_slot = if *is_static { ctor_slot } else { proto_slot };
                     encode_op(&mut self.bytecode, Op::LoadLocal);
                     encode_u16(&mut self.bytecode, target_slot);
-                    encode_op(&mut self.bytecode, Op::MakeClosure);
-                    encode_u16(&mut self.bytecode, m_idx);
-                    emit_captures(&mut self.bytecode, &captures);
-                    let key_idx = self.constants.intern(Constant::String(method_key));
-                    encode_op(&mut self.bytecode, Op::SetProp);
-                    encode_u16(&mut self.bytecode, key_idx);
-                    encode_op(&mut self.bytecode, Op::Pop);
+                    match method_key {
+                        Some(key) => {
+                            encode_op(&mut self.bytecode, Op::MakeClosure);
+                            encode_u16(&mut self.bytecode, m_idx);
+                            emit_captures(&mut self.bytecode, &captures);
+                            let key_idx = self.constants.intern(Constant::String(key));
+                            encode_op(&mut self.bytecode, Op::SetProp);
+                            encode_u16(&mut self.bytecode, key_idx);
+                            encode_op(&mut self.bytecode, Op::Pop);
+                        }
+                        None => {
+                            // Tier-Ω.5.y: computed class method name —
+                            // `class C { [k]() {} }`. SetIndex stack
+                            // convention: [target, key, value] → [value].
+                            if let ClassMemberName::Computed { expr, .. } = m_name {
+                                self.compile_expr(expr)?;
+                            } else { unreachable!(); }
+                            encode_op(&mut self.bytecode, Op::MakeClosure);
+                            encode_u16(&mut self.bytecode, m_idx);
+                            emit_captures(&mut self.bytecode, &captures);
+                            encode_op(&mut self.bytecode, Op::SetIndex);
+                            encode_op(&mut self.bytecode, Op::Pop);
+                        }
+                    }
                 }
-                ClassMember::Field { name: f_name, is_static, init, span: f_span } => {
+                ClassMember::Field { name: f_name, is_static, init, span: _ } => {
                     // Tier-Ω.5.o: instance fields were folded into the
                     // constructor body above. Static fields run once at
                     // class-definition time: lower as `ctor.<key> = init`.
                     if !*is_static { continue; }
                     encode_op(&mut self.bytecode, Op::LoadLocal);
                     encode_u16(&mut self.bytecode, ctor_slot);
-                    match init {
-                        Some(e) => self.compile_expr(e)?,
-                        None => { encode_op(&mut self.bytecode, Op::PushUndef); }
-                    }
-                    match f_name {
+                    let static_key: Option<String> = match f_name {
                         ClassMemberName::Identifier { name, .. }
-                        | ClassMemberName::String { value: name, .. } => {
-                            let idx = self.constants.intern(Constant::String(name.clone()));
-                            encode_op(&mut self.bytecode, Op::SetProp);
-                            encode_u16(&mut self.bytecode, idx);
-                        }
-                        ClassMemberName::Private { name, .. } => {
-                            // Tier-Ω.5.w: static private fields use the same
-                            // name mangling as instance private fields.
-                            let idx = self.constants.intern(Constant::String(format!("#{}", name)));
-                            encode_op(&mut self.bytecode, Op::SetProp);
-                            encode_u16(&mut self.bytecode, idx);
-                        }
+                        | ClassMemberName::String { value: name, .. } => Some(name.clone()),
+                        ClassMemberName::Private { name, .. } => Some(format!("#{}", name)),
                         ClassMemberName::Number { value, .. } => {
-                            let name = if value.fract() == 0.0 {
+                            Some(if value.fract() == 0.0 {
                                 format!("{}", *value as i64)
-                            } else { format!("{}", value) };
-                            let idx = self.constants.intern(Constant::String(name));
+                            } else { format!("{}", value) })
+                        }
+                        ClassMemberName::Computed { .. } => None,
+                    };
+                    match static_key {
+                        Some(key) => {
+                            // Order: ctor on stack, then value, then SetProp.
+                            match init {
+                                Some(e) => self.compile_expr(e)?,
+                                None => { encode_op(&mut self.bytecode, Op::PushUndef); }
+                            }
+                            let idx = self.constants.intern(Constant::String(key));
                             encode_op(&mut self.bytecode, Op::SetProp);
                             encode_u16(&mut self.bytecode, idx);
                         }
-                        ClassMemberName::Computed { span: c_span, .. } => {
-                            return Err(self.err(*c_span,
-                                "computed class field names not yet supported"));
+                        None => {
+                            // Tier-Ω.5.y: computed class field name —
+                            // `class C { static [k] = v }`. SetIndex order:
+                            // [ctor, key, value]. ctor is already on stack.
+                            if let ClassMemberName::Computed { expr, .. } = f_name {
+                                self.compile_expr(expr)?;
+                            } else { unreachable!(); }
+                            match init {
+                                Some(e) => self.compile_expr(e)?,
+                                None => { encode_op(&mut self.bytecode, Op::PushUndef); }
+                            }
+                            encode_op(&mut self.bytecode, Op::SetIndex);
                         }
-                        ClassMemberName::Private { .. } => unreachable!(),
                     }
                     encode_op(&mut self.bytecode, Op::Pop);
-                    let _ = f_span;
                 }
                 ClassMember::StaticBlock { span: b_span, .. } => {
                     return Err(self.err(*b_span,

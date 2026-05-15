@@ -16,8 +16,10 @@ pub mod path;
 pub mod process;
 pub mod register;
 pub mod stream;
+pub mod tty;
 pub mod url;
 pub mod util;
+pub mod zlib;
 
 use rusty_js_runtime::{HostHook, Runtime, Value};
 
@@ -42,6 +44,8 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     stream::install(rt);
     url::install(rt);
     util::install(rt);
+    zlib::install(rt);
+    tty::install(rt);
     install_builtin_module_resolver(rt);
     // Tier-Ω.5.t: re-snapshot globalThis so host-v2's added globals
     // (path/os/process/fs/...) become visible on globalThis. install_intrinsics
@@ -80,6 +84,9 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:stream" | "stream" => "stream",
             "node:url" | "url" => "url",
             "node:util" | "util" => "util",
+            // Tier-Ω.5.y: zlib + tty stubs.
+            "node:zlib" | "zlib" => "zlib",
+            "node:tty" | "tty" => "tty",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

@@ -497,6 +497,17 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().to_lowercase();
         Ok(Value::String(Rc::new(s)))
     });
+    // Tier-Ω.5.ooo: toLocale variants. v1 deviation: locale-insensitive
+    // (uses Rust's default lowercasing). change-case + many libs assume
+    // these exist even when they default-call without locale.
+    register_method(rt, host, "toLocaleLowerCase", |rt, _args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_lowercase();
+        Ok(Value::String(Rc::new(s)))
+    });
+    register_method(rt, host, "toLocaleUpperCase", |rt, _args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_uppercase();
+        Ok(Value::String(Rc::new(s)))
+    });
     register_method(rt, host, "trim", |rt, _args| {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().trim().to_string();
         Ok(Value::String(Rc::new(s)))

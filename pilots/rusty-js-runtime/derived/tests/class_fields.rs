@@ -72,10 +72,9 @@ fn t06_inherited_fields_dont_shadow() {
 }
 
 #[test]
-fn t07_private_field_clear_error() {
+fn t07_private_field_now_works_post_omega_5_w() {
+    // Tier-Ω.5.w landed private fields as name-mangled "#x" properties.
+    // Was previously a clear-error assertion; now compile succeeds.
     let src = r#"class C { #x = 7; } new C();"#;
-    let err = rusty_js_bytecode::compile_module(src).err().expect("expected compile error");
-    let msg = format!("{:?}", err);
-    assert!(msg.contains("private") && msg.contains("not yet supported"),
-        "error did not mention private not-yet-supported: {}", msg);
+    rusty_js_bytecode::compile_module(src).expect("compile should succeed post-Ω.5.w");
 }

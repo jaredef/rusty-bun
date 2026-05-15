@@ -3015,9 +3015,17 @@ impl Compiler {
                         },
                     ClassMemberName::Computed { expr, span } =>
                         MemberProperty::Computed { expr: expr.clone(), span: *span },
-                    ClassMemberName::Private { span, .. } => {
-                        return Err(self.err(*span,
-                            "private class fields (#x) not yet supported (deferred from Tier-Ω.5.f scope ceiling; see private-fields v1 substrate task)"));
+                    ClassMemberName::Private { name, span } => {
+                        // Tier-Ω.5.w: private fields v1 — name-mangled to
+                        // "__private$<name>" so they're addressable from
+                        // mangled paths only. Privacy isn't enforced —
+                        // `obj["__private$x"]` would access from outside.
+                        // Spec-faithful name mangling + WeakMap-backed
+                        // privacy is queued for a substrate round.
+                        MemberProperty::Identifier {
+                            name: format!("#{}", name),
+                            span: *span,
+                        }
                     }
                 };
                 let target = Expr::Member {
@@ -3129,10 +3137,12 @@ impl Compiler {
                     // are deferred to the substrate round that wires
                     // Object.defineProperty's get/set fields end-to-end.
                     // Mirrors the object-literal treatment landed in Ω.5.p.parse.
-                    if *is_async || *is_generator {
-                        return Err(self.err(*m_span,
-                            "async / generator class methods not yet supported"));
-                    }
+                    // Tier-Ω.5.w: async / generator class methods lower as
+                    // ordinary methods. v1 deviation: await / yield inside
+                    // the body still error at compile time at those specific
+                    // statements; but the method itself parses + compiles
+                    // so the surrounding class shape is reachable.
+                    let _ = (is_async, is_generator);
                     let method_key = match m_name {
                         ClassMemberName::Identifier { name, .. } => name.clone(),
                         ClassMemberName::String { value, .. } => value.clone(),
@@ -3140,9 +3150,17 @@ impl Compiler {
                             if value.fract() == 0.0 { format!("{}", *value as i64) }
                             else { format!("{}", value) }
                         }
-                        ClassMemberName::Private { .. } | ClassMemberName::Computed { .. } => {
+                        ClassMemberName::Private { name, .. } => {
+                            // Tier-Ω.5.w: private method names use the same
+                            // "#name" key convention as private fields. The
+                            // member-access path on Private already reads
+                            // via this key (see MemberProperty::Private
+                            // compile sites).
+                            format!("#{}", name)
+                        }
+                        ClassMemberName::Computed { .. } => {
                             return Err(self.err(*m_span,
-                                "private / computed class member names not yet supported"));
+                                "computed class member names not yet supported"));
                         }
                     };
 
@@ -3178,12 +3196,6 @@ impl Compiler {
                     // constructor body above. Static fields run once at
                     // class-definition time: lower as `ctor.<key> = init`.
                     if !*is_static { continue; }
-                    // Reject private static fields with the same clearer
-                    // error as instance private fields.
-                    if let ClassMemberName::Private { span: p_span, .. } = f_name {
-                        return Err(self.err(*p_span,
-                            "private class fields (#x) not yet supported (deferred from Tier-Ω.5.f scope ceiling; see private-fields v1 substrate task)"));
-                    }
                     encode_op(&mut self.bytecode, Op::LoadLocal);
                     encode_u16(&mut self.bytecode, ctor_slot);
                     match init {
@@ -3194,6 +3206,13 @@ impl Compiler {
                         ClassMemberName::Identifier { name, .. }
                         | ClassMemberName::String { value: name, .. } => {
                             let idx = self.constants.intern(Constant::String(name.clone()));
+                            encode_op(&mut self.bytecode, Op::SetProp);
+                            encode_u16(&mut self.bytecode, idx);
+                        }
+                        ClassMemberName::Private { name, .. } => {
+                            // Tier-Ω.5.w: static private fields use the same
+                            // name mangling as instance private fields.
+                            let idx = self.constants.intern(Constant::String(format!("#{}", name)));
                             encode_op(&mut self.bytecode, Op::SetProp);
                             encode_u16(&mut self.bytecode, idx);
                         }

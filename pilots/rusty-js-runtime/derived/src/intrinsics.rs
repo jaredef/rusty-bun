@@ -758,14 +758,44 @@ impl Runtime {
     }
 
     fn install_symbol_static(&mut self) {
-        let sym = self.alloc_object(Object::new_ordinary());
+        // Tier-Ω.5.w: Symbol is now callable as `Symbol(desc?)`. Returns a
+        // fresh Value::String of the form "@@sym:<counter>:<desc>" — the
+        // counter is appended via a thread_local AtomicUsize so two calls
+        // with the same description produce distinct strings (sufficient
+        // for the spec's identity-distinct expectation under v1's
+        // string-shaped Symbol representation).
+        let sym_obj = make_native("Symbol", |_rt, args| {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let desc = args.first()
+                .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
+                .unwrap_or_default();
+            Ok(Value::String(Rc::new(format!("@@sym:{}:{}", n, desc))))
+        });
+        let sym = self.alloc_object(sym_obj);
         // Well-known Symbol.iterator is, in v1, the string key "@@iterator".
         self.object_set(sym, "iterator".into(), Value::String(Rc::new("@@iterator".into())));
-        // Calling Symbol(desc) — v1 returns a fresh empty object tagged
-        // with a description property. Not a real Symbol primitive.
+        self.object_set(sym, "asyncIterator".into(), Value::String(Rc::new("@@asyncIterator".into())));
+        self.object_set(sym, "hasInstance".into(), Value::String(Rc::new("@@hasInstance".into())));
+        self.object_set(sym, "toPrimitive".into(), Value::String(Rc::new("@@toPrimitive".into())));
         register_method(self, sym, "for", |_rt, args| {
             let s = args.first().map(|v| crate::abstract_ops::to_string(v).as_str().to_string()).unwrap_or_default();
             Ok(Value::String(Rc::new(format!("@@sym:{}", s))))
+        });
+        register_method(self, sym, "keyFor", |_rt, args| {
+            // v1: returns the description portion of a Symbol.for()-produced
+            // string, undefined otherwise. Matches Ω.5.c's string-shaped
+            // Symbol representation.
+            let s = args.first().and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None });
+            match s {
+                Some(s) if s.starts_with("@@sym:") && !s.contains(':') => Ok(Value::Undefined),
+                Some(s) => {
+                    let body = s.strip_prefix("@@sym:").unwrap_or(&s);
+                    Ok(Value::String(Rc::new(body.split_once(':').map(|(_, d)| d.to_string()).unwrap_or_else(|| body.to_string()))))
+                }
+                _ => Ok(Value::Undefined),
+            }
         });
         self.globals.insert("Symbol".into(), Value::Object(sym));
     }

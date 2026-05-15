@@ -500,13 +500,26 @@ impl Compiler {
                 });
             }
             ExportDeclaration::Declaration { names, .. } => {
-                // The decl's body was already consumed by the parser, but
-                // its names are recorded. Since the parser currently skips
-                // the decl's bytecode (only its declarator names are kept),
-                // these slots may not exist. Try to resolve; silently drop
-                // unresolved entries — they manifest as Undefined in the
-                // namespace, which mirrors the parser's body-opaque mode.
+                // Tier-Ω.5.ii: alloc local slots for each exported name so
+                // references in the module body resolve as locals rather
+                // than globals. Closes the TS-compiled-enum pattern
+                //   export var DecodingMode;
+                //   (function (DecodingMode) { ... })(DecodingMode || (DecodingMode = {}));
+                // entities + parse5 use this pattern; without local slots,
+                // `DecodingMode` resolves as a global → undefined →
+                // OR-fallback assigns to the global → but the IIFE was
+                // already called with undefined. The parser discards the
+                // decl's body (initializer expressions), so the slot
+                // starts at undefined; this matches the var-hoisting
+                // semantics for un-initialized vars.
                 for n in names {
+                    if self.resolve_local(&n.name).is_none() {
+                        self.alloc_local(LocalDescriptor {
+                            name: n.name.clone(),
+                            kind: VariableKind::Var,
+                            depth: 0,
+                        });
+                    }
                     self.pending_named_exports.push((n.name.clone(), n.name.clone()));
                 }
             }

@@ -1001,6 +1001,14 @@ impl Runtime {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
                             RuntimeError::TypeError(format!("{} (callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
                         }
+                        // Tier-Ω.5.ssss: route-(b) escalation per Doc 721 §VI.6.
+                        // Native callees that throw TypeError without naming a
+                        // call-site stay below Doc 723 Layer-B semanticity. Append
+                        // the resolved LoadGlobal/LoadLocal hint so the chain
+                        // points to the actual upstream undefined.
+                        RuntimeError::TypeError(msg) if callee_hint.is_some() => {
+                            RuntimeError::TypeError(format!("{} (in-call='{}')", msg, callee_hint.unwrap()))
+                        }
                         other => other,
                     })?;
                     frame.push(result);
@@ -1019,6 +1027,12 @@ impl Runtime {
                     let result = self.call_function(method, receiver, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
                             RuntimeError::TypeError(format!("{} (method='{}')", msg, method_name.unwrap_or_else(|| "?".into())))
+                        }
+                        // Tier-Ω.5.ssss: same route-(b) escalation for method-
+                        // dispatch. Native methods like Object.assign throw with
+                        // no upstream context; tag with the resolved method name.
+                        RuntimeError::TypeError(msg) if method_name.is_some() => {
+                            RuntimeError::TypeError(format!("{} (in-method='{}')", msg, method_name.unwrap()))
                         }
                         other => other,
                     })?;

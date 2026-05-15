@@ -645,7 +645,15 @@ impl Runtime {
         register_method(self, obj_ctor, "assign", |rt, args| {
             let target = match args.first() {
                 Some(Value::Object(id)) => *id,
-                _ => return Err(RuntimeError::TypeError("Object.assign: target must be an object".into())),
+                // Tier-Ω.5.tttt: name the offending target type per Doc 721
+                // §VI.6 / Doc 723 Layer-B. zod's "target must be an object"
+                // chain was a dead-end tag; now the type is part of the chain.
+                Some(other) => return Err(RuntimeError::TypeError(format!(
+                    "Object.assign: target must be an object (target-type='{}')",
+                    other.type_of()
+                ))),
+                None => return Err(RuntimeError::TypeError(
+                    "Object.assign: target must be an object (target-type='missing')".into())),
             };
             for src in args.iter().skip(1) {
                 if let Value::Object(sid) = src {

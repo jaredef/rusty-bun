@@ -614,6 +614,22 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
         let out: String = chars[start as usize..end as usize].iter().collect();
         Ok(Value::String(Rc::new(out)))
     });
+    // Tier-Ω.5.aaaaaa: String.prototype.substr (legacy but still ubiquitous —
+    // moment.js uses it for token-parsing). Per ECMA Annex B.2.2.1:
+    // substr(start, length). Negative start counts from end.
+    register_method(rt, host, "substr", |rt, args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len() as i64;
+        let mut start = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as i64;
+        if start < 0 { start = (len + start).max(0); }
+        let start = start.min(len) as usize;
+        let count = args.get(1).map(abstract_ops::to_number).unwrap_or((len - start as i64) as f64) as i64;
+        let count = count.max(0) as usize;
+        let end = (start + count).min(chars.len());
+        let out: String = chars[start..end].iter().collect();
+        Ok(Value::String(Rc::new(out)))
+    });
     register_method(rt, host, "substring", |rt, args| {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
         let chars: Vec<char> = s.chars().collect();

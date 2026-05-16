@@ -526,6 +526,99 @@ pub fn install_all(rt: &mut Runtime) {
     install_vm(rt);
     install_punycode(rt);
     install_async_hooks(rt);
+    install_performance(rt);
+    install_dom_exception(rt);
+}
+
+/// Tier-Ω.5.SSSSSSS: DOMException global. WHATWG WebIDL interface used
+/// by undici WebSocket, fetch, and many Web APIs. Class extension at
+/// module-init: `class WebSocketError extends DOMException`. Stub class
+/// with .prototype, .name, .message, and a 'code'-style numeric mapping.
+pub fn install_dom_exception(rt: &mut Runtime) {
+    let proto = new_object(rt);
+    crate::register::set_constant(rt, proto, "name", Value::String(Rc::new("Error".into())));
+    crate::register::set_constant(rt, proto, "message", Value::String(Rc::new("".into())));
+    crate::register::set_constant(rt, proto, "code", Value::Number(0.0));
+    let ctor = make_callable(rt, "DOMException", |rt, args| {
+        let inst = rt.alloc_object(RtObject::new_ordinary());
+        let msg = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            Some(v) => rusty_js_runtime::abstract_ops::to_string(v).as_str().to_string(),
+            None => String::new(),
+        };
+        let name = match args.get(1) {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => "Error".into(),
+        };
+        rt.object_set(inst, "message".into(), Value::String(Rc::new(msg)));
+        rt.object_set(inst, "name".into(), Value::String(Rc::new(name)));
+        rt.object_set(inst, "code".into(), Value::Number(0.0));
+        rt.object_set(inst, "stack".into(), Value::String(Rc::new("".into())));
+        Ok(Value::Object(inst))
+    });
+    rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+    rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+    // WHATWG-spec numeric constants on the constructor.
+    for (name, code) in &[
+        ("INDEX_SIZE_ERR", 1), ("HIERARCHY_REQUEST_ERR", 3),
+        ("WRONG_DOCUMENT_ERR", 4), ("INVALID_CHARACTER_ERR", 5),
+        ("NO_MODIFICATION_ALLOWED_ERR", 7), ("NOT_FOUND_ERR", 8),
+        ("NOT_SUPPORTED_ERR", 9), ("INUSE_ATTRIBUTE_ERR", 10),
+        ("INVALID_STATE_ERR", 11), ("SYNTAX_ERR", 12), ("INVALID_MODIFICATION_ERR", 13),
+        ("NAMESPACE_ERR", 14), ("INVALID_ACCESS_ERR", 15),
+        ("SECURITY_ERR", 18), ("NETWORK_ERR", 19), ("ABORT_ERR", 20),
+        ("URL_MISMATCH_ERR", 21), ("QUOTA_EXCEEDED_ERR", 22),
+        ("TIMEOUT_ERR", 23), ("INVALID_NODE_TYPE_ERR", 24),
+        ("DATA_CLONE_ERR", 25),
+    ] {
+        crate::register::set_constant(rt, ctor, name, Value::Number(*code as f64));
+        crate::register::set_constant(rt, proto, name, Value::Number(*code as f64));
+    }
+    rt.globals.insert("DOMException".into(), Value::Object(ctor));
+}
+
+/// Tier-Ω.5.SSSSSSS: global `performance` object — undici / fastify and
+/// others read performance.markResourceTiming + performance.now at
+/// module-init. WHATWG Performance interface stubs.
+pub fn install_performance(rt: &mut Runtime) {
+    let perf = new_object(rt);
+    register_method(rt, perf, "now", |_rt, _a| {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ms = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+        Ok(Value::Number(ms))
+    });
+    register_method(rt, perf, "timeOrigin", |_rt, _a| Ok(Value::Number(0.0)));
+    crate::register::set_constant(rt, perf, "timeOrigin", Value::Number(0.0));
+    register_method(rt, perf, "mark", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "measure", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "clearMarks", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "clearMeasures", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "getEntries", |rt, _a| {
+        let arr = rt.alloc_object(RtObject::new_array());
+        rt.object_set(arr, "length".into(), Value::Number(0.0));
+        Ok(Value::Object(arr))
+    });
+    register_method(rt, perf, "getEntriesByName", |rt, _a| {
+        let arr = rt.alloc_object(RtObject::new_array());
+        rt.object_set(arr, "length".into(), Value::Number(0.0));
+        Ok(Value::Object(arr))
+    });
+    register_method(rt, perf, "getEntriesByType", |rt, _a| {
+        let arr = rt.alloc_object(RtObject::new_array());
+        rt.object_set(arr, "length".into(), Value::Number(0.0));
+        Ok(Value::Object(arr))
+    });
+    register_method(rt, perf, "markResourceTiming", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "clearResourceTimings", |_rt, _a| Ok(Value::Undefined));
+    register_method(rt, perf, "eventLoopUtilization", |rt, _a| {
+        let o = new_object(rt);
+        rt.object_set(o, "idle".into(), Value::Number(0.0));
+        rt.object_set(o, "active".into(), Value::Number(0.0));
+        rt.object_set(o, "utilization".into(), Value::Number(0.0));
+        Ok(Value::Object(o))
+    });
+    rt.globals.insert("performance".into(), Value::Object(perf));
 }
 
 /// Tier-Ω.5.RRRRRRR: node:async_hooks stub with AsyncResource as a

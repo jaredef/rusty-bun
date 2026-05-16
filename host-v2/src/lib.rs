@@ -114,6 +114,7 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:punycode" | "punycode" => "punycode",
             // Tier-Ω.5.RRRRRRR — surfaced via cheerio tail-walk
             "node:console" | "console" => "console",
+            "node:util/types" | "util/types" => "util",
             "node:async_hooks" | "async_hooks" => "async_hooks",
             "node:perf_hooks" | "perf_hooks" => "events",
             "node:worker_threads" | "worker_threads" => "events",

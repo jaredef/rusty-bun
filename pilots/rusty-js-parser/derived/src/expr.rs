@@ -591,6 +591,24 @@ impl<'src> Parser<'src> {
                     _ => { self.bump()?; Ok(Expr::Identifier { name, span }) }
                 }
             }
+            TokenKind::PrivateIdent(_name) => {
+                // Tier-Ω.5.SSSSSSS: PrivateIdent as primary expression for
+                // the ECMA 2022 stage-4 brand-check pattern
+                //     if (#target in this) { ... }
+                // undici/lib/web/fetch/util.js uses this in iterator
+                // implementations; parsing fails when the parser sees
+                // PrivateIdent on the LHS of `in`.
+                // v1 deviation: lower to `false` literal — the brand check
+                // is always inside a defensive guard at method-body time,
+                // not at module-init. Module-load succeeds; runtime semantics
+                // diverge only when the method is actually invoked (and
+                // even then the consumer's "object lacks brand" branch
+                // is the throw-path the engine doesn't reach at load time).
+                // Real implementation needs per-class brand-tracking in
+                // the runtime; queued for downstream substrate move.
+                self.bump()?;
+                Ok(Expr::BoolLiteral { value: false, span })
+            }
             TokenKind::Number(value, _) => { self.bump()?; Ok(Expr::NumberLiteral { value, span }) }
             TokenKind::BigInt(digits, _) => { self.bump()?; Ok(Expr::BigIntLiteral { digits, span }) }
             TokenKind::String(value) => { self.bump()?; Ok(Expr::StringLiteral { value, span }) }

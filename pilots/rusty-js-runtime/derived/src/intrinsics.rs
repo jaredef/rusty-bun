@@ -206,11 +206,19 @@ impl Runtime {
                     "__object_spread: target must be an object".into())),
             };
             if let Some(Value::Object(sid)) = args.get(1) {
-                let entries: Vec<(String, Value)> = rt.obj(*sid).properties.iter()
+                // Tier-Ω.5.bbbbb: dispatch accessor getters during spread.
+                let entries: Vec<(String, Option<Value>)> = rt.obj(*sid).properties.iter()
                     .filter(|(_, d)| d.enumerable)
-                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .map(|(k, d)| (k.clone(), d.getter.clone()))
                     .collect();
-                for (k, v) in entries { rt.object_set(target, k, v); }
+                for (k, getter_opt) in entries {
+                    let v = if let Some(getter) = getter_opt {
+                        rt.call_function(getter, Value::Object(*sid), Vec::new())?
+                    } else {
+                        rt.object_get(*sid, &k)
+                    };
+                    rt.object_set(target, k, v);
+                }
             }
             // Non-object sources (null/undefined) are a no-op per ECMA-262.
             Ok(Value::Object(target))
@@ -596,18 +604,28 @@ impl Runtime {
                 _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
             };
             let arr = rt.alloc_object(Object::new_array());
-            let kvs: Vec<(String, Value)> = {
+            // Tier-Ω.5.bbbbb: dispatch accessor getters for Object.values.
+            let keys: Vec<(String, Option<Value>)> = {
                 let o = rt.obj(id);
                 let is_array = matches!(o.internal_kind, InternalKind::Array);
-                let mut entries: Vec<(String, Value)> = o.properties.iter()
+                let mut entries: Vec<(String, Option<Value>)> = o.properties.iter()
                     .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
-                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .map(|(k, d)| (k.clone(), d.getter.clone()))
                     .collect();
                 if is_array {
                     entries.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(u64::MAX));
                 }
                 entries
             };
+            let mut kvs: Vec<(String, Value)> = Vec::with_capacity(keys.len());
+            for (k, getter_opt) in keys {
+                let v = if let Some(getter) = getter_opt {
+                    rt.call_function(getter, Value::Object(id), Vec::new())?
+                } else {
+                    rt.object_get(id, &k)
+                };
+                kvs.push((k, v));
+            }
             for (i, (_, v)) in kvs.iter().enumerate() {
                 rt.object_set(arr, i.to_string(), v.clone());
             }
@@ -620,18 +638,28 @@ impl Runtime {
                 _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
             };
             let arr = rt.alloc_object(Object::new_array());
-            let kvs: Vec<(String, Value)> = {
+            // Tier-Ω.5.bbbbb: dispatch accessor getters for Object.entries.
+            let keys: Vec<(String, Option<Value>)> = {
                 let o = rt.obj(id);
                 let is_array = matches!(o.internal_kind, InternalKind::Array);
-                let mut entries: Vec<(String, Value)> = o.properties.iter()
+                let mut entries: Vec<(String, Option<Value>)> = o.properties.iter()
                     .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
-                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .map(|(k, d)| (k.clone(), d.getter.clone()))
                     .collect();
                 if is_array {
                     entries.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(u64::MAX));
                 }
                 entries
             };
+            let mut kvs: Vec<(String, Value)> = Vec::with_capacity(keys.len());
+            for (k, getter_opt) in keys {
+                let v = if let Some(getter) = getter_opt {
+                    rt.call_function(getter, Value::Object(id), Vec::new())?
+                } else {
+                    rt.object_get(id, &k)
+                };
+                kvs.push((k, v));
+            }
             for (i, (k, v)) in kvs.iter().enumerate() {
                 let pair = rt.alloc_object(Object::new_array());
                 rt.object_set(pair, "0".into(), Value::String(Rc::new(k.clone())));
@@ -657,11 +685,23 @@ impl Runtime {
             };
             for src in args.iter().skip(1) {
                 if let Value::Object(sid) = src {
-                    let entries: Vec<(String, Value)> = rt.obj(*sid).properties.iter()
+                    // Tier-Ω.5.bbbbb: dispatch accessor getters when reading
+                    // source properties, mirror of Ω.5.aaaaa for module
+                    // import-binding paths. Babel/TS-compiled libs export
+                    // via Object.defineProperty getters; Object.assign was
+                    // copying d.value (undefined) instead of invoking.
+                    let entries: Vec<(String, Option<Value>, bool)> = rt.obj(*sid).properties.iter()
                         .filter(|(_, d)| d.enumerable)
-                        .map(|(k, d)| (k.clone(), d.value.clone()))
+                        .map(|(k, d)| (k.clone(), d.getter.clone(), d.getter.is_none()))
                         .collect();
-                    for (k, v) in entries { rt.object_set(target, k, v); }
+                    for (k, getter_opt, is_data) in entries {
+                        let v = if let Some(getter) = getter_opt {
+                            rt.call_function(getter, Value::Object(*sid), Vec::new())?
+                        } else if is_data {
+                            rt.object_get(*sid, &k)
+                        } else { continue };
+                        rt.object_set(target, k, v);
+                    }
                 }
             }
             Ok(Value::Object(target))

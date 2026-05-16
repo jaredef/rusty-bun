@@ -764,6 +764,19 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
         }
         Ok(Value::String(Rc::new(s)))
     });
+    // Tier-Ω.5.EEEEEEEE: String.prototype.localeCompare per ECMA-262 §22.1.3.10.
+    // Used by sort comparators throughout the corpus (read-pkg/spdx-correct
+    // family, conventional-changelog, meow). v1 deviation: locale-insensitive
+    // lexicographic compare (real impl needs full Intl Collator chain).
+    register_method(rt, host, "localeCompare", |rt, args| {
+        let a = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let b = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined)).as_str().to_string();
+        Ok(Value::Number(match a.cmp(&b) {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        }))
+    });
     // Tier-Ω.5.GGGGGGG: String.prototype.codePointAt per ECMA-262 §22.1.3.4.
     // Returns the full code point (handles surrogate pairs) at the given
     // UTF-16 index; returns undefined if the index is out of range.

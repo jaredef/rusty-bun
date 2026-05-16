@@ -462,6 +462,14 @@ pub fn install_buffer(rt: &mut Runtime) {
     let buf_proto = new_object(rt);
     rt.object_set(buf_ctor, "prototype".into(), Value::Object(buf_proto));
     rt.object_set(ns, "Buffer".into(), Value::Object(buf_ctor));
+    // Tier-Ω.5.EEEEEEEE: node:buffer.constants. pino / pino-http read
+    // MAX_STRING_LENGTH at module-init for string-truncation thresholds.
+    // Values reproduce Node's V8 defaults (1GB string, 2GB buffer).
+    let buf_constants = new_object(rt);
+    rt.object_set(buf_constants, "MAX_LENGTH".into(), Value::Number((4.0_f64).powi(30) * 2.0)); // 2^31-1
+    rt.object_set(buf_constants, "MAX_STRING_LENGTH".into(), Value::Number(1073741799.0)); // 2^30 - 25
+    rt.object_set(ns, "constants".into(), Value::Object(buf_constants));
+    rt.object_set(buf_ctor, "constants".into(), Value::Object(buf_constants));
     register_method(rt, ns, "Blob", stub("buffer", "Blob"));
     rt.globals.insert("buffer".into(), Value::Object(ns));
     // Tier-Ω.5.oo: Buffer also visible as a top-level global per Node

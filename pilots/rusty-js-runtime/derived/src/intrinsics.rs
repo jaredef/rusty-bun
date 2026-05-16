@@ -1901,6 +1901,37 @@ impl Runtime {
             rt.obj_mut(new_id).proto = src_proto;
             Ok(Value::Object(new_id))
         });
+        // Tier-Ω.5.jjjjjj: TypedArray + Array @@iterator. for-of over
+        // a Uint8Array currently fails with "@@iterator undefined" — add
+        // index-cursor iterator on the prototype.
+        register_method(self, ta_proto, "@@iterator", |rt, _args| {
+            let src_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("@@iterator: this must be TypedArray".into())),
+            };
+            let mut o = Object::new_ordinary();
+            o.set_own("__it_src__".into(), Value::Object(src_id));
+            o.set_own("__it_idx__".into(), Value::Number(0.0));
+            let it_id = rt.alloc_object(o);
+            register_method(rt, it_id, "next", |rt, _args| {
+                let this_id = match rt.current_this() { Value::Object(o) => o, _ => return Ok(Value::Undefined) };
+                let src = match rt.object_get(this_id, "__it_src__") { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let idx = match rt.object_get(this_id, "__it_idx__") { Value::Number(n) => n as usize, _ => 0 };
+                let len = match rt.object_get(src, "length") { Value::Number(n) => n as usize, _ => 0 };
+                let mut o = Object::new_ordinary();
+                if idx >= len {
+                    o.set_own("value".into(), Value::Undefined);
+                    o.set_own("done".into(), Value::Boolean(true));
+                } else {
+                    let v = rt.object_get(src, &idx.to_string());
+                    rt.object_set(this_id, "__it_idx__".into(), Value::Number((idx + 1) as f64));
+                    o.set_own("value".into(), v);
+                    o.set_own("done".into(), Value::Boolean(false));
+                }
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            Ok(Value::Object(it_id))
+        });
 
         for name in &[
             "ArrayBuffer", "SharedArrayBuffer", "DataView",

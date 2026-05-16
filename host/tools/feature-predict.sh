@@ -26,15 +26,15 @@ padStart|String.prototype.padStart|\.padStart\(|22.1.3.16|HAVE
 padEnd|String.prototype.padEnd|\.padEnd\(|22.1.3.17|HAVE
 substr|String.prototype.substr|\.substr\(|B.2.2.1|HAVE
 substring|String.prototype.substring|\.substring\(|22.1.3.21|HAVE
-matchAll|String.prototype.matchAll|\.matchAll\(|22.1.3.13|GAP
-replaceAll|String.prototype.replaceAll|\.replaceAll\(|22.1.3.20|GAP
+matchAll|String.prototype.matchAll|\.matchAll\(|22.1.3.13|HAVE
+replaceAll|String.prototype.replaceAll|\.replaceAll\(|22.1.3.20|HAVE
 arrayReverse|Array.prototype.reverse|\.reverse\(\)|23.1.3.21|HAVE
-arrayFlat|Array.prototype.flat|\.flat\(|23.1.3.10|PARTIAL
-arrayFlatMap|Array.prototype.flatMap|\.flatMap\(|23.1.3.11|PARTIAL
+arrayFlat|Array.prototype.flat|\.flat\(|23.1.3.10|HAVE
+arrayFlatMap|Array.prototype.flatMap|\.flatMap\(|23.1.3.11|HAVE
 arrayGroup|Array.prototype.group|\.group\(|TC39 proposal|GAP
 objectAssign|Object.assign|Object\.assign\(|20.1.2.1|HAVE
 objectEntries|Object.entries|Object\.entries\(|20.1.2.5|HAVE
-objectFromEntries|Object.fromEntries|Object\.fromEntries\(|20.1.2.7|PARTIAL
+objectFromEntries|Object.fromEntries|Object\.fromEntries\(|20.1.2.7|HAVE
 objectGetPrototypeOf|Object.getPrototypeOf|Object\.getPrototypeOf\(|20.1.2.12|HAVE
 objectDefineProperty|Object.defineProperty|Object\.defineProperty\(|20.1.2.4|HAVE
 reflectSetPrototypeOf|Reflect.setPrototypeOf|Reflect\.setPrototypeOf\(|28.1.13|HAVE
@@ -43,7 +43,7 @@ reflectConstruct|Reflect.construct|Reflect\.construct\(|28.1.2|HAVE
 reflectOwnKeys|Reflect.ownKeys|Reflect\.ownKeys\(|28.1.11|HAVE
 proxyCtor|new Proxy|new Proxy\(|28.2.1.1|PARTIAL
 proxyRevocable|Proxy.revocable|Proxy\.revocable\(|28.2.2|HAVE
-generators|function* / yield|function\*|27.5|GAP
+generators|function* / yield|function\*|27.5|HAVE
 asyncFns|async function|async function|27.7|HAVE
 asyncIterators|for await of|for await \(|14.7.5|GAP
 regexLookbehind|regex (?<=...)|\(\?<=|22.2.1|HAVE
@@ -64,9 +64,9 @@ weakMapCtor|WeakMap|new WeakMap\(|24.3.1.1|HAVE
 weakSetCtor|WeakSet|new WeakSet\(|24.4.1.1|HAVE
 weakRef|WeakRef|new WeakRef\(|26.1.1.1|PARTIAL
 symbolFor|Symbol.for|Symbol\.for\(|20.4.2.2|HAVE
-symbolIterator|Symbol.iterator|Symbol\.iterator|20.4.2.6|PARTIAL
+symbolIterator|Symbol.iterator|Symbol\.iterator|20.4.2.6|HAVE
 symbolAsyncIterator|Symbol.asyncIterator|Symbol\.asyncIterator|20.4.2.1|GAP
-symbolHasInstance|Symbol.hasInstance|Symbol\.hasInstance|20.4.2.4|GAP
+symbolHasInstance|Symbol.hasInstance|Symbol\.hasInstance|20.4.2.4|HAVE
 symbolToPrimitive|Symbol.toPrimitive|Symbol\.toPrimitive|20.4.2.13|GAP
 classFields|class { #priv = ... }|#[a-zA-Z]+\s*=|15.7|PARTIAL
 classStaticFields|class { static field }|static [a-zA-Z]+\s*=|15.7|PARTIAL

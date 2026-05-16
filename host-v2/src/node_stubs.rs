@@ -104,9 +104,14 @@ pub fn install_buffer(rt: &mut Runtime) {
         };
         let mut o = RtObject::new_ordinary();
         o.set_own("__buffer_data".into(), Value::String(Rc::new(s.clone())));
-        o.set_own("length".into(), Value::Number(s.len() as f64));
+        o.set_own("length".into(), Value::Number(s.as_bytes().len() as f64));
         o.set_own("__is_buffer__".into(), Value::Boolean(true));
         let id = rt.alloc_object(o);
+        // Tier-Ω.5.wwwww: populate indexed byte access. csv-parse reads
+        // bytes via buf[i] to compare escape/quote/delimiter byte streams.
+        for (i, b) in s.as_bytes().iter().enumerate() {
+            rt.object_set(id, i.to_string(), Value::Number(*b as f64));
+        }
         Ok(Value::Object(id))
     });
     register_method(rt, buf_ctor, "alloc", |rt, args| {
@@ -183,6 +188,57 @@ pub fn install_buffer(rt: &mut Runtime) {
             }
             Ok(Value::Object(new_id))
         });
+        Ok(Value::Object(id))
+    });
+    // Tier-Ω.5.wwwww: Buffer.compare(a, b) per Node spec — returns -1/0/1
+    // by byte-wise lex order. csv-parse uses this to test escape===quote.
+    register_method(rt, buf_ctor, "compare", |rt, args| {
+        let read = |v: &Value| -> Vec<u8> {
+            match v {
+                Value::String(s) => s.as_bytes().to_vec(),
+                Value::Object(id) => {
+                    let len = match rt.object_get(*id, "length") { Value::Number(n) => n as usize, _ => 0 };
+                    (0..len).map(|i| match rt.object_get(*id, &i.to_string()) {
+                        Value::Number(n) => n as u8,
+                        Value::String(s) if !s.is_empty() => s.as_bytes()[0],
+                        _ => 0,
+                    }).collect()
+                }
+                _ => Vec::new(),
+            }
+        };
+        let a = read(&args.first().cloned().unwrap_or(Value::Undefined));
+        let b = read(&args.get(1).cloned().unwrap_or(Value::Undefined));
+        Ok(Value::Number(match a.cmp(&b) {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        }))
+    });
+    register_method(rt, buf_ctor, "concat", |rt, args| {
+        let list = match args.first() {
+            Some(Value::Object(id)) => *id,
+            _ => return Err(RuntimeError::TypeError("Buffer.concat: expected array".into())),
+        };
+        let len = rt.array_length(list);
+        let mut bytes: Vec<u8> = Vec::new();
+        for i in 0..len {
+            if let Value::Object(b) = rt.object_get(list, &i.to_string()) {
+                let bl = match rt.object_get(b, "length") { Value::Number(n) => n as usize, _ => 0 };
+                for j in 0..bl {
+                    if let Value::Number(n) = rt.object_get(b, &j.to_string()) {
+                        bytes.push(n as u8);
+                    }
+                }
+            }
+        }
+        let mut o = RtObject::new_ordinary();
+        o.set_own("length".into(), Value::Number(bytes.len() as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
+        let id = rt.alloc_object(o);
+        for (i, b) in bytes.iter().enumerate() {
+            rt.object_set(id, i.to_string(), Value::Number(*b as f64));
+        }
         Ok(Value::Object(id))
     });
     register_method(rt, buf_ctor, "isBuffer", |rt, args| {

@@ -91,6 +91,127 @@ pub fn install_string_decoder(rt: &mut Runtime) {
     rt.globals.insert("string_decoder".into(), Value::Object(ns));
 }
 
+// Tier-Ω.5.bbbbbb: rich Buffer-instance method surface — slice, toString,
+// copy, indexOf, equals. csv-parse uses all of these via ResizeableBuffer.
+fn install_buffer_methods(rt: &mut Runtime, id: rusty_js_runtime::ObjectRef) {
+    register_method(rt, id, "slice", |rt, args| {
+        let this_id = match rt.current_this() {
+            Value::Object(o) => o, _ => return Err(RuntimeError::TypeError("Buffer.slice: this must be a Buffer".into())),
+        };
+        let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let start = args.first().and_then(|v| if let Value::Number(n)=v { Some(*n as i64) } else { None }).unwrap_or(0);
+        let end = args.get(1).and_then(|v| if let Value::Number(n)=v { Some(*n as i64) } else { None }).unwrap_or(len as i64);
+        let start = (if start < 0 { (len as i64 + start).max(0) } else { start }).min(len as i64) as usize;
+        let end = (if end < 0 { (len as i64 + end).max(0) } else { end }).min(len as i64) as usize;
+        let slice_len = end.saturating_sub(start);
+        let mut o = RtObject::new_ordinary();
+        o.set_own("length".into(), Value::Number(slice_len as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
+        let new_id = rt.alloc_object(o);
+        install_buffer_methods(rt, new_id);
+        for i in 0..slice_len {
+            let v = rt.object_get(this_id, &(start + i).to_string());
+            rt.object_set(new_id, i.to_string(), v);
+        }
+        Ok(Value::Object(new_id))
+    });
+    register_method(rt, id, "toString", |rt, args| {
+        let this_id = match rt.current_this() {
+            Value::Object(o) => o, _ => return Ok(Value::String(Rc::new(String::new()))),
+        };
+        let _enc = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => "utf8".into() };
+        let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let mut bytes: Vec<u8> = Vec::with_capacity(len);
+        for i in 0..len {
+            if let Value::Number(n) = rt.object_get(this_id, &i.to_string()) {
+                bytes.push(n as u8);
+            }
+        }
+        Ok(Value::String(Rc::new(String::from_utf8_lossy(&bytes).to_string())))
+    });
+    register_method(rt, id, "copy", |rt, args| {
+        let this_id = match rt.current_this() {
+            Value::Object(o) => o, _ => return Ok(Value::Number(0.0)),
+        };
+        let target = match args.first() { Some(Value::Object(id)) => *id, _ => return Ok(Value::Number(0.0)) };
+        let target_start = args.get(1).and_then(|v| if let Value::Number(n)=v { Some(*n as usize) } else { None }).unwrap_or(0);
+        let src_start = args.get(2).and_then(|v| if let Value::Number(n)=v { Some(*n as usize) } else { None }).unwrap_or(0);
+        let src_len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let src_end = args.get(3).and_then(|v| if let Value::Number(n)=v { Some(*n as usize) } else { None }).unwrap_or(src_len).min(src_len);
+        let count = src_end.saturating_sub(src_start);
+        for i in 0..count {
+            let v = rt.object_get(this_id, &(src_start + i).to_string());
+            rt.object_set(target, (target_start + i).to_string(), v);
+        }
+        Ok(Value::Number(count as f64))
+    });
+    register_method(rt, id, "subarray", |rt, args| {
+        let this_id = match rt.current_this() {
+            Value::Object(o) => o, _ => return Err(RuntimeError::TypeError("Buffer.subarray: this must be a Buffer".into())),
+        };
+        let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let start = args.first().and_then(|v| if let Value::Number(n)=v { Some(*n as i64) } else { None }).unwrap_or(0);
+        let end = args.get(1).and_then(|v| if let Value::Number(n)=v { Some(*n as i64) } else { None }).unwrap_or(len as i64);
+        let start = (if start < 0 { (len as i64 + start).max(0) } else { start }).min(len as i64) as usize;
+        let end = (if end < 0 { (len as i64 + end).max(0) } else { end }).min(len as i64) as usize;
+        let slice_len = end.saturating_sub(start);
+        let mut o = RtObject::new_ordinary();
+        o.set_own("length".into(), Value::Number(slice_len as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
+        let new_id = rt.alloc_object(o);
+        install_buffer_methods(rt, new_id);
+        for i in 0..slice_len {
+            let v = rt.object_get(this_id, &(start + i).to_string());
+            rt.object_set(new_id, i.to_string(), v);
+        }
+        Ok(Value::Object(new_id))
+    });
+    register_method(rt, id, "readUInt8", |rt, args| {
+        let this_id = match rt.current_this() { Value::Object(o) => o, _ => return Ok(Value::Number(0.0)) };
+        let offset = args.first().and_then(|v| if let Value::Number(n)=v { Some(*n as usize) } else { None }).unwrap_or(0);
+        match rt.object_get(this_id, &offset.to_string()) {
+            Value::Number(n) => Ok(Value::Number(n)),
+            _ => Ok(Value::Number(0.0)),
+        }
+    });
+    register_method(rt, id, "indexOf", |rt, args| {
+        let this_id = match rt.current_this() { Value::Object(o) => o, _ => return Ok(Value::Number(-1.0)) };
+        let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let needle_bytes: Vec<u8> = match args.first() {
+            Some(Value::Number(n)) => vec![*n as u8],
+            Some(Value::String(s)) => s.as_bytes().to_vec(),
+            Some(Value::Object(nid)) => {
+                let nl = match rt.object_get(*nid, "length") { Value::Number(n) => n as usize, _ => 0 };
+                (0..nl).filter_map(|i| match rt.object_get(*nid, &i.to_string()) { Value::Number(n) => Some(n as u8), _ => None }).collect()
+            }
+            _ => return Ok(Value::Number(-1.0)),
+        };
+        for start in 0..=len.saturating_sub(needle_bytes.len()) {
+            let mut all = true;
+            for (j, b) in needle_bytes.iter().enumerate() {
+                if let Value::Number(n) = rt.object_get(this_id, &(start + j).to_string()) {
+                    if n as u8 != *b { all = false; break; }
+                } else { all = false; break; }
+            }
+            if all { return Ok(Value::Number(start as f64)); }
+        }
+        Ok(Value::Number(-1.0))
+    });
+    register_method(rt, id, "equals", |rt, args| {
+        let this_id = match rt.current_this() { Value::Object(o) => o, _ => return Ok(Value::Boolean(false)) };
+        let other = match args.first() { Some(Value::Object(o)) => *o, _ => return Ok(Value::Boolean(false)) };
+        let l1 = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let l2 = match rt.object_get(other, "length") { Value::Number(n) => n as usize, _ => 0 };
+        if l1 != l2 { return Ok(Value::Boolean(false)); }
+        for i in 0..l1 {
+            if rt.object_get(this_id, &i.to_string()) != rt.object_get(other, &i.to_string()) {
+                return Ok(Value::Boolean(false));
+            }
+        }
+        Ok(Value::Boolean(true))
+    });
+}
+
 pub fn install_buffer(rt: &mut Runtime) {
     // node:buffer exposes Buffer + Blob. v1: stub class with .from / .alloc
     // / .isBuffer / .byteLength. Real Buffer needs binary internals.
@@ -112,6 +233,7 @@ pub fn install_buffer(rt: &mut Runtime) {
         for (i, b) in s.as_bytes().iter().enumerate() {
             rt.object_set(id, i.to_string(), Value::Number(*b as f64));
         }
+        install_buffer_methods(rt, id);
         Ok(Value::Object(id))
     });
     register_method(rt, buf_ctor, "alloc", |rt, args| {
@@ -127,6 +249,7 @@ pub fn install_buffer(rt: &mut Runtime) {
             o.set_own(i.to_string(), Value::Number(0.0));
         }
         let id = rt.alloc_object(o);
+        install_buffer_methods(rt, id);
         Ok(Value::Object(id))
     });
     // Tier-Ω.5.iii: Buffer.allocUnsafe + subarray for nanoid. nanoid
@@ -161,6 +284,7 @@ pub fn install_buffer(rt: &mut Runtime) {
             let v = rt.object_get(this_id, &offset.to_string());
             Ok(match v { Value::Number(n) => Value::Number(n), _ => Value::Number(0.0) })
         });
+        install_buffer_methods(rt, id);
         register_method(rt, id, "subarray", |rt, args| {
             let this_id = match rt.current_this() {
                 Value::Object(o) => o,

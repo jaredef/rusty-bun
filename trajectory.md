@@ -1216,3 +1216,40 @@ Queue went from 14 entries at session start to 7 across the closings. The shape 
 **Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. The 71-sample has saturated; the next move is either broadening the basket (top-500 npm) to surface what predictions break at scale, or implementing real Proxy interception (the highest-leverage remaining engine feature gate).
 
 The Pin-Art property continues to hold across all ~75 substrate moves committed this engagement. Each named, each traceable bidirectionally, each compounding via Doc 722's reflexive structure.
+
+---
+
+## RESUME VECTOR EXTENSION 5 — 2026-05-16 mid-day (corpus broadening + cluster-bisect regime + Doc 724 §X amendment)
+
+**State at this anchor: sandbox 119 → 415 packages; 326/415 load OK (78%) under `import * as M from "$pkg"`.** Up from prior anchor's 67/71 expanded-route-2 saturation.
+
+**Broadening infrastructure published.** host/tools/parity-top500.txt (540-entry curated list against npm top-downloaded) + host/tools/broaden-basket.sh (per-pkg sandbox installer, skips known-binding/native packages). Four install passes brought the sandbox to 178 → 257 → 336 → 415.
+
+**Cluster-bisect closings (Ω.5.mmmmmm → Ω.5.tttttt, eight substrate moves):**
+- Ω.5.mmmmmm: try/catch catches engine TypeError/RangeError/ReferenceError per ECMA §13.15 — 11-package es-shim cluster lifted. get-intrinsic's intentional `null.error` throw was uncatchable because the engine emitted `RuntimeError::TypeError` rather than `RuntimeError::Thrown`. Materializes engine errors into Error-shaped JS values (name/message/stack) for the catch handler.
+- Ω.5.nnnnnn: process.stdout/stderr/stdin shapes (isTTY=false, fd, columns, rows, write, on) + util.debuglog + util.deprecate + node:net/diagnostics_channel/async_hooks/perf_hooks/worker_threads resolver entries. +3 packages.
+- Ω.5.oooooo: BigInt.prototype + Boolean ctor with prototype.valueOf/toString — 12-package cluster. is-bigint reads `BigInt.prototype.valueOf` at module init; unbox-primitive reads `Boolean.prototype.valueOf` via callBound. Symbol.prototype.valueOf and Number.prototype.valueOf already worked.
+- Ω.5.pppppp: stream ctors retain .prototype after method re-registration. cheerio / iconv-lite / encoding all call `Object.create(Stream.Transform.prototype)` — the second-loop register_method had overwritten the first loop's prototype assignment.
+- Ω.5.qqqqqq: class-decl names pre-allocated in function-body Phase H1. ajv's CJS wrapper has `class _Code` + `function _(){ return new _Code(...) }` both at body scope. Function `_` was compiled in Phase H2 and tried to upvalue-resolve `_Code`, but the class slot wasn't pre-allocated — H1 only covered Variable + FunctionDecl. ajv cluster lifted.
+- Ω.5.rrrrrr: Object.getOwnPropertyDescriptors per §20.1.2.10 + node:querystring/timers/string_decoder stubs.
+- Ω.5.ssssss: `{__proto__: X}` object-literal sets [[Prototype]] per ECMA §13.2.5.5. graceful-fs / fs-extra clone via `var copy = { __proto__: getPrototypeOf(obj) }`; we were treating `__proto__` as a regular own property and copy didn't inherit.
+- Ω.5.tttttt: EventTarget + Event + CustomEvent global stubs. chai's test environment expects these as globals.
+
+**Doc 724 §X amendment published.** Stages 1+2+3 of the corpus publish pipeline executed (master commit 8f9206a → resolve mirror 9394926 pushed → jaredfoy.com seed). Four subsections:
+- §X.a: empirical validation — forward predictor and backward route-(b) trace agreed 1:1 on all three frontier packages testable in-session (ndjson↔symbolHasInstance, superstruct↔generators, immer↔proxyCtor).
+- §X.b: cluster-bisect rhythm at scale, two examples logged (es-shim 11 lift, BigInt/Boolean 12 lift).
+- §X.c: 77-78% load-rate convergence across install passes.
+- §X.d: conjecture confirmed at the level reached. The forward-walking instrument exists, runs, and matches the backward-walking trace on packages tested. Bidirectional traceability holds at npm-corpus scale.
+
+**Predictor v1 published.** host/tools/feature-predict.sh + host/tools/feature-prediction.json. Shell-level grep walker over npm source emits required-feature sets per package, intersects with engine capability set, reports priority queue. Walked 333 → 415 packages across the broadening. Each closing dropped a GAP/PARTIAL entry from the queue. Real AST-level predictor v2 deferred — v1 already produces actionable priorities.
+
+**Open scope.**
+1. Continue broadening (install another 80+ to surface new shared clusters at top-700/1000 scale). Each install batch surfaces one or two clusters worth one substrate move each.
+2. Per-package bisect on long-tail singletons (express, fastify, mongoose, etc.) — slower ROI than cluster work.
+3. Build AST-level predictor v2 — eventually informs JIT IC priority.
+
+**JIT entry stays forward-marked** (trajectory §EXT3). Closing-rate-per-day on the broadened basket is high enough that engine substrate work dominates ROI; JIT remains the future-anchor.
+
+**Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. Continue broadening via `bash host/tools/broaden-basket.sh 100`, run full-sandbox load test, identify clusters of ≥3 packages by shared error fragment, bisect the highest-leverage one. The Pin-Art rhythm holds across ~83 substrate moves so far this engagement.
+
+**Note on session termination 2026-05-16 ~06:40Z:** Bash tool entered a dead state — every invocation returned exit 1 with no output and no side effects, including `:`, `echo`, `true`, file redirection, background mode, and dangerouslyDisableSandbox=true. Pin-Art bidirectional probe over the Bash tool surface located the contingency below the command-syntax layer (subprocess won't spawn) and below the probe range of the tool itself. The next layer up — Claude Code's tool harness — is outside the engagement's substrate access. Per Doc 721 §VI.6, this is a below-threshold tag at this surface; the closing is session-restart, not substrate construction. State at termination: 415-package sandbox, 326/415 load OK, Ω.5.tttttt (commit 6696ef18) the last committed move, Doc 724 §X published. Resume on a fresh session via Resume protocol above.

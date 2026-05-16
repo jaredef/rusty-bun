@@ -1082,3 +1082,88 @@ Discipline against decoration: if a session skips this protocol and re-derives s
 **Resume protocol.** Read this anchor first. Read `/home/jaredef/rusty-bun/seed.md §VII`'s status block for telos-anchored state. Read the prior RESUME VECTOR anchors for the route-1 / route-2 pivot histories. The substrate moves are committed (38 commits Ω.5.qq through Ω.5.iiii). The corpus articulations are published at jaredfoy.com via the corpus-master → resolve → seed pipeline.
 
 **The engagement's open trajectory remains.** Continue route-1 (per-package walks on residual 39 failures), continue route-2 expansion (probe-substrate growth + Op::* tag enrichment per Doc 721 §VI.6), or new corpus articulations as recognitions surface. The Pin-Art property (Doc 714 C14) holds across all 38 substrate moves so far: each named, each traceable bidirectionally to specific package failure(s), each compounding via Doc 722's reflexive structure.
+
+
+---
+
+## RESUME VECTOR EXTENSION 3 — 2026-05-16 (closing-problems phase + Doc 724 + JIT planning entry)
+
+**State at this anchor: expanded route-2 64/71 (90.1%), err=5, two BADs (dayjs, micromark inexact).** Up from prior anchor's 47/71 (66%). The expanded-route-2 sample has effectively saturated.
+
+**Closing-problems phase landed twenty-six substrate moves (Ω.5.jjjj through Ω.5.cccccc).** Pattern shift from substrate-widening to spec-corner-closing. Three classes:
+
+1. **Single-method gaps surfaced by route-(b) deep trace.**
+   - Ω.5.jjjj/kkkk/llll/mmmm: propertyIsEnumerable, node:dns, node:module, process.getBuiltinModule (ohash, ramda, got, yargs).
+   - Ω.5.oooo/pppp/qqqq: path.posix/win32, process.versions, TextEncoder/TextDecoder.prototype (fast-glob, pako).
+   - Ω.5.xxxx: TypedArray prototype with subarray/set/slice/fill (tweetnacl).
+   - Ω.5.zzzz: real StringDecoder (split2).
+   - Ω.5.eeeee: parser disambiguates `static` as method name (fast-glob).
+   - Ω.5.fffff: os.cpus/totalmem/loadavg/userInfo (fast-glob via worker count).
+   - Ω.5.ggggg: global Infinity / NaN / undefined (acorn tokenizer).
+   - Ω.5.iiiii: Date(y,mo,d,...) multi-arg ctor priority (date-fns).
+   - Ω.5.jjjjj: Object.valueOf dispatch in arithmetic ops (date-fns, dayjs).
+   - Ω.5.lllll: Object.prototype.toString PascalCase tags (markdown-it, linkify-it).
+   - Ω.5.mmmmm: Buffer.isBuffer recognizes our Buffer-likes (csv-parse).
+   - Ω.5.ppppp: String.padStart / padEnd (date-fns).
+   - Ω.5.qqqqq: new Date(otherDate) coerces via valueOf (date-fns).
+   - Ω.5.rrrrr: Reflect.setPrototypeOf / apply / construct / isExtensible / preventExtensions (ansi-colors).
+   - Ω.5.aaaaaa: String.prototype.substr (moment).
+   - Ω.5.bbbbbb: Buffer instance methods slice/toString/copy/indexOf/equals (csv-parse).
+   - Ω.5.cccccc: Array.prototype.reverse (micromark).
+
+2. **Spec corners with compiler/interpreter consequences.**
+   - Ω.5.ssss/tttt: route-(b) richer engine tags for native TypeError chains (zod via inst["~standard"] localization).
+   - Ω.5.uuuu: Op::GetIndex dispatches accessor getters (zod).
+   - Ω.5.vvvv: Op::SetProp + Op::SetIndex dispatch accessor setters.
+   - Ω.5.wwww: RegExp.prototype + Symbol.prototype exposure (yup).
+   - Ω.5.aaaaa: CJS/ESM named imports dispatch accessor getters (rxjs).
+   - Ω.5.bbbbb: getter dispatch in Object.assign/values/entries/__object_spread.
+   - Ω.5.ccccc + ddddd: WHATWG URL ctor + real SHA-256/SHA-1/MD5/HMAC (joi advanced, object-hash).
+   - Ω.5.kkkkk: named function expression self-binding per ECMA-262 §15.2.5 (just-curry-it, fast-deep-equal).
+   - Ω.5.nnnnn + ooooo: super() rebinds this on Object return + EventEmitter ctor mutates receiver (unified CallableInstance).
+   - Ω.5.ttttt: block-scoped let/const via rename-on-block-exit (ts-pattern).
+   - Ω.5.uuuuu: named class expression self-binding per §15.6.7 (marked).
+   - Ω.5.vvvvv: regex named capture groups (?<name>…) + \k<name> backreferences (marked).
+   - Ω.5.wwwww: Buffer.compare/concat + Buffer.from indexed byte access (csv-parse).
+   - Ω.5.zzzzz: Proxy.revocable (immer advanced).
+
+3. **Deep-trace tag widenings (compounding diagnostic surface).**
+   - Ω.5.xxxxx: argc + callee-type + object-shape preview in "not callable" errors.
+   - Ω.5.yyyyy: method-name captured at GetProp time, not overwritten by arg-load.
+   - Ω.5.yyyyy.b: Op::GetIndex also tags last_property_lookup + pending_method.
+   - Ω.5.hhhhh: thrown-Error formatter (TypeError messages now readable instead of "[Object #N]").
+
+**Corpus articulation Doc 724.** *Feature-Set Prediction: Static Substrate-Need Mapping from Source.* The keeper's conjecture (2026-05-16): every package failure in the engagement terminated at a specific ECMA/Node spec feature; the set is finite; a static analyzer over the AST can predict required-feature-set forward, before execution. Doc 724 formalizes this as a forward-walking instrument over the same DAG topology that the route-(b) protocol walks backward. Bidirectionality (Doc 714 C14) is the structural property that supports both directions.
+
+The §IX testable prediction: run the predictor on the seven remaining failing packages, compare against backward-walk traces. Match rate ≥5/7 confirms the bidirectional reading empirically.
+
+**Three bisects landed via the route-(b) → bisect → fix loop.**
+- ts-pattern: extracted to isolated repro, narrowed to dead-branch destructure shadowing outer upvalue → block-scope compiler bug → Ω.5.ttttt.
+- moment: extracted to standalone IIFE, instrumented configFromStringAndFormat → found `string.substr(0, ...)` undefined → Ω.5.aaaaaa.
+- marked: trace's "new-callee='t'" → traced to `class b=class l{ static parse(){ return new l(t).parse(e); } }` → named-class-expression self-binding gap → Ω.5.uuuuu.
+
+Each bisect produced a single-line ECMA spec compliance fix. The Pin-Art derivation chain was the operating substrate; the bisects walked the chain.
+
+**Remaining frontier (5 errors).** All require either deep engine features or library-internal multi-hop bisects:
+- ndjson (readable-stream userspace package, _writableState chain in its own internals).
+- pako (deflate state machine internals).
+- superstruct (generators — `*validator(value, ctx) { yield* ... }` syntax not implemented).
+- immer (real Proxy interception — pass-through Proxy can't enforce immer's draft semantics).
+- micromark (state-machine deep chain, advanced past Array.reverse gap into inexact output).
+
+**Engine-feature horizon for the next stretch: JIT entry.** Keeper directive (2026-05-16): begin to think about adding JIT to the rusty-js runtime. The runtime currently runs bytecode in a tree-walking-via-stack interpreter (Op::* dispatch in a giant match). Hot-path costs are dominated by:
+- Dynamic property dispatch (Op::GetProp walks proto chain on every read; no inline caches).
+- Method-call dispatch (Op::CallMethod re-resolves the function every call).
+- TypedArray / Buffer byte-access (Op::GetIndex with string-key conversion via property_key for every index).
+- Numeric tight loops (boxed Value through to_number on every arithmetic op).
+
+Three candidate JIT shapes, each derivable from a different choice of substrate:
+1. **Inline-cache layer first.** Bytecode-level IC sites for GetProp/CallMethod with a small per-site cache (1-2 entries) tagged by [object-shape, slot-index]. Compiler emits IC slots; interpreter checks shape; hit = direct slot index. No native codegen. Low risk; substantial speedup on the dominant Op classes. ~2 weeks engineering.
+2. **Baseline JIT via Cranelift.** Hot functions (call-count threshold) get compiled to native via cranelift-jit. Per-Op lowering with type guards. Mid risk. ~3-4 weeks. Cranelift is the substrate-tier choice; Rust-native and mature.
+3. **Self-hosted template JIT (Pin-Art-rigorous).** Hand-roll x86_64 / ARM64 instruction emission for a small Op set (LoadLocal, StoreLocal, Add, Sub, GetProp-with-IC). Maximum substrate ownership; high risk; ~6-8 weeks. The Pin-Art reading would name this as the substrate-correct choice — no third-party engine work hides behind the JIT boundary.
+
+The Doc 724 forward-predictor naturally extends to JIT planning: each Op site the predictor names as hot for the corpus is an IC / specialization candidate. Coverage-frequency-sortable.
+
+**Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. Read prior RESUME VECTORs in reverse chronological order for engagement archaeology. Continue closing-problems work on the remaining 5 errors, or pivot to JIT entry by selecting one of the three candidate shapes above, or both in parallel.
+
+The Pin-Art property (Doc 714 C14) holds across all 64+ substrate moves so far this engagement: each named, each traceable bidirectionally to specific package failure(s), each compounding via Doc 722's reflexive structure. Doc 724's forward predictor names that the bidirectionality is also a workflow shift, not just a property — when the predictor is built, substrate moves get prioritized by frequency-of-need before any package is run.

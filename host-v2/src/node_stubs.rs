@@ -525,6 +525,80 @@ pub fn install_all(rt: &mut Runtime) {
     install_inspector(rt);
     install_vm(rt);
     install_punycode(rt);
+    install_async_hooks(rt);
+}
+
+/// Tier-Ω.5.RRRRRRR: node:async_hooks stub with AsyncResource as a
+/// stub class (extensible via `class X extends AsyncResource`).
+/// undici / fastify / many context-tracking libraries do this at
+/// module-init. AsyncResource was previously routed through the
+/// events module's namespace, which has no AsyncResource export —
+/// `class X extends AsyncResource` then read .prototype on undefined.
+/// AsyncLocalStorage / executionAsyncId / triggerAsyncId / createHook
+/// are placeholders sufficient for module-init presence checks.
+pub fn install_async_hooks(rt: &mut Runtime) {
+    let ns = new_object(rt);
+
+    let ar_proto = new_object(rt);
+    let ar_ctor = make_callable(rt, "AsyncResource", |rt, _args| {
+        let inst = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, inst, "runInAsyncScope", |rt, args| {
+            // (callback, thisArg, ...args) -> callback.call(thisArg, ...args)
+            let cb = args.first().cloned().unwrap_or(Value::Undefined);
+            let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let cb_args: Vec<Value> = args.iter().skip(2).cloned().collect();
+            rt.call_function(cb, this_arg, cb_args)
+        });
+        register_method(rt, inst, "emitDestroy", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, inst, "asyncId", |_rt, _a| Ok(Value::Number(0.0)));
+        register_method(rt, inst, "triggerAsyncId", |_rt, _a| Ok(Value::Number(0.0)));
+        register_method(rt, inst, "bind", |rt, args| Ok(args.first().cloned().unwrap_or(rt.current_this())));
+        Ok(Value::Object(inst))
+    });
+    rt.object_set(ar_ctor, "prototype".into(), Value::Object(ar_proto));
+    rt.object_set(ar_proto, "constructor".into(), Value::Object(ar_ctor));
+    register_method(rt, ar_ctor, "bind", |rt, args| Ok(args.first().cloned().unwrap_or(rt.current_this())));
+    rt.object_set(ns, "AsyncResource".into(), Value::Object(ar_ctor));
+
+    // AsyncLocalStorage — used by undici/fastify for context propagation.
+    let als_proto = new_object(rt);
+    let als_ctor = make_callable(rt, "AsyncLocalStorage", |rt, _args| {
+        let inst = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, inst, "getStore", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, inst, "run", |rt, args| {
+            // (store, callback, ...args) -> callback(...args)
+            let cb = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let cb_args: Vec<Value> = args.iter().skip(2).cloned().collect();
+            rt.call_function(cb, Value::Undefined, cb_args)
+        });
+        register_method(rt, inst, "enterWith", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, inst, "exit", |rt, args| {
+            let cb = args.first().cloned().unwrap_or(Value::Undefined);
+            let cb_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+            rt.call_function(cb, Value::Undefined, cb_args)
+        });
+        register_method(rt, inst, "disable", |_rt, _a| Ok(Value::Undefined));
+        Ok(Value::Object(inst))
+    });
+    rt.object_set(als_ctor, "prototype".into(), Value::Object(als_proto));
+    rt.object_set(als_proto, "constructor".into(), Value::Object(als_ctor));
+    register_method(rt, als_ctor, "bind", |rt, args| Ok(args.first().cloned().unwrap_or(rt.current_this())));
+    register_method(rt, als_ctor, "snapshot", |_rt, _a| {
+        Ok(Value::Undefined)
+    });
+    rt.object_set(ns, "AsyncLocalStorage".into(), Value::Object(als_ctor));
+
+    register_method(rt, ns, "executionAsyncId", |_rt, _a| Ok(Value::Number(0.0)));
+    register_method(rt, ns, "triggerAsyncId", |_rt, _a| Ok(Value::Number(0.0)));
+    register_method(rt, ns, "executionAsyncResource", |rt, _a| Ok(Value::Object(new_object(rt))));
+    register_method(rt, ns, "createHook", |rt, _a| {
+        let hook = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, hook, "enable", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, hook, "disable", |rt, _a| Ok(rt.current_this()));
+        Ok(Value::Object(hook))
+    });
+
+    rt.globals.insert("async_hooks".into(), Value::Object(ns));
 }
 
 /// Tier-Ω.5.PPPPPPP: node:punycode stub. Deprecated in Node 7+ but

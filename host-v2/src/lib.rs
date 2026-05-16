@@ -112,7 +112,9 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:vm" | "vm" => "vm",
             // Tier-Ω.5.PPPPPPP
             "node:punycode" | "punycode" => "punycode",
-            "node:async_hooks" | "async_hooks" => "events",
+            // Tier-Ω.5.RRRRRRR — surfaced via cheerio tail-walk
+            "node:console" | "console" => "console",
+            "node:async_hooks" | "async_hooks" => "async_hooks",
             "node:perf_hooks" | "perf_hooks" => "events",
             "node:worker_threads" | "worker_threads" => "events",
             "node:querystring" | "querystring" => "url",

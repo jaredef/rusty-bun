@@ -1253,9 +1253,15 @@ fn probe_with_extensions(candidate: &std::path::Path, original: &str) -> Result<
         with_suffix(candidate, ".mjs"),
         with_suffix(candidate, ".cjs"),
         with_suffix(candidate, ".js"),
+        with_suffix(candidate, ".json"),
         candidate.join("index.mjs"),
         candidate.join("index.cjs"),
         candidate.join("index.js"),
+        // Tier-Ω.5.AAAAAAAA: probe index.json as well per Node's CJS
+        // resolution algorithm (require() of a directory with no main
+        // falls back to index.js, then index.json). spdx-license-ids and
+        // other data-only packages ship just index.json.
+        candidate.join("index.json"),
     ];
     for p in &attempts {
         if p.is_file() {

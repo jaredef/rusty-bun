@@ -186,6 +186,7 @@ pub enum UnaryOp {
     Plus, Minus, BitNot, LogicalNot,
     Typeof, Void, Delete,
     Await,
+    Yield, YieldDelegate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

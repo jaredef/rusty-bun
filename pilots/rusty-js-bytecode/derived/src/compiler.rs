@@ -1738,17 +1738,36 @@ impl Compiler {
                 }
             }
             Expr::Unary { operator, argument, .. } => {
+                // Tier-Ω.5.gggggg: yield / yield* lower to a call into
+                // the host __yield_push__ / __yield_delegate__ globals.
+                // The runtime maintains a thread-local yields vector
+                // around generator-function invocations; these helpers
+                // append the argument's value(s). The expression's
+                // result is left on the stack (yield-as-expression
+                // returns undefined in this v1; real coroutines would
+                // return the value passed to .next()).
+                if matches!(operator, UnaryOp::Yield) {
+                    let nm = self.constants.intern(Constant::String("__yield_push__".into()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, nm);
+                    self.compile_expr(argument)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 1);
+                    return Ok(());
+                }
+                if matches!(operator, UnaryOp::YieldDelegate) {
+                    let nm = self.constants.intern(Constant::String("__yield_delegate__".into()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, nm);
+                    self.compile_expr(argument)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 1);
+                    return Ok(());
+                }
                 self.compile_expr(argument)?;
                 // Tier-Ω.5.x: `await expr` lowers to just `expr` — the
-                // suspension semantics are dropped in v1. The argument's
-                // value is already on the stack; for a Promise that's the
-                // Promise object itself, not its resolved value (which is
-                // the spec-correct behavior on no-async-runtime). Consumer
-                // code that depends on resolved values will fail downstream;
-                // code that uses await defensively (e.g. `await x` where x
-                // is non-Promise) gets the value through unchanged.
+                // suspension semantics are dropped in v1.
                 if matches!(operator, UnaryOp::Await) {
-                    // No-op: argument value stays on stack.
                     return Ok(());
                 }
                 let op = match operator {
@@ -1759,7 +1778,7 @@ impl Compiler {
                     UnaryOp::Typeof => Op::Typeof,
                     UnaryOp::Void => Op::Void,
                     UnaryOp::Delete => Op::Delete,
-                    UnaryOp::Await => unreachable!(), // handled above
+                    UnaryOp::Await | UnaryOp::Yield | UnaryOp::YieldDelegate => unreachable!(),
                 };
                 encode_op(&mut self.bytecode, op);
             }

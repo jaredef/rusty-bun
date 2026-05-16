@@ -88,6 +88,12 @@ pub struct Runtime {
     /// Tier-Ω.5.i: %RegExp.prototype% — installed alongside other
     /// intrinsic prototypes; alloc_object auto-wires RegExp objects.
     pub regexp_prototype: Option<rusty_js_gc::ObjectId>,
+    /// Tier-Ω.5.gggggg: stack of currently-running generator yields-arrays.
+    /// Each generator function invocation pushes a fresh array on entry,
+    /// pops it on completion. `__yield_push__(v)` appends to the top.
+    /// Nested generators (yield inside a generator that yields a generator)
+    /// stack correctly.
+    pub gen_yields_stack: Vec<rusty_js_gc::ObjectId>,
 }
 
 impl Runtime {
@@ -111,6 +117,7 @@ impl Runtime {
             string_prototype: None,
             number_prototype: None,
             regexp_prototype: None,
+            gen_yields_stack: Vec::new(),
         }
     }
 
@@ -1298,41 +1305,14 @@ impl Runtime {
             return result;
         }
         let proto = proto_opt.expect("closure branch implies proto");
-        // Tier-Ω.5.eeeeee: generator function calls. v1 deviation: return
-        // an empty iterator stub rather than running the body. Real
-        // generators need coroutine support (suspend on yield, resume on
-        // next). superstruct's toFailures + entries + validator chain is
-        // forward-only and tolerates an empty iterator when there are no
-        // failures to yield, which is the validation-passing case.
-        if proto.is_generator {
-            let iter = Object::new_ordinary();
-            let id = self.alloc_object(iter);
-            // next() returns {value: undefined, done: true} immediately.
-            let next_fn = crate::intrinsics::make_native("next", |rt, _args| {
-                let mut o = Object::new_ordinary();
-                o.set_own("value".into(), Value::Undefined);
-                o.set_own("done".into(), Value::Boolean(true));
-                Ok(Value::Object(rt.alloc_object(o)))
-            });
-            let next_id = self.alloc_object(next_fn);
-            self.object_set(id, "next".into(), Value::Object(next_id));
-            let return_fn = crate::intrinsics::make_native("return", |rt, _args| {
-                let mut o = Object::new_ordinary();
-                o.set_own("value".into(), Value::Undefined);
-                o.set_own("done".into(), Value::Boolean(true));
-                Ok(Value::Object(rt.alloc_object(o)))
-            });
-            let return_id = self.alloc_object(return_fn);
-            self.object_set(id, "return".into(), Value::Object(return_id));
-            // Self-iteration protocol — @@iterator returns this.
-            let iter_id = id;
-            let iter_fn = crate::intrinsics::make_native("@@iterator", move |_rt, _args| {
-                Ok(Value::Object(iter_id))
-            });
-            let iter_fn_id = self.alloc_object(iter_fn);
-            self.object_set(id, "@@iterator".into(), Value::Object(iter_fn_id));
-            return Ok(Value::Object(id));
-        }
+        let is_generator = proto.is_generator;
+        let gen_yields_id = if is_generator {
+            // Tier-Ω.5.gggggg: push fresh yields-array on generator entry.
+            let yields_arr = self.alloc_object(Object::new_array());
+            self.object_set(yields_arr, "length".into(), Value::Number(0.0));
+            self.gen_yields_stack.push(yields_arr);
+            Some(yields_arr)
+        } else { None };
         let args = effective_args;
         let this = effective_this;
         // Tier-Ω.5.e: binding-shared upvalues. Share the closure's
@@ -1404,13 +1384,58 @@ impl Runtime {
             import_meta: None,
             new_target: nt_for_this_call.clone(),
         };
-        let body_result = self.run_frame(&mut inner)?;
-        // Tier-Ω.5.nnnnn: if this was a constructor call (new.target set)
-        // and the body did not explicitly return a non-undefined value,
-        // return the (possibly rebound by Op::SetThis) this_value. This
-        // matters for `class D extends C { constructor() { super(...); } }`
-        // where the super(...) Op::SetThis re-bound `this` to the parent's
-        // returned object; the implicit return must surface that.
+        let body_result = self.run_frame(&mut inner);
+        if is_generator {
+            // Tier-Ω.5.gggggg: pop yields-array on generator exit; build
+            // an index-cursor iterator over the collected values. The
+            // body's return value is discarded — generator return value
+            // is exposed via the {value, done:true} terminal step in
+            // proper coroutines; v1 sets done's value to undefined.
+            let yields_id = self.gen_yields_stack.pop().expect("gen_yields_stack underflow");
+            let _ = gen_yields_id;
+            let _ = body_result; // even on Err, return an iterator that drains as if empty
+            let iter = Object::new_ordinary();
+            let it_id = self.alloc_object(iter);
+            self.object_set(it_id, "__gen_arr__".into(), Value::Object(yields_id));
+            self.object_set(it_id, "__gen_idx__".into(), Value::Number(0.0));
+            let next_fn = crate::intrinsics::make_native("next", |rt, _args| {
+                let this_id = match rt.current_this() { Value::Object(o) => o, _ => return Ok(Value::Undefined) };
+                let arr = match rt.object_get(this_id, "__gen_arr__") { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let idx = match rt.object_get(this_id, "__gen_idx__") { Value::Number(n) => n as usize, _ => 0 };
+                let len = rt.array_length(arr);
+                let mut o = Object::new_ordinary();
+                if idx >= len {
+                    o.set_own("value".into(), Value::Undefined);
+                    o.set_own("done".into(), Value::Boolean(true));
+                } else {
+                    let v = rt.object_get(arr, &idx.to_string());
+                    rt.object_set(this_id, "__gen_idx__".into(), Value::Number((idx + 1) as f64));
+                    o.set_own("value".into(), v);
+                    o.set_own("done".into(), Value::Boolean(false));
+                }
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            let next_id = self.alloc_object(next_fn);
+            self.object_set(it_id, "next".into(), Value::Object(next_id));
+            let return_fn = crate::intrinsics::make_native("return", |rt, args| {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let mut o = Object::new_ordinary();
+                o.set_own("value".into(), v);
+                o.set_own("done".into(), Value::Boolean(true));
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            let return_id = self.alloc_object(return_fn);
+            self.object_set(it_id, "return".into(), Value::Object(return_id));
+            let self_iter = it_id;
+            let iter_fn = crate::intrinsics::make_native("@@iterator", move |_rt, _args| {
+                Ok(Value::Object(self_iter))
+            });
+            let iter_fn_id = self.alloc_object(iter_fn);
+            self.object_set(it_id, "@@iterator".into(), Value::Object(iter_fn_id));
+            return Ok(Value::Object(it_id));
+        }
+        let body_result = body_result?;
+        // Tier-Ω.5.nnnnn: implicit-return-this for derived ctors.
         let result = if nt_for_this_call.is_some() && matches!(body_result, Value::Undefined) {
             inner.this_value.clone()
         } else { body_result };

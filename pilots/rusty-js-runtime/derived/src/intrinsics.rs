@@ -199,6 +199,64 @@ impl Runtime {
     fn install_spread_helpers(&mut self) {
         // __object_spread(target, src) → target. Copies own enumerable
         // string-keyed properties from src to target, left-to-right.
+        // Tier-Ω.5.gggggg: yield helpers. The compiler lowers `yield expr`
+        // to `__yield_push__(expr)` and `yield* iter` to
+        // `__yield_delegate__(iter)`. The runtime maintains a stack of
+        // yields-arrays — generator calls push on entry, pop on exit;
+        // these helpers append to the top.
+        register_global_fn(self, "__yield_push__", |rt, args| {
+            if let Some(&arr) = rt.gen_yields_stack.last() {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let len = rt.array_length(arr);
+                rt.object_set(arr, len.to_string(), v);
+                rt.object_set(arr, "length".into(), Value::Number((len + 1) as f64));
+            }
+            Ok(Value::Undefined)
+        });
+        register_global_fn(self, "__yield_delegate__", |rt, args| {
+            let target_arr = match rt.gen_yields_stack.last().copied() { Some(a) => a, None => return Ok(Value::Undefined) };
+            let it_arg = args.first().cloned().unwrap_or(Value::Undefined);
+            // Iterate via Symbol.iterator / @@iterator / array length.
+            let it_obj = match &it_arg {
+                Value::Object(id) => *id,
+                _ => return Ok(Value::Undefined),
+            };
+            // If the iterable is itself an array-like with length, walk indices.
+            // Otherwise, try @@iterator and .next() repeatedly.
+            let try_iter = rt.object_get(it_obj, "@@iterator");
+            let iter_obj = if matches!(try_iter, Value::Object(_)) {
+                match rt.call_function(try_iter, Value::Object(it_obj), Vec::new()) {
+                    Ok(Value::Object(id)) => Some(id),
+                    _ => None,
+                }
+            } else { None };
+            if let Some(iter_id) = iter_obj {
+                let next = rt.object_get(iter_id, "next");
+                if matches!(next, Value::Object(_)) {
+                    loop {
+                        let step = match rt.call_function(next.clone(), Value::Object(iter_id), Vec::new()) {
+                            Ok(v) => v, Err(_) => break,
+                        };
+                        let step_id = match step { Value::Object(id) => id, _ => break };
+                        if matches!(rt.object_get(step_id, "done"), Value::Boolean(true)) { break; }
+                        let v = rt.object_get(step_id, "value");
+                        let len = rt.array_length(target_arr);
+                        rt.object_set(target_arr, len.to_string(), v);
+                        rt.object_set(target_arr, "length".into(), Value::Number((len + 1) as f64));
+                    }
+                    return Ok(Value::Undefined);
+                }
+            }
+            // Fallback: array-like.
+            let len = rt.array_length(it_obj);
+            for i in 0..len {
+                let v = rt.object_get(it_obj, &i.to_string());
+                let tl = rt.array_length(target_arr);
+                rt.object_set(target_arr, tl.to_string(), v);
+                rt.object_set(target_arr, "length".into(), Value::Number((tl + 1) as f64));
+            }
+            Ok(Value::Undefined)
+        });
         register_global_fn(self, "__object_spread", |rt, args| {
             let target = match args.first() {
                 Some(Value::Object(id)) => *id,

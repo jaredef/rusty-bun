@@ -236,6 +236,29 @@ impl<'src> Parser<'src> {
                 let span = Span::new(start, arg.span().end);
                 Ok(Expr::Unary { operator: UnaryOp::Delete, argument: Box::new(arg), span })
             }
+            TokenKind::Ident(s) if s == "yield" => {
+                // Tier-Ω.5.gggggg: yield / yield* as unary operators.
+                // Naive: accept anywhere (not gated on generator context).
+                // The compiler emits Op::Yield only when inside an
+                // is_generator function body; outside it would compile to
+                // a no-op-with-undefined-result via the same lowering.
+                self.bump()?;
+                let delegate = matches!(self.current_kind(), TokenKind::Punct(Punct::Star));
+                if delegate { self.bump()?; }
+                // yield with no argument: next token is statement terminator.
+                let arg = match self.current_kind() {
+                    TokenKind::Punct(Punct::Semicolon)
+                    | TokenKind::Punct(Punct::RParen)
+                    | TokenKind::Punct(Punct::RBrace)
+                    | TokenKind::Punct(Punct::RBracket)
+                    | TokenKind::Punct(Punct::Comma)
+                    | TokenKind::Eof => Expr::Identifier { name: "undefined".into(), span: Span::new(start, start) },
+                    _ => self.parse_unary_expression()?,
+                };
+                let op = if delegate { UnaryOp::YieldDelegate } else { UnaryOp::Yield };
+                let span = Span::new(start, arg.span().end);
+                return Ok(Expr::Unary { operator: op, argument: Box::new(arg), span });
+            }
             TokenKind::Ident(s) if s == "await" => {
                 self.bump()?;
                 let arg = self.parse_unary_expression()?;

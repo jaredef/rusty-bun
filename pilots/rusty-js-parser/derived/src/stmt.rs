@@ -69,9 +69,11 @@ impl<'src> Parser<'src> {
             self.consume_semicolon_pub();
             return Ok(Stmt::Debugger { span });
         }
-        // `with` forbidden in modules; `yield` an expression at top level when
-        // not in a generator. Both fall back to Stmt::Opaque.
-        if self.is_ident("with") || self.is_ident("yield") {
+        // `with` forbidden in modules; falls back to Stmt::Opaque.
+        // Tier-Ω.5.gggggg: yield is now a real expression — let it fall
+        // through to ExpressionStatement parsing where parse_unary picks
+        // it up as Expr::Unary{Yield, ...}.
+        if self.is_ident("with") {
             let span = self.skip_to_top_terminator()?;
             return Ok(Stmt::Opaque { span: Span::new(start, span.end) });
         }

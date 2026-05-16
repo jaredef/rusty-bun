@@ -106,6 +106,16 @@ pub fn install(rt: &mut Runtime) {
             };
             Ok(Value::Object(make_stream_instance(rt, opts, receiver)))
         });
+        // Tier-Ω.5.pppppp: re-attach .prototype on the re-registered ctor.
+        // The earlier loop set ctor.prototype but register_method here
+        // overwrote the slot with a fresh native fn lacking .prototype.
+        // userspace packages like iconv-lite / cheerio call
+        // `Object.create(Stream.Transform.prototype)` → must be object.
+        let proto = new_object(rt);
+        if let Value::Object(ctor) = rt.object_get(stream, name) {
+            rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+            rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+        }
     }
     // Tier-Ω.5.gggg: stream.pipeline / .finished return undefined
     // (instead of throwing). get-stream and many libs import these

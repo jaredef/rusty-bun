@@ -645,7 +645,22 @@ impl Runtime {
     }
 
     fn install_object_static(&mut self) {
-        let obj_ctor = self.alloc_object(Object::new_ordinary());
+        // Tier-Ω.5.uuuuuu: Object is a real Function (callable + constructible)
+        // per ECMA-262 §20.1.1. `Object(value)` returns ToObject(value);
+        // when value is undefined/null/missing, returns a fresh ordinary
+        // object. `new Object(value)` behaves the same. csso / joi /
+        // object.getownpropertydescriptors / power-assert / single-line-log
+        // all invoke `Object(x)` or `new Object()` at module-init.
+        let obj_ctor_native = make_native("Object", |rt, args| {
+            match args.first() {
+                None | Some(Value::Undefined) | Some(Value::Null) => {
+                    Ok(Value::Object(rt.alloc_object(Object::new_ordinary())))
+                }
+                Some(v @ Value::Object(_)) => Ok(v.clone()),
+                Some(_) => Ok(Value::Object(rt.alloc_object(Object::new_ordinary()))),
+            }
+        });
+        let obj_ctor = self.alloc_object(obj_ctor_native);
         register_method(self, obj_ctor, "keys", |rt, args| {
             let id = match args.first() {
                 Some(Value::Object(id)) => *id,

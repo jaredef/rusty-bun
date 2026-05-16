@@ -105,6 +105,7 @@ pub fn install_buffer(rt: &mut Runtime) {
         let mut o = RtObject::new_ordinary();
         o.set_own("__buffer_data".into(), Value::String(Rc::new(s.clone())));
         o.set_own("length".into(), Value::Number(s.len() as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
         let id = rt.alloc_object(o);
         Ok(Value::Object(id))
     });
@@ -115,6 +116,7 @@ pub fn install_buffer(rt: &mut Runtime) {
         };
         let mut o = RtObject::new_ordinary();
         o.set_own("length".into(), Value::Number(n as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
         // Zero-initialized indexable bytes per Node spec.
         for i in 0..n.min(65536) {
             o.set_own(i.to_string(), Value::Number(0.0));
@@ -132,6 +134,7 @@ pub fn install_buffer(rt: &mut Runtime) {
         };
         let mut o = RtObject::new_ordinary();
         o.set_own("length".into(), Value::Number(n as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
         // Pre-populate indices with 0 so subsequent SetIndex via
         // crypto.getRandomValues has slots to write into.
         for i in 0..n.min(65536) {
@@ -182,7 +185,17 @@ pub fn install_buffer(rt: &mut Runtime) {
         });
         Ok(Value::Object(id))
     });
-    register_method(rt, buf_ctor, "isBuffer", |_rt, _args| Ok(Value::Boolean(false)));
+    register_method(rt, buf_ctor, "isBuffer", |rt, args| {
+        // Tier-Ω.5.mmmmm: recognize our Buffer-likes via the __is_buffer__
+        // marker. csv-parse and any lib that brand-checks options before
+        // dispatching needs this to accept Buffer.from(...) outputs.
+        if let Some(Value::Object(id)) = args.first() {
+            if matches!(rt.object_get(*id, "__is_buffer__"), Value::Boolean(true)) {
+                return Ok(Value::Boolean(true));
+            }
+        }
+        Ok(Value::Boolean(false))
+    });
     register_method(rt, buf_ctor, "byteLength", |rt, args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         let n = match &v {

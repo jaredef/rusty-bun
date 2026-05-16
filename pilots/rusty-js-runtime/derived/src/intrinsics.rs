@@ -1464,6 +1464,25 @@ impl Runtime {
         });
         self.globals.insert("URL".into(), Value::Object(url_id));
 
+        // Tier-Ω.5.xxxxxx: URLSearchParams as a callable global Function with
+        // .prototype. node-fetch's headers.js does `class Headers extends
+        // URLSearchParams`; the class compile reads `URLSearchParams.prototype`
+        // for [[Prototype]] wiring. A constructor stub plus an ordinary
+        // .prototype object is sufficient for the inheritance chain to
+        // resolve at module-init. Method bodies on the prototype remain
+        // queued (get/set/has/delete/append/keys/values/entries/forEach/
+        // toString) — consumers that hit them get a TypeError naming the stub.
+        let usp_ctor = make_native("URLSearchParams", |_rt, _args| {
+            Err(RuntimeError::TypeError(
+                "URLSearchParams constructor not yet implemented (Tier-Ω.5.xxxxxx stub)".into(),
+            ))
+        });
+        let usp_id = self.alloc_object(usp_ctor);
+        let usp_proto = self.alloc_object(Object::new_ordinary());
+        self.object_set(usp_id, "prototype".into(), Value::Object(usp_proto));
+        self.object_set(usp_proto, "constructor".into(), Value::Object(usp_id));
+        self.globals.insert("URLSearchParams".into(), Value::Object(usp_id));
+
         // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
         let bi_obj = make_native("BigInt", |_rt, args| {
             let v = args.first().cloned().unwrap_or(Value::Undefined);

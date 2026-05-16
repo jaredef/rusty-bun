@@ -88,6 +88,25 @@ pub fn install(rt: &mut Runtime) {
     set_constant(rt, methods, "length", Value::Number(names.len() as f64));
     set_constant(rt, http, "METHODS", Value::Object(methods));
 
+    // Tier-Ω.5.xxxxxx: http.ServerResponse / IncomingMessage / Server class
+    // stubs with .prototype. compression/on-headers/koa-style middleware read
+    // `http.ServerResponse.prototype.appendHeader` at module-init; without
+    // ServerResponse the lookup throws on `.prototype`. The class is a
+    // stub: constructor errors if called, prototype is an empty object,
+    // sufficient for `class X extends http.ServerResponse` and
+    // `typeof http.ServerResponse.prototype.foo === 'function'` probes.
+    for class_name in &["ServerResponse", "IncomingMessage", "Server", "ClientRequest"] {
+        let proto = new_object(rt);
+        let ctor = crate::register::make_callable(rt, class_name, |_rt, _args| {
+            Err(RuntimeError::TypeError(format!(
+                "node:http class constructor not yet implemented (Tier-Ω.5.xxxxxx stub)",
+            )))
+        });
+        rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+        rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+        set_constant(rt, http, class_name, Value::Object(ctor));
+    }
+
     // Default export points at the namespace itself for CJS-interop
     // shape: `import http from "node:http"` reads `default` and falls
     // back to the namespace if absent, but writing it explicitly keeps

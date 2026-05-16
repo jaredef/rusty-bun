@@ -110,6 +110,8 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:v8" | "v8" => "v8",
             "node:inspector" | "inspector" => "inspector",
             "node:vm" | "vm" => "vm",
+            // Tier-Ω.5.PPPPPPP
+            "node:punycode" | "punycode" => "punycode",
             "node:async_hooks" | "async_hooks" => "events",
             "node:perf_hooks" | "perf_hooks" => "events",
             "node:worker_threads" | "worker_threads" => "events",

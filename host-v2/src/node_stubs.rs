@@ -495,6 +495,38 @@ pub fn install_all(rt: &mut Runtime) {
     install_v8(rt);
     install_inspector(rt);
     install_vm(rt);
+    install_punycode(rt);
+}
+
+/// Tier-Ω.5.PPPPPPP: node:punycode stub. Deprecated in Node 7+ but
+/// userland packages (whatwg-url's polyfill path, cross-fetch's IDN
+/// handling) still resolve it. Stubs encode/decode/toASCII/toUnicode
+/// as identity functions sufficient for ASCII inputs; full
+/// IDN transcoding deferred.
+pub fn install_punycode(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    register_method(rt, ns, "encode", |_rt, args| {
+        let s = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => String::new() };
+        Ok(Value::String(Rc::new(s)))
+    });
+    register_method(rt, ns, "decode", |_rt, args| {
+        let s = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => String::new() };
+        Ok(Value::String(Rc::new(s)))
+    });
+    register_method(rt, ns, "toASCII", |_rt, args| {
+        let s = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => String::new() };
+        Ok(Value::String(Rc::new(s)))
+    });
+    register_method(rt, ns, "toUnicode", |_rt, args| {
+        let s = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => String::new() };
+        Ok(Value::String(Rc::new(s)))
+    });
+    crate::register::set_constant(rt, ns, "version", Value::String(Rc::new("2.3.1".into())));
+    let ucs2 = new_object(rt);
+    register_method(rt, ucs2, "encode", |_rt, args| Ok(args.first().cloned().unwrap_or(Value::Undefined)));
+    register_method(rt, ucs2, "decode", |_rt, args| Ok(args.first().cloned().unwrap_or(Value::Undefined)));
+    crate::register::set_constant(rt, ns, "ucs2", Value::Object(ucs2));
+    rt.globals.insert("punycode".into(), Value::Object(ns));
 }
 
 /// Tier-Ω.5.FFFFFFF: node:v8 stub. mlly / exsolve / local-pkg / prettier /

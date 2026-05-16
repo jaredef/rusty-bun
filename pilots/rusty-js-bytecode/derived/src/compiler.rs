@@ -2487,34 +2487,125 @@ impl Compiler {
         // Without H1, hoisting `function inner() { return x }` before its
         // enclosing function compiles `let x = ...` would make inner's
         // upvalue resolution miss `x` (it would be `let`-allocated later).
-        let pre_alloc_names: Vec<(String, VariableKind)> = body.iter().flat_map(|s| {
-            let mut out = Vec::new();
-            match s {
-                Stmt::Variable(v) => {
-                    for d in &v.declarators {
-                        for id in d.target.collect_names() {
-                            out.push((id.name.clone(), v.kind));
+        // Tier-Ω.5.vvvvvv: nested-var hoisting per ECMA-262 §9.2.12 (VarScopedDeclarations).
+        // `var` is function-scoped, so `var x` inside if/else/loops/try/switch
+        // must hoist to the function body — otherwise sibling `var x = ...`
+        // declarations in if and else branches allocate separate locals,
+        // and the read-back picks whichever was alloc'd last.
+        // graceful-fs/fs-extra clone.js does
+        //     if (obj instanceof Object) var copy = {...};
+        //     else var copy = Object.create(null);
+        // and `copy` came back undefined from the if-branch.
+        fn collect_var_hoists(stmts: &[Stmt], out: &mut Vec<(String, VariableKind)>) {
+            for s in stmts {
+                match s {
+                    Stmt::Variable(v) if matches!(v.kind, VariableKind::Var) => {
+                        for d in &v.declarators {
+                            for id in d.target.collect_names() {
+                                out.push((id.name.clone(), VariableKind::Var));
+                            }
                         }
                     }
+                    Stmt::Block { body, .. } => collect_var_hoists(body, out),
+                    Stmt::If { consequent, alternate, .. } => {
+                        collect_var_hoists(std::slice::from_ref(consequent.as_ref()), out);
+                        if let Some(a) = alternate {
+                            collect_var_hoists(std::slice::from_ref(a.as_ref()), out);
+                        }
+                    }
+                    Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), out);
+                    }
+                    Stmt::For { body, .. }
+                    | Stmt::ForIn { body, .. }
+                    | Stmt::ForOf { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), out);
+                    }
+                    Stmt::Switch { cases, .. } => {
+                        for c in cases { collect_var_hoists(&c.consequent, out); }
+                    }
+                    Stmt::Try { block, handler, finalizer, .. } => {
+                        collect_var_hoists(std::slice::from_ref(block.as_ref()), out);
+                        if let Some(h) = handler {
+                            collect_var_hoists(std::slice::from_ref(&h.body), out);
+                        }
+                        if let Some(f) = finalizer {
+                            collect_var_hoists(std::slice::from_ref(f.as_ref()), out);
+                        }
+                    }
+                    Stmt::Labelled { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), out);
+                    }
+                    _ => {}
                 }
-                Stmt::FunctionDecl { name: Some(n), .. } => {
-                    out.push((n.name.clone(), VariableKind::Var));
+            }
+        }
+        let pre_alloc_names: Vec<(String, VariableKind)> = {
+            let mut out = Vec::new();
+            for s in body {
+                match s {
+                    Stmt::Variable(v) => {
+                        for d in &v.declarators {
+                            for id in d.target.collect_names() {
+                                out.push((id.name.clone(), v.kind));
+                            }
+                        }
+                    }
+                    Stmt::FunctionDecl { name: Some(n), .. } => {
+                        out.push((n.name.clone(), VariableKind::Var));
+                    }
+                    // Tier-Ω.5.qqqqqq: pre-allocate class-decl names within
+                    // function bodies. Without this, function-decls compiled
+                    // in Phase H2 that reference module-scope classes via
+                    // upvalue can't find the slot — class slots get allocated
+                    // in Phase H3 when the class is executed, but H2's MakeClosure
+                    // captures freezed at compile time. ajv's CJS wrapper had
+                    // `class _Code` + `function _(){ return new _Code(...) }`
+                    // both at body scope; `_` lost its `_Code` upvalue.
+                    Stmt::ClassDecl { name: Some(n), .. } => {
+                        out.push((n.name.clone(), VariableKind::Let));
+                    }
+                    _ => {}
                 }
-                // Tier-Ω.5.qqqqqq: pre-allocate class-decl names within
-                // function bodies. Without this, function-decls compiled
-                // in Phase H2 that reference module-scope classes via
-                // upvalue can't find the slot — class slots get allocated
-                // in Phase H3 when the class is executed, but H2's MakeClosure
-                // captures freezed at compile time. ajv's CJS wrapper had
-                // `class _Code` + `function _(){ return new _Code(...) }`
-                // both at body scope; `_` lost its `_Code` upvalue.
-                Stmt::ClassDecl { name: Some(n), .. } => {
-                    out.push((n.name.clone(), VariableKind::Let));
+                // Tier-Ω.5.vvvvvv: also descend into nested control flow
+                // and collect any `var`-kinded declarations. Skip the top
+                // statement itself (already handled above).
+                match s {
+                    Stmt::Block { body, .. } => collect_var_hoists(body, &mut out),
+                    Stmt::If { consequent, alternate, .. } => {
+                        collect_var_hoists(std::slice::from_ref(consequent.as_ref()), &mut out);
+                        if let Some(a) = alternate {
+                            collect_var_hoists(std::slice::from_ref(a.as_ref()), &mut out);
+                        }
+                    }
+                    Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), &mut out);
+                    }
+                    Stmt::For { body, .. }
+                    | Stmt::ForIn { body, .. }
+                    | Stmt::ForOf { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), &mut out);
+                    }
+                    Stmt::Switch { cases, .. } => {
+                        for c in cases { collect_var_hoists(&c.consequent, &mut out); }
+                    }
+                    Stmt::Try { block, handler, finalizer, .. } => {
+                        collect_var_hoists(std::slice::from_ref(block.as_ref()), &mut out);
+                        if let Some(h) = handler {
+                            collect_var_hoists(std::slice::from_ref(&h.body), &mut out);
+                        }
+                        if let Some(f) = finalizer {
+                            collect_var_hoists(std::slice::from_ref(f.as_ref()), &mut out);
+                        }
+                    }
+                    Stmt::Labelled { body, .. } => {
+                        collect_var_hoists(std::slice::from_ref(body.as_ref()), &mut out);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             out
-        }).collect();
+        };
         let mut pre_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
         for (n, kind) in &pre_alloc_names {
             if !pre_slots.contains_key(n) {

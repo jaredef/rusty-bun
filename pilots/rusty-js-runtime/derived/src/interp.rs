@@ -868,8 +868,17 @@ impl Runtime {
                             self.object_set(*id, key, value.clone());
                         }
                     } else {
+                        // Tier-Ω.5.HHHHHHHH: enrich the non-object target tag
+                        // with the last property-lookup hint per Doc 723 §IV.b
+                        // route-(b). Bare `null.foo = bar` previously surfaced
+                        // 'SetProp foo on non-object (null)'; with the
+                        // receiver-hint the chain points at the upstream
+                        // local that resolved to null.
+                        let target_hint = frame.last_property_lookup.clone()
+                            .map(|s| format!(" (target='{}')", s))
+                            .unwrap_or_default();
                         return Err(RuntimeError::TypeError(
-                            format!("SetProp '{}' on non-object ({})", key,
+                            format!("SetProp '{}' on non-object ({}){}", key,
                                 match &obj_v {
                                     Value::Undefined => "undefined",
                                     Value::Null => "null",
@@ -877,7 +886,9 @@ impl Runtime {
                                     Value::Number(_) => "number",
                                     Value::String(_) => "string",
                                     _ => "other",
-                                })
+                                },
+                                target_hint,
+                            )
                         ));
                     }
                     frame.push(value);
@@ -1087,7 +1098,24 @@ impl Runtime {
                             self.object_set(*id, key, value.clone());
                         }
                     } else {
-                        return Err(RuntimeError::TypeError("SetIndex on non-object".into()));
+                        // Tier-Ω.5.HHHHHHHH: route-(b) enrichment. mobx-state-tree
+                        // and similar libs surfaced opaque 'SetIndex on non-object'
+                        // — adding the key + target value-shape + last-property
+                        // hint names the source-side gap.
+                        let kind = match &obj_v {
+                            Value::Undefined => "undefined",
+                            Value::Null => "null",
+                            Value::Boolean(_) => "boolean",
+                            Value::Number(_) => "number",
+                            Value::String(_) => "string",
+                            _ => "other",
+                        };
+                        let target_hint = frame.last_property_lookup.clone()
+                            .map(|s| format!(" (target='{}')", s))
+                            .unwrap_or_default();
+                        return Err(RuntimeError::TypeError(
+                            format!("SetIndex '{}' on non-object ({}){}", key, kind, target_hint)
+                        ));
                     }
                     frame.push(value);
                 }
@@ -1746,20 +1774,65 @@ fn describe_value_for_diag(rt: &Runtime, v: &Value) -> String {
         }
         Value::Object(id) => {
             let o = rt.obj(*id);
-            let kind = match &o.internal_kind {
-                crate::value::InternalKind::Array => "Array",
-                crate::value::InternalKind::Function(_) => "Function",
-                crate::value::InternalKind::Ordinary => "Object",
-                _ => "Object",
-            };
-            let keys: Vec<String> = o.properties.keys().take(3).cloned().collect();
-            let preview = if keys.is_empty() {
-                String::new()
-            } else {
-                format!(" keys=[{}{}]", keys.join(","),
-                    if o.properties.len() > 3 { ",…" } else { "" })
-            };
-            format!("{}{}", kind, preview)
+            // Tier-Ω.5.HHHHHHHH: richer per-kind preview.
+            match &o.internal_kind {
+                crate::value::InternalKind::Function(fi) => {
+                    // Include the function's [[Name]] when present.
+                    if fi.name.is_empty() {
+                        "Function".to_string()
+                    } else {
+                        format!("Function({})", fi.name)
+                    }
+                }
+                crate::value::InternalKind::Array => {
+                    let len = match o.properties.get("length") {
+                        Some(d) => match &d.value {
+                            Value::Number(n) => *n as usize,
+                            _ => 0,
+                        },
+                        None => 0,
+                    };
+                    // First few elements' shape (recursion-safe — only one level).
+                    let mut elems = Vec::new();
+                    for i in 0..len.min(2) {
+                        match o.properties.get(&i.to_string()).map(|d| &d.value) {
+                            Some(Value::Number(n)) => elems.push(format!("{}", n)),
+                            Some(Value::String(s)) => {
+                                let t = s.as_str();
+                                if t.len() <= 12 { elems.push(format!("{:?}", t)); }
+                                else {
+                                    let mut end = 12;
+                                    while end > 0 && !t.is_char_boundary(end) { end -= 1; }
+                                    elems.push(format!("{:?}…", &t[..end]));
+                                }
+                            }
+                            Some(Value::Boolean(b)) => elems.push(format!("{}", b)),
+                            Some(Value::Null) => elems.push("null".into()),
+                            Some(Value::Undefined) => elems.push("undefined".into()),
+                            Some(_) => elems.push("...".into()),
+                            None => elems.push("hole".into()),
+                        }
+                    }
+                    let preview = if elems.is_empty() { String::new() }
+                                  else { format!(" [{}{}]", elems.join(","),
+                                                if len > 2 { ",…" } else { "" }) };
+                    format!("Array(len={}){}", len, preview)
+                }
+                _ => {
+                    let kind = match &o.internal_kind {
+                        crate::value::InternalKind::Ordinary => "Object",
+                        _ => "Object",
+                    };
+                    let keys: Vec<String> = o.properties.keys().take(3).cloned().collect();
+                    let preview = if keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" keys=[{}{}]", keys.join(","),
+                            if o.properties.len() > 3 { ",…" } else { "" })
+                    };
+                    format!("{}{}", kind, preview)
+                }
+            }
         }
     }
 }

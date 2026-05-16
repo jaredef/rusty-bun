@@ -474,13 +474,20 @@ impl Runtime {
                 ))
             })?;
 
-        // JSON modules deferred: surface a clear message.
+        // Tier-Ω.5.FFFFFFFF: JSON modules. The Ω.5.IIIIIII fix made
+        // require('*.json') return the parsed data through the CJS path
+        // and ESM-default through the namespace; the resolver was still
+        // rejecting bare-specifier .json subpaths at this gate. Drop the
+        // reject — load_module routes .json through evaluate_json_module.
+        // autoprefixer / cssnano / postcss-preset-env all import
+        // 'node-releases/data/processed/envs.json' as a bare specifier.
         if candidate.extension().and_then(|s| s.to_str()) == Some("json") {
-            return Err(RuntimeError::TypeError(format!(
-                "bare specifier '{}' resolved to a .json file ('{}'): JSON modules are not yet supported (deferred from Tier-Ω.5.q scope ceiling)",
-                specifier,
-                candidate.display()
-            )));
+            if candidate.is_file() {
+                let canonical = std::fs::canonicalize(&candidate).map_err(|e| {
+                    RuntimeError::TypeError(format!("canonicalize '{}': {}", candidate.display(), e))
+                })?;
+                return Ok(format!("file://{}", canonical.display()));
+            }
         }
 
         probe_with_extensions(&candidate, specifier)

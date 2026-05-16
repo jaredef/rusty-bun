@@ -106,6 +106,10 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             // Tier-Ω.5.nnnnnn: additional node:* stubs from broader basket
             "node:net" | "net" => "tls",
             "node:diagnostics_channel" | "diagnostics_channel" => "diagnostics_channel",
+            // Tier-Ω.5.FFFFFFF
+            "node:v8" | "v8" => "v8",
+            "node:inspector" | "inspector" => "inspector",
+            "node:vm" | "vm" => "vm",
             "node:async_hooks" | "async_hooks" => "events",
             "node:perf_hooks" | "perf_hooks" => "events",
             "node:worker_threads" | "worker_threads" => "events",

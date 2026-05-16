@@ -449,6 +449,69 @@ pub fn install_all(rt: &mut Runtime) {
     install_module(rt);
     install_http2(rt);
     install_diagnostics_channel(rt);
+    install_v8(rt);
+    install_inspector(rt);
+    install_vm(rt);
+}
+
+/// Tier-Ω.5.FFFFFFF: node:v8 stub. mlly / exsolve / local-pkg / prettier /
+/// execa read `v8.getHeapStatistics()` or `v8.serialize/deserialize` at
+/// module-init for diagnostic / structured-clone surfaces. Stubs return
+/// plausible defaults; serialize errors on actual call.
+pub fn install_v8(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    register_method(rt, ns, "getHeapStatistics", |rt, _args| {
+        let o = new_object(rt);
+        for (k, v) in &[
+            ("total_heap_size", 1024.0 * 1024.0 * 64.0),
+            ("total_heap_size_executable", 1024.0 * 1024.0),
+            ("total_physical_size", 1024.0 * 1024.0 * 64.0),
+            ("total_available_size", 1024.0 * 1024.0 * 1024.0),
+            ("used_heap_size", 1024.0 * 1024.0 * 16.0),
+            ("heap_size_limit", 1024.0 * 1024.0 * 1024.0 * 2.0),
+            ("malloced_memory", 1024.0 * 64.0),
+            ("peak_malloced_memory", 1024.0 * 128.0),
+            ("does_zap_garbage", 0.0),
+            ("number_of_native_contexts", 1.0),
+            ("number_of_detached_contexts", 0.0),
+            ("total_global_handles_size", 1024.0 * 8.0),
+            ("used_global_handles_size", 1024.0 * 4.0),
+            ("external_memory", 0.0),
+        ] {
+            rt.object_set(o, (*k).into(), Value::Number(*v));
+        }
+        Ok(Value::Object(o))
+    });
+    register_method(rt, ns, "getHeapSpaceStatistics", |rt, _args| {
+        Ok(Value::Object(rt.alloc_object(RtObject::new_array())))
+    });
+    register_method(rt, ns, "getHeapCodeStatistics", |rt, _args| {
+        Ok(Value::Object(new_object(rt)))
+    });
+    for m in &["serialize", "deserialize", "writeHeapSnapshot", "setFlagsFromString", "cachedDataVersionTag"] {
+        register_method(rt, ns, m, stub("v8", m));
+    }
+    rt.globals.insert("v8".into(), Value::Object(ns));
+}
+
+/// Tier-Ω.5.FFFFFFF: node:inspector stub.
+pub fn install_inspector(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    for m in &["open", "close", "url", "waitForDebugger"] {
+        register_method(rt, ns, m, stub("inspector", m));
+    }
+    rt.globals.insert("inspector".into(), Value::Object(ns));
+}
+
+/// Tier-Ω.5.FFFFFFF: node:vm stub. Several packages do feature-probes
+/// (`typeof vm.runInContext === 'function'`); methods error on call.
+pub fn install_vm(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    for m in &["runInThisContext", "runInContext", "runInNewContext", "createContext",
+              "compileFunction", "Script", "SourceTextModule", "SyntheticModule", "measureMemory"] {
+        register_method(rt, ns, m, stub("vm", m));
+    }
+    rt.globals.insert("vm".into(), Value::Object(ns));
 }
 
 /// Tier-Ω.5.CCCCCCC: node:diagnostics_channel stub. lru-cache /

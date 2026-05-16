@@ -3898,9 +3898,24 @@ impl Compiler {
                     }
                     encode_op(&mut self.bytecode, Op::Pop);
                 }
-                ClassMember::StaticBlock { span: b_span, .. } => {
-                    return Err(self.err(*b_span,
-                        "static initializer blocks not yet supported (Tier-Ω.5.f scope ceiling)"));
+                ClassMember::StaticBlock { body, span: _b_span } => {
+                    // Tier-Ω.5.XXXXXXX: static initializer blocks per ECMA
+                    // 2022 (stage 4). `class C { static { init; } }` runs the
+                    // body once at class-evaluation time with `this` bound
+                    // to the class. v1 deviation: compile the statements
+                    // inline at class-init time without explicit `this`
+                    // rebinding — most static blocks reference the class
+                    // via its lexical name (which is in scope). intl-segmenter
+                    // / puppeteer-core / many modern packages hit this; full
+                    // this-rebinding queued.
+                    //
+                    // The member loop's invariant is empty operand stack
+                    // between members; statements should not net-push.
+                    // compile_stmt's expression-statement path emits Pop
+                    // so we don't drift. No save/restore needed.
+                    for s in body {
+                        self.compile_stmt(s)?;
+                    }
                 }
             }
         }

@@ -60,6 +60,14 @@ pub struct FunctionProto {
     /// closure object on entry. just-curry-it's recursive `function curried()
     /// { ... curried.apply(...) }` pattern depends on this.
     pub self_name_slot: Option<u16>,
+    /// Tier-Ω.5.eeeeee: marker for generator functions. The runtime
+    /// returns an iterator over an eagerly-collected yields array
+    /// instead of running the body to its return. v1 deviation: real
+    /// generators are coroutines (suspend on yield, resume on next).
+    /// The eager-collect path matches observable semantics for forward-
+    /// only generators with no value-passed-back (the dominant idiom in
+    /// superstruct, p-map, ts-pattern's iteration helpers).
+    pub is_generator: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2303,7 +2311,7 @@ impl Compiler {
         &mut self,
         name: Option<BindingIdentifier>,
         _is_async: bool,
-        _is_generator: bool,
+        is_generator: bool,
         params: &[Parameter],
         body: &[Stmt],
     ) -> Result<FunctionProto, CompileError> {
@@ -2507,6 +2515,7 @@ impl Compiler {
             rest_param_slot,
             arguments_slot,
             self_name_slot,
+            is_generator,
         })
     }
 

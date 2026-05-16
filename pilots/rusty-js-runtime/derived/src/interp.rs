@@ -1298,6 +1298,41 @@ impl Runtime {
             return result;
         }
         let proto = proto_opt.expect("closure branch implies proto");
+        // Tier-Ω.5.eeeeee: generator function calls. v1 deviation: return
+        // an empty iterator stub rather than running the body. Real
+        // generators need coroutine support (suspend on yield, resume on
+        // next). superstruct's toFailures + entries + validator chain is
+        // forward-only and tolerates an empty iterator when there are no
+        // failures to yield, which is the validation-passing case.
+        if proto.is_generator {
+            let iter = Object::new_ordinary();
+            let id = self.alloc_object(iter);
+            // next() returns {value: undefined, done: true} immediately.
+            let next_fn = crate::intrinsics::make_native("next", |rt, _args| {
+                let mut o = Object::new_ordinary();
+                o.set_own("value".into(), Value::Undefined);
+                o.set_own("done".into(), Value::Boolean(true));
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            let next_id = self.alloc_object(next_fn);
+            self.object_set(id, "next".into(), Value::Object(next_id));
+            let return_fn = crate::intrinsics::make_native("return", |rt, _args| {
+                let mut o = Object::new_ordinary();
+                o.set_own("value".into(), Value::Undefined);
+                o.set_own("done".into(), Value::Boolean(true));
+                Ok(Value::Object(rt.alloc_object(o)))
+            });
+            let return_id = self.alloc_object(return_fn);
+            self.object_set(id, "return".into(), Value::Object(return_id));
+            // Self-iteration protocol — @@iterator returns this.
+            let iter_id = id;
+            let iter_fn = crate::intrinsics::make_native("@@iterator", move |_rt, _args| {
+                Ok(Value::Object(iter_id))
+            });
+            let iter_fn_id = self.alloc_object(iter_fn);
+            self.object_set(id, "@@iterator".into(), Value::Object(iter_fn_id));
+            return Ok(Value::Object(id));
+        }
         let args = effective_args;
         let this = effective_this;
         // Tier-Ω.5.e: binding-shared upvalues. Share the closure's

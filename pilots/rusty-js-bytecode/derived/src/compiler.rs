@@ -3357,7 +3357,7 @@ impl Compiler {
     fn compile_class(
         &mut self,
         span: Span,
-        _name: Option<&BindingIdentifier>,
+        name: Option<&BindingIdentifier>,
         super_class: Option<&Expr>,
         members: &[ClassMember],
     ) -> Result<(), CompileError> {
@@ -3368,6 +3368,28 @@ impl Compiler {
         let super_proto_name = format!("<class${}.super.proto>", seq);
         let proto_name = format!("<class${}.proto>", seq);
         let ctor_name = format!("<class${}.ctor>", seq);
+
+        // Tier-Ω.5.uuuuu: class-expression self-name binding per ECMA-262
+        // §15.6.7. A named class expression binds its name inside the body
+        // (methods + static methods) to the class itself. Pre-allocate the
+        // slot here so methods compiled below resolve the name to an
+        // upvalue pointing at this slot; we'll store the constructed class
+        // into the slot once it's built. Marked's b=class l{static parse(){
+        // return new l(t).parse(e); }} pattern depends on this.
+        let self_name_slot = if let Some(n) = name {
+            // Skip if the outer scope already has this name resolving to
+            // something — class declarations get handled by the caller
+            // and write to the outer binding; here we only handle class
+            // EXPRESSIONS, where caller doesn't pre-bind.
+            let slot = self.alloc_local(LocalDescriptor {
+                name: n.name.clone(), kind: VariableKind::Const, depth: 0,
+            });
+            // Initialize to Undefined; final ctor written later.
+            encode_op(&mut self.bytecode, Op::PushUndef);
+            encode_op(&mut self.bytecode, Op::StoreLocal);
+            encode_u16(&mut self.bytecode, slot);
+            Some(slot)
+        } else { None };
 
         // ── 1. extends evaluation ──────────────────────────────────
         let super_ctor_slot = if let Some(sc) = super_class {
@@ -3683,6 +3705,15 @@ impl Compiler {
             }
         }
 
+        // Tier-Ω.5.uuuuu: write the finalized constructor into the
+        // self-name slot before pushing as expression value, so methods
+        // (which captured the slot as an upvalue) see the real class.
+        if let Some(slot) = self_name_slot {
+            encode_op(&mut self.bytecode, Op::LoadLocal);
+            encode_u16(&mut self.bytecode, ctor_slot);
+            encode_op(&mut self.bytecode, Op::StoreLocal);
+            encode_u16(&mut self.bytecode, slot);
+        }
         // ── result: leave the constructor on the stack ─────────────
         encode_op(&mut self.bytecode, Op::LoadLocal);
         encode_u16(&mut self.bytecode, ctor_slot);

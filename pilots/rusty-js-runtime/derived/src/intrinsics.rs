@@ -1445,7 +1445,44 @@ impl Runtime {
         let bi_id = self.alloc_object(bi_obj);
         register_method(self, bi_id, "asIntN", |_rt, args| Ok(args.get(1).cloned().unwrap_or(Value::Undefined)));
         register_method(self, bi_id, "asUintN", |_rt, args| Ok(args.get(1).cloned().unwrap_or(Value::Undefined)));
+        // Tier-Ω.5.oooooo: BigInt.prototype with valueOf + toString. unbox-
+        // primitive / is-bigint reach for `BigInt.prototype.valueOf`.
+        let bi_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, bi_proto, "valueOf", |rt, _args| {
+            match rt.current_this() {
+                Value::BigInt(s) => Ok(Value::BigInt(s)),
+                _ => Err(RuntimeError::TypeError("BigInt.prototype.valueOf: this is not a BigInt".into())),
+            }
+        });
+        register_method(self, bi_proto, "toString", |rt, _args| {
+            match rt.current_this() {
+                Value::BigInt(s) => Ok(Value::String(s)),
+                _ => Err(RuntimeError::TypeError("BigInt.prototype.toString: this is not a BigInt".into())),
+            }
+        });
+        self.object_set(bi_id, "prototype".into(), Value::Object(bi_proto));
         self.globals.insert("BigInt".into(), Value::Object(bi_id));
+        // Boolean ctor with prototype.valueOf.
+        let bool_obj = make_native("Boolean", |_rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            Ok(Value::Boolean(crate::abstract_ops::to_boolean(&v)))
+        });
+        let bool_id = self.alloc_object(bool_obj);
+        let bool_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, bool_proto, "valueOf", |rt, _args| {
+            match rt.current_this() {
+                Value::Boolean(b) => Ok(Value::Boolean(b)),
+                _ => Err(RuntimeError::TypeError("Boolean.prototype.valueOf: this is not a Boolean".into())),
+            }
+        });
+        register_method(self, bool_proto, "toString", |rt, _args| {
+            match rt.current_this() {
+                Value::Boolean(b) => Ok(Value::String(Rc::new(b.to_string()))),
+                _ => Err(RuntimeError::TypeError("Boolean.prototype.toString: this is not a Boolean".into())),
+            }
+        });
+        self.object_set(bool_id, "prototype".into(), Value::Object(bool_proto));
+        self.globals.insert("Boolean".into(), Value::Object(bool_id));
         self.install_error_globals();
         self.install_reflect();
         self.install_map_set_globals();

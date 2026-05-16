@@ -124,6 +124,15 @@ pub fn install(rt: &mut Runtime) {
     register_method(rt, stream, "pipeline", |_rt, _args| Ok(Value::Undefined));
     register_method(rt, stream, "finished", |_rt, _args| Ok(Value::Undefined));
 
+    // Tier-Ω.5.MMMMMMMM: stream.EventEmitter — Node re-exports
+    // events.EventEmitter on node:stream for legacy compat. node-cron and
+    // others do `const stream = require('stream'); class X extends
+    // stream.EventEmitter`. Forward to the events global's ctor.
+    if let Value::Object(ee_ctor) = rt.globals.get("events").cloned().unwrap_or(Value::Undefined) {
+        rt.object_set(stream, "EventEmitter".into(), Value::Object(ee_ctor));
+        rt.object_set(stream, "EventEmitterAsyncResource".into(), Value::Object(ee_ctor));
+    }
+
     set_constant(rt, stream, "default", Value::Object(stream));
     rt.globals.insert("stream".into(), Value::Object(stream));
 }

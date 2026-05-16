@@ -49,6 +49,17 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     zlib::install(rt);
     tty::install(rt);
     events::install(rt);
+    // Tier-Ω.5.MMMMMMMM: post-install pass to wire stream.EventEmitter from
+    // the events ctor (Node re-exports it on node:stream for legacy compat).
+    // Done as a post-step rather than reordering events-before-stream
+    // because earlier installs (http, crypto, etc.) depend on stream being
+    // resolved at their times.
+    if let (Some(Value::Object(ee_ctor)), Some(Value::Object(stream_ns))) =
+        (rt.globals.get("events").cloned(), rt.globals.get("stream").cloned())
+    {
+        rt.object_set(stream_ns, "EventEmitter".into(), Value::Object(ee_ctor));
+        rt.object_set(stream_ns, "EventEmitterAsyncResource".into(), Value::Object(ee_ctor));
+    }
     node_stubs::install_all(rt);
     install_builtin_module_resolver(rt);
     // Tier-Ω.5.t: re-snapshot globalThis so host-v2's added globals

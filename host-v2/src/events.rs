@@ -303,6 +303,10 @@ pub fn install(rt: &mut Runtime) {
     // ctor so `const EE = require('events'); new EE()` works and
     // `events.on / events.once / events.EventEmitter` also resolve.
     rt.object_set(ctor, "EventEmitter".into(), Value::Object(ctor));
+    // Tier-Ω.5.MMMMMMMM: EventEmitterAsyncResource — Node 17+ class.
+    // piscina extends it for worker-pool dispatch. Aliased to base
+    // EventEmitter (async-resource wiring deferred).
+    rt.object_set(ctor, "EventEmitterAsyncResource".into(), Value::Object(ctor));
     rt.object_set(ctor, "default".into(), Value::Object(ctor));
     register_method(rt, ctor, "on", |_rt, _args| Ok(Value::Undefined));
     register_method(rt, ctor, "once", |_rt, _args| Ok(Value::Undefined));

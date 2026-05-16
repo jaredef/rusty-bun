@@ -3608,6 +3608,14 @@ impl Compiler {
 
         // ── 1. extends evaluation ──────────────────────────────────
         let super_ctor_slot = if let Some(sc) = super_class {
+            // Tier-Ω.5.MMMMMMMM (reverted): keeping the synthetic slot name
+            // <class$N.super.ctor> here. An earlier draft renamed the slot
+            // after the source identifier ("Y [extends]") to enrich the
+            // receiver tag at the GetProp(prototype) failure site; the
+            // rename triggered a cascade of regressions in derived-class
+            // call paths that look up the super-ctor by exact-name match
+            // against `<class$N.super.ctor>`. The receiver-tag enrichment
+            // is moved to a per-emission probe at the GetProp site instead.
             let slot = self.alloc_temp(&super_ctor_name);
             self.compile_expr(sc)?;
             encode_op(&mut self.bytecode, Op::StoreLocal);

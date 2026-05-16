@@ -1167,3 +1167,52 @@ The Doc 724 forward-predictor naturally extends to JIT planning: each Op site th
 **Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. Read prior RESUME VECTORs in reverse chronological order for engagement archaeology. Continue closing-problems work on the remaining 5 errors, or pivot to JIT entry by selecting one of the three candidate shapes above, or both in parallel.
 
 The Pin-Art property (Doc 714 C14) holds across all 64+ substrate moves so far this engagement: each named, each traceable bidirectionally to specific package failure(s), each compounding via Doc 722's reflexive structure. Doc 724's forward predictor names that the bidirectionality is also a workflow shift, not just a property — when the predictor is built, substrate moves get prioritized by frequency-of-need before any package is run.
+
+
+---
+
+## RESUME VECTOR EXTENSION 4 — 2026-05-16 (engine-features stretch + Doc 724 forward predictor + four-frontier hold)
+
+**State at this anchor: expanded route-2 67/71 (94.4%), err=3, two BADs (dayjs cleared, upath cleared via Ω.5.ffffff, micromark BAD).** Up from prior anchor's 64/71. The 71-sample has effectively saturated; further closings require engine-feature work or library-internal multi-day bisects.
+
+**Engine-features stretch landed nine substrate moves** (Ω.5.eeeeee through Ω.5.llllll):
+- Ω.5.eeeeee: generator empty-iterator stub (superseded by gggggg).
+- Ω.5.ffffff: for-of destructured-name per-iteration fresh binding per ECMA §14.7.5.5. upath lifted.
+- Ω.5.gggggg: **eager-collect generators** with yield + yield* via __yield_push__ / __yield_delegate__ helpers. superstruct lifted.
+- Ω.5.hhhhhh: instanceof dispatches Symbol.hasInstance per ECMA §13.10.1 step 4. ndjson advanced one hop.
+- Ω.5.iiiiii: Array.prototype.flat / flatMap + String.prototype.matchAll.
+- Ω.5.jjjjjj: TypedArray @@iterator (for-of over Uint8Array etc.).
+- Ω.5.kkkkkk: class get/set members install as real accessor descriptors via __install_accessor__ helper.
+- Ω.5.llllll: node:events module-exports IS the EventEmitter ctor (Node convention) + node:fs/promises resolves. enquirer lifted.
+
+**Doc 724 forward predictor v1 published.** host/tools/feature-predict.sh + feature-prediction.json. Walked 333 packages in the sandbox; emitted required-feature sets per package; intersected with engine capability set. The §IX testable prediction empirically confirmed:
+- predictor said symbolHasInstance gated 4 packages — Ω.5.hhhhhh fixed it, ndjson advanced
+- predictor said generators gated 10 packages — Ω.5.gggggg fixed it, superstruct lifted
+- predictor said classFields gated 16 packages (the accessor part) — Ω.5.kkkkkk fixed the get/set accessor descriptors
+
+The bidirectional traceability property (Doc 714 C14) confirmed: backward walks (route-(b) trace from failure to feature) and forward walks (predictor AST scan to feature) read the same map.
+
+**Four frontier failures held (engine-feature-deep or library-bisect):**
+- **ndjson**: readable-stream userspace package; deep chain through Writable/Duplex prototype inheritance. Symbol.hasInstance gate cleared; next obstacle is `_writableState.length` undefined at module load — origin unknown, multi-day bisect.
+- **pako**: minified deflate state machine; argc=2 `(method='next_in')` chain through state object's func dispatch. Library-internal multi-day bisect.
+- **immer**: real Proxy interception required. Pass-through Proxy can't store draft state on the target; `state.type_` undefined when immer iterates scope. Real Proxy = multi-day engine work (InternalKind::Proxy variant + Op::GetProp/SetProp dispatch via handler.get/set, etc).
+- **micromark**: state machine runs without error but produces empty string output. Library-internal multi-day bisect.
+
+**JIT planning entry preserved** at trajectory §EXT3. Doc 724 predictor's Op-frequency map (not yet built but next deliverable) would directly inform IC priority. Three JIT shapes: (1) inline-cache layer first; (2) baseline JIT via Cranelift; (3) hand-rolled template JIT (Pin-Art-rigorous).
+
+**Predictor's remaining priority queue** (after this stretch):
+```
+ 16  classFields            class { #priv = ... }          [PARTIAL]  ← partial: private fields work, static blocks don't
+ 12  symbolAsyncIterator    Symbol.asyncIterator           [GAP]
+ 11  asyncIterators         for await of                   [GAP]
+  6  fetch                  fetch()                        [PARTIAL]
+  5  proxyCtor              new Proxy                      [PARTIAL]
+  3  regexUnicodeProp       regex \\p{...}                 [GAP]
+  3  nodeStreamReadable     stream.Readable                [PARTIAL]
+```
+
+Queue went from 14 entries at session start to 7 across the closings. The shape is converging on (a) real Proxy interception, (b) real async iteration / for-await, (c) real fetch + Request/Response, (d) Unicode regex properties — each multi-day in its own right.
+
+**Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. The 71-sample has saturated; the next move is either broadening the basket (top-500 npm) to surface what predictions break at scale, or implementing real Proxy interception (the highest-leverage remaining engine feature gate).
+
+The Pin-Art property continues to hold across all ~75 substrate moves committed this engagement. Each named, each traceable bidirectionally, each compounding via Doc 722's reflexive structure.

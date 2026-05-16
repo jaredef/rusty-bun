@@ -1686,7 +1686,29 @@ impl Runtime {
             // NewTarget supplies ≥ 2 args, treat them as date components.
             // The prior order let Date(2026,4,15) fall through to the
             // single-Number arm and treat 2026 as a unix-ms timestamp.
-            let ms = if args.len() >= 2 {
+            // Tier-Ω.5.qqqqq: when single arg is a Date / object, coerce
+            // via valueOf per ECMA-262 §21.4.2.1. `new Date(otherDate)`
+            // should copy the time, not yield epoch zero.
+            let ms = if args.len() == 1 {
+                if let Some(Value::Object(id)) = args.first() {
+                    let v = rt.object_get(*id, "valueOf");
+                    if matches!(v, Value::Object(_)) {
+                        let r = rt.call_function(v, Value::Object(*id), Vec::new())?;
+                        if let Value::Number(n) = r {
+                            let mut o = Object::new_ordinary();
+                            o.proto = Some(proto_for_ctor);
+                            let new_id = rt.alloc_object(o);
+                            rt.object_set(new_id, "__date_ms".into(), Value::Number(n));
+                            return Ok(Value::Object(new_id));
+                        }
+                    }
+                }
+                match args.first() {
+                    Some(Value::Number(n)) => *n,
+                    Some(Value::String(s)) => parse_date_string(s.as_str()),
+                    _ => 0.0,
+                }
+            } else if args.len() >= 2 {
                 let y = match &args[0] { Value::Number(n) => *n as i64, _ => 0 };
                 let mo = match &args[1] { Value::Number(n) => *n as i64, _ => 0 };
                 let d = args.get(2).map(|v| match v { Value::Number(n) => *n as i64, _ => 1 }).unwrap_or(1);
@@ -1695,15 +1717,10 @@ impl Runtime {
                 let se = args.get(5).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
                 let mss = args.get(6).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
                 (ymd_to_ms(y, mo, d) + h * 3_600_000 + mi * 60_000 + se * 1000 + mss) as f64
-            } else { match args.first() {
-                None => {
-                    use std::time::{SystemTime, UNIX_EPOCH};
-                    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
-                }
-                Some(Value::Number(n)) => *n,
-                Some(Value::String(s)) => parse_date_string(s.as_str()),
-                _ => 0.0,
-            }};
+            } else {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
+            };
             let mut o = Object::new_ordinary();
             o.proto = Some(proto_for_ctor);
             let id = rt.alloc_object(o);

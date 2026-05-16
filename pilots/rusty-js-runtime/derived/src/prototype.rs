@@ -688,6 +688,40 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
         let n = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as usize;
         Ok(Value::String(Rc::new(s.repeat(n))))
     });
+    // Tier-Ω.5.ppppp: padStart / padEnd per ECMA-262 §22.1.3.16 / §22.1.3.17.
+    // date-fns / left-pad / many formatting libs reach for these.
+    register_method(rt, host, "padStart", |rt, args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let target = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as usize;
+        let pad = match args.get(1) {
+            Some(Value::Undefined) | None => " ".to_string(),
+            Some(v) => abstract_ops::to_string(v).as_str().to_string(),
+        };
+        if s.chars().count() >= target || pad.is_empty() {
+            return Ok(Value::String(Rc::new(s)));
+        }
+        let need = target - s.chars().count();
+        let mut prefix = String::new();
+        while prefix.chars().count() < need { prefix.push_str(&pad); }
+        let prefix: String = prefix.chars().take(need).collect();
+        Ok(Value::String(Rc::new(prefix + &s)))
+    });
+    register_method(rt, host, "padEnd", |rt, args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let target = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as usize;
+        let pad = match args.get(1) {
+            Some(Value::Undefined) | None => " ".to_string(),
+            Some(v) => abstract_ops::to_string(v).as_str().to_string(),
+        };
+        if s.chars().count() >= target || pad.is_empty() {
+            return Ok(Value::String(Rc::new(s)));
+        }
+        let need = target - s.chars().count();
+        let mut suffix = String::new();
+        while suffix.chars().count() < need { suffix.push_str(&pad); }
+        let suffix: String = suffix.chars().take(need).collect();
+        Ok(Value::String(Rc::new(s + &suffix)))
+    });
     register_method(rt, host, "replace", |rt, args| {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
         let needle = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined))

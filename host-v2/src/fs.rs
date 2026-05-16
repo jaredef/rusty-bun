@@ -301,6 +301,72 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::Object(p))
     });
 
+    // Tier-Ω.5.BBBBBBB: fs.promises namespace + fs.createReadStream stub.
+    // fetch-blob's from.js does
+    //     import { statSync, createReadStream, promises as fs } from 'node:fs'
+    //     const { stat } = fs
+    // fs.promises was absent (the async surface lives directly on fs, not
+    // under .promises). Adding the namespace as a property-mirror of the
+    // async surface satisfies the destructure-at-module-init pattern; the
+    // returned promise from stat resolves to a stat-shaped object.
+    let promises = new_object(rt);
+    register_method(rt, promises, "stat", |rt, args| {
+        let path = arg_string(args, 0);
+        match std::fs::metadata(&path) {
+            Ok(md) => Ok(Value::Object(stat_object(rt, &md))),
+            Err(e) => Err(RuntimeError::TypeError(format!("fs.promises.stat: {}", e))),
+        }
+    });
+    register_method(rt, promises, "readFile", |rt, args| {
+        let path = arg_string(args, 0);
+        let encoding = arg_encoding(args, 1);
+        match std::fs::read(&path) {
+            Ok(bytes) => Ok(bytes_to_value(rt, &bytes, encoding.as_deref())),
+            Err(e) => Err(RuntimeError::TypeError(format!("fs.promises.readFile: {}", e))),
+        }
+    });
+    register_method(rt, promises, "writeFile", |rt, args| {
+        let path = arg_string(args, 0);
+        let encoding = arg_encoding(args, 2);
+        let data = match args.get(1) {
+            Some(v) => value_to_bytes(rt, v, encoding.as_deref()),
+            None => Vec::new(),
+        };
+        match std::fs::write(&path, &data) {
+            Ok(()) => Ok(Value::Undefined),
+            Err(e) => Err(RuntimeError::TypeError(format!("fs.promises.writeFile: {}", e))),
+        }
+    });
+    register_method(rt, promises, "access", |_rt, args| {
+        let path = arg_string(args, 0);
+        if std::path::Path::new(&path).exists() { Ok(Value::Undefined) }
+        else { Err(RuntimeError::TypeError(format!("fs.promises.access: ENOENT: {}", path))) }
+    });
+    register_method(rt, promises, "mkdir", |_rt, args| {
+        let path = arg_string(args, 0);
+        match std::fs::create_dir_all(&path) {
+            Ok(()) => Ok(Value::Undefined),
+            Err(e) => Err(RuntimeError::TypeError(format!("fs.promises.mkdir: {}", e))),
+        }
+    });
+    register_method(rt, promises, "unlink", |_rt, args| {
+        let path = arg_string(args, 0);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(Value::Undefined),
+            Err(e) => Err(RuntimeError::TypeError(format!("fs.promises.unlink: {}", e))),
+        }
+    });
+    rt.object_set(fs, "promises".into(), Value::Object(promises));
+
+    // fs.createReadStream stub — fetch-blob destructures it at module-init
+    // but only invokes it inside .stream() at runtime. Stub errors on call.
+    let create_read_stream = make_callable(rt, "createReadStream", |_rt, _args| {
+        Err(RuntimeError::TypeError(
+            "fs.createReadStream not yet implemented (Tier-Ω.5.BBBBBBB stub)".into()
+        ))
+    });
+    rt.object_set(fs, "createReadStream".into(), Value::Object(create_read_stream));
+
     // Tier-Ω.5.wwwwww: fs.realpath / fs.realpathSync with .native sub-property.
     // glob / rimraf / fs-extra read `fs.realpath.native` at module init —
     // Node exposes both fs.realpath (libuv-backed) and fs.realpath.native

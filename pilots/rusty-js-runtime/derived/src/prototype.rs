@@ -394,6 +394,66 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         if idx < 0 || idx >= len { return Ok(Value::Undefined); }
         Ok(rt.object_get(id, &idx.to_string()))
     });
+    // Tier-Ω.5.iiiiii: Array.prototype.flat per ECMA §23.1.3.10.
+    register_method(rt, host, "flat", |rt, args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.flat: this not Array".into())),
+        };
+        let depth = args.first().map(abstract_ops::to_number).unwrap_or(1.0) as i64;
+        let out = rt.alloc_object(Object::new_array());
+        fn flat_into(rt: &mut Runtime, src: ObjectRef, out: ObjectRef, mut out_idx: usize, depth: i64) -> usize {
+            let len = rt.array_length(src);
+            for i in 0..len {
+                let v = rt.object_get(src, &i.to_string());
+                if depth > 0 {
+                    if let Value::Object(nid) = &v {
+                        if matches!(rt.obj(*nid).internal_kind, InternalKind::Array) {
+                            out_idx = flat_into(rt, *nid, out, out_idx, depth - 1);
+                            continue;
+                        }
+                    }
+                }
+                rt.object_set(out, out_idx.to_string(), v);
+                out_idx += 1;
+            }
+            out_idx
+        }
+        let final_len = flat_into(rt, id, out, 0, depth);
+        rt.object_set(out, "length".into(), Value::Number(final_len as f64));
+        Ok(Value::Object(out))
+    });
+    register_method(rt, host, "flatMap", |rt, args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.flatMap: this not Array".into())),
+        };
+        let cb = args.first().cloned().ok_or_else(||
+            RuntimeError::TypeError("Array.prototype.flatMap: callback required".into()))?;
+        let len = rt.array_length(id);
+        let out = rt.alloc_object(Object::new_array());
+        let mut out_idx = 0usize;
+        for i in 0..len {
+            let v = rt.object_get(id, &i.to_string());
+            let mapped = rt.call_function(cb.clone(), Value::Undefined,
+                vec![v, Value::Number(i as f64), Value::Object(id)])?;
+            if let Value::Object(nid) = &mapped {
+                if matches!(rt.obj(*nid).internal_kind, InternalKind::Array) {
+                    let n = rt.array_length(*nid);
+                    for j in 0..n {
+                        let nv = rt.object_get(*nid, &j.to_string());
+                        rt.object_set(out, out_idx.to_string(), nv);
+                        out_idx += 1;
+                    }
+                    continue;
+                }
+            }
+            rt.object_set(out, out_idx.to_string(), mapped);
+            out_idx += 1;
+        }
+        rt.object_set(out, "length".into(), Value::Number(out_idx as f64));
+        Ok(Value::Object(out))
+    });
     register_method(rt, host, "map", |rt, args| {
         let id = match rt.current_this() {
             Value::Object(id) => id,
@@ -722,6 +782,38 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
         let n = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as usize;
         Ok(Value::String(Rc::new(s.repeat(n))))
+    });
+    // Tier-Ω.5.iiiiii: String.prototype.matchAll per ECMA §22.1.3.13.
+    // Returns an iterator over all matches of a regex with the /g flag.
+    register_method(rt, host, "matchAll", |rt, args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let regex_v = args.first().cloned().unwrap_or(Value::Undefined);
+        let regex_id = match &regex_v {
+            Value::Object(id) => *id,
+            _ => return Err(RuntimeError::TypeError("matchAll requires a regex".into())),
+        };
+        let out = rt.alloc_object(Object::new_array());
+        // Iterate via repeated regex.exec, advancing lastIndex.
+        rt.object_set(regex_id, "lastIndex".into(), Value::Number(0.0));
+        let exec = rt.object_get(regex_id, "exec");
+        if !matches!(exec, Value::Object(_)) {
+            return Err(RuntimeError::TypeError("matchAll: regex.exec not callable".into()));
+        }
+        let mut idx = 0usize;
+        loop {
+            let r = rt.call_function(exec.clone(), regex_v.clone(), vec![Value::String(Rc::new(s.clone()))])?;
+            match r {
+                Value::Null | Value::Undefined => break,
+                Value::Object(match_id) => {
+                    rt.object_set(out, idx.to_string(), Value::Object(match_id));
+                    idx += 1;
+                }
+                _ => break,
+            }
+            if idx > 100000 { break; } // safety
+        }
+        rt.object_set(out, "length".into(), Value::Number(idx as f64));
+        Ok(Value::Object(out))
     });
     // Tier-Ω.5.ppppp: padStart / padEnd per ECMA-262 §22.1.3.16 / §22.1.3.17.
     // date-fns / left-pad / many formatting libs reach for these.

@@ -1159,9 +1159,24 @@ impl Runtime {
                     // have been overwritten by arg-load).
                     let method_name = frame.pending_method_name.take()
                         .or_else(|| frame.last_property_lookup.clone());
+                    // Tier-Ω.5.MMMMMMM: route-(b) escalation per Doc 723 §IV.b.
+                    // When the method lookup yields undefined and the method
+                    // name is itself uninformative (e.g. '@@iterator' — Symbol-
+                    // keyed protocol probe, where the receiver matters more
+                    // than the method name), the fault tag is below Doc 723's
+                    // threshold of diagnostic semanticity. Pre-compute a
+                    // receiver-shape tag at this engine site so the bisect
+                    // has Layer-B context. Compounds across every CallMethod
+                    // failure at this site.
+                    let receiver_tag = describe_value_for_diag(self, &receiver);
                     let result = self.call_function(method, receiver, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
-                            RuntimeError::TypeError(format!("{} (method='{}')", msg, method_name.unwrap_or_else(|| "?".into())))
+                            RuntimeError::TypeError(format!(
+                                "{} (method='{}') (receiver={})",
+                                msg,
+                                method_name.unwrap_or_else(|| "?".into()),
+                                receiver_tag,
+                            ))
                         }
                         // Tier-Ω.5.ssss: same route-(b) escalation for method-
                         // dispatch. Native methods like Object.assign throw with
@@ -1653,5 +1668,46 @@ impl<'a> Frame<'a> {
             return Err(RuntimeError::TypeError("operand stack peek underflow".into()));
         }
         Ok(&self.operand_stack[len - 1 - depth])
+    }
+}
+
+/// Tier-Ω.5.MMMMMMM: diagnostic helper. Render a Value into a compact tag
+/// for fault-message enrichment. Primitives report their type name + a
+/// short value preview; Objects report kind + up to 3 own-key names so the
+/// bisect can identify the receiver shape without an interactive trace.
+fn describe_value_for_diag(rt: &Runtime, v: &Value) -> String {
+    match v {
+        Value::Undefined => "undefined".into(),
+        Value::Null => "null".into(),
+        Value::Boolean(b) => format!("Boolean({})", b),
+        Value::Number(n) => format!("Number({})", n),
+        Value::BigInt(s) => format!("BigInt({})", s),
+        Value::String(s) => {
+            let t = s.as_str();
+            if t.len() <= 24 { format!("String({:?})", t) }
+            else {
+                // Truncate at char boundary, not byte index.
+                let mut end = 24;
+                while end > 0 && !t.is_char_boundary(end) { end -= 1; }
+                format!("String({:?}…)", &t[..end])
+            }
+        }
+        Value::Object(id) => {
+            let o = rt.obj(*id);
+            let kind = match &o.internal_kind {
+                crate::value::InternalKind::Array => "Array",
+                crate::value::InternalKind::Function(_) => "Function",
+                crate::value::InternalKind::Ordinary => "Object",
+                _ => "Object",
+            };
+            let keys: Vec<String> = o.properties.keys().take(3).cloned().collect();
+            let preview = if keys.is_empty() {
+                String::new()
+            } else {
+                format!(" keys=[{}{}]", keys.join(","),
+                    if o.properties.len() > 3 { ",…" } else { "" })
+            };
+            format!("{}{}", kind, preview)
+        }
     }
 }

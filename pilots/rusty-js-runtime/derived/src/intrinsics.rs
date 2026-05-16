@@ -1843,6 +1843,33 @@ impl Runtime {
                 rt.object_set(arr, "length".into(), Value::Number(len as f64));
                 Ok(Value::Object(arr))
             });
+            // Tier-Ω.5.MMMMMMM: Map.prototype[@@iterator] aliases entries
+            // per ECMA §24.1.3.12. Surfaced by Step-6 route-(b) escalation:
+            // adding receiver-shape tags to the CallMethod undef-fault
+            // surfaced 'receiver=Object keys=[__map_data,size]' on the
+            // cli-truncate/fast-xml-parser/log-update cluster, naming Map
+            // as the iterated receiver. for-of and spread reach for
+            // [Symbol.iterator], which on Map is Map.prototype.entries.
+            register_method(self, proto, "@@iterator", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+                };
+                let pairs: Vec<(String, Value)> = rt.obj(storage).properties.iter()
+                    .map(|(k, d)| (k.clone(), d.value.clone())).collect();
+                let arr = rt.alloc_object(Object::new_array());
+                for (i, (k, v)) in pairs.into_iter().enumerate() {
+                    let pair = rt.alloc_object(Object::new_array());
+                    rt.object_set(pair, "0".into(), Value::String(Rc::new(k)));
+                    rt.object_set(pair, "1".into(), v);
+                    rt.object_set(pair, "length".into(), Value::Number(2.0));
+                    rt.object_set(arr, i.to_string(), Value::Object(pair));
+                }
+                let len = rt.array_length(arr);
+                rt.object_set(arr, "length".into(), Value::Number(len as f64));
+                Ok(Value::Object(crate::iterator::make_array_iterator(rt, arr)))
+            });
             let proto_for_ctor = proto;
             let name = (*collection).to_string();
             let ctor_obj = make_native(&name, move |rt, args| {

@@ -949,14 +949,42 @@ impl Runtime {
                 Op::Delete => {
                     // `delete expr` per ECMA-262 §13.5.1. Pops the
                     // operand; v1 returns true (matches spec for any
-                    // non-Reference operand). Real `delete obj.prop`
-                    // would need a Reference-type bytecode shape so we
-                    // know what to delete; that's deferred to a future
-                    // round. For now: evaluating + returning true is
-                    // sufficient for the dominant idiom (`delete x` as
-                    // a no-op for variable cleanup in minified code).
+                    // non-Reference operand). For `delete obj.prop` and
+                    // `delete obj[key]` the compiler now emits DeleteProp /
+                    // DeleteIndex instead — see Tier-Ω.5.BBBBBBBB.
                     let _ = frame.pop()?;
                     frame.push(Value::Boolean(true));
+                }
+                Op::DeleteProp => {
+                    let idx = decode_u16(&frame.bytecode, frame.pc);
+                    frame.pc += 2;
+                    let obj_v = frame.pop()?;
+                    let key = match frame.constants.get(idx) {
+                        Some(rusty_js_bytecode::Constant::String(s)) => s.clone(),
+                        _ => return Err(RuntimeError::TypeError("Op::DeleteProp: key not String constant".into())),
+                    };
+                    let removed = match obj_v {
+                        Value::Object(id) => {
+                            // Per §10.1.10 [[Delete]] returns false for
+                            // non-configurable own properties. v1: always
+                            // remove and return true.
+                            self.obj_mut(id).properties.remove(&key).is_some()
+                        }
+                        _ => false,
+                    };
+                    frame.push(Value::Boolean(removed));
+                }
+                Op::DeleteIndex => {
+                    let key_v = frame.pop()?;
+                    let obj_v = frame.pop()?;
+                    let key = crate::abstract_ops::to_string(&key_v).as_str().to_string();
+                    let removed = match obj_v {
+                        Value::Object(id) => {
+                            self.obj_mut(id).properties.remove(&key).is_some()
+                        }
+                        _ => false,
+                    };
+                    frame.push(Value::Boolean(removed));
                 }
                 Op::In => {
                     // pops [key, obj]; obj on top per BinaryOp::In emit.

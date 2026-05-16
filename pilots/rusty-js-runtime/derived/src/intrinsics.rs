@@ -897,16 +897,58 @@ impl Runtime {
                 // `Object.create(e && e.prototype, ...)` throws.
                 // abortcontroller-polyfill / postcss-selector-parser /
                 // protobufjs all hit this exact transpile pattern.
+                // Tier-Ω.5.BBBBBBBB: honor the spec defaults for absent
+                // attribute keys on a *new* data descriptor per ECMA §6.2.5.4
+                // (CompletePropertyDescriptor): when the descriptor object
+                // lacks writable/enumerable/configurable, they default to
+                // false. Previously the engine used object_set, which
+                // installed every property as enumerable=true; consumers
+                // like color-convert's conversions.js then saw 'channels'
+                // and 'labels' in Object.keys() despite being explicitly
+                // defined as non-enumerable.
                 let has_value = rt.obj(desc_id).properties.contains_key("value");
-                if has_value {
-                    let value = rt.object_get(desc_id, "value");
-                    rt.object_set(target, key, value);
-                }
-                // Otherwise: leave existing value intact. Attribute updates
-                // (writable/enumerable/configurable) on the existing descriptor
-                // are queued for a downstream substrate move; v1 of this fix
-                // only ensures value-preservation, which is the load-bearing
-                // half for the Babel transpile pattern.
+                let read_attr = |rt: &Runtime, name: &str| -> Option<bool> {
+                    if !rt.obj(desc_id).properties.contains_key(name) { return None; }
+                    match rt.object_get(desc_id, name) {
+                        Value::Boolean(b) => Some(b),
+                        Value::Undefined => Some(false),
+                        Value::Null => Some(false),
+                        Value::Number(n) => Some(n != 0.0),
+                        Value::String(s) => Some(!s.as_str().is_empty()),
+                        _ => Some(true),
+                    }
+                };
+                let writable = read_attr(rt, "writable");
+                let enumerable = read_attr(rt, "enumerable");
+                let configurable = read_attr(rt, "configurable");
+                let value = if has_value {
+                    rt.object_get(desc_id, "value")
+                } else {
+                    // Preserve existing value when descriptor lacks `value`.
+                    match rt.obj(target).properties.get(&key) {
+                        Some(d) => d.value.clone(),
+                        None => Value::Undefined,
+                    }
+                };
+                // Existing flags act as the starting point when descriptor
+                // is partial (matches CompletePropertyDescriptor for
+                // already-present properties); for a new property, absent
+                // attributes default to false.
+                let exists = rt.obj(target).properties.contains_key(&key);
+                let (default_w, default_e, default_c) = if exists {
+                    let d = &rt.obj(target).properties[&key];
+                    (d.writable, d.enumerable, d.configurable)
+                } else {
+                    (false, false, false)
+                };
+                rt.obj_mut(target).properties.insert(key, crate::value::PropertyDescriptor {
+                    value,
+                    writable: writable.unwrap_or(default_w),
+                    enumerable: enumerable.unwrap_or(default_e),
+                    configurable: configurable.unwrap_or(default_c),
+                    getter: None,
+                    setter: None,
+                });
             }
             Ok(Value::Object(target))
         });

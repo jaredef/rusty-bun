@@ -1780,6 +1780,31 @@ impl Compiler {
                     encode_u8(&mut self.bytecode, 1);
                     return Ok(());
                 }
+                // Tier-Ω.5.BBBBBBBB: `delete obj.prop` / `delete obj[key]`
+                // now actually removes the property per ECMA §13.5.1.2.
+                // Detect Member-expression arguments and emit DeleteProp /
+                // DeleteIndex instead of the stub Op::Delete which always
+                // returns true without mutating.
+                if matches!(operator, UnaryOp::Delete) {
+                    if let Expr::Member { object, property, .. } = argument.as_ref() {
+                        match property.as_ref() {
+                            rusty_js_ast::MemberProperty::Identifier { name, .. }
+                            | rusty_js_ast::MemberProperty::Private { name, .. } => {
+                                self.compile_expr(object)?;
+                                let idx = self.constants.intern(Constant::String(name.clone()));
+                                encode_op(&mut self.bytecode, Op::DeleteProp);
+                                encode_u16(&mut self.bytecode, idx);
+                                return Ok(());
+                            }
+                            rusty_js_ast::MemberProperty::Computed { expr, .. } => {
+                                self.compile_expr(object)?;
+                                self.compile_expr(expr)?;
+                                encode_op(&mut self.bytecode, Op::DeleteIndex);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 self.compile_expr(argument)?;
                 // Tier-Ω.5.x: `await expr` lowers to just `expr` — the
                 // suspension semantics are dropped in v1.

@@ -155,6 +155,13 @@ pub enum Op {
     Typeof = 0xA0,
     Void = 0xA1,
     Delete = 0xA2,
+    /// DELETE_PROP <u16 name_idx> — pop obj, remove obj's own
+    /// property `name`, push Boolean true if existed and was removed.
+    /// Tier-Ω.5.BBBBBBBB.
+    DeleteProp = 0xA3,
+    /// DELETE_INDEX — pop key, pop obj, remove obj[ToString(key)],
+    /// push Boolean true if existed and was removed.
+    DeleteIndex = 0xA4,
 
     // Function / closure
     /// MAKE_CLOSURE <u16>
@@ -196,7 +203,7 @@ impl Op {
             | BitAnd | BitOr | BitXor | BitNot | Shl | Shr | UShr | Not
             | Return | ReturnUndef
             | GetIndex | SetIndex | SetPrototype | NewObject
-            | Typeof | Void | Delete
+            | Typeof | Void | Delete | DeleteIndex
             | Throw | TryExit
             | IterInit | IterNext | IterClose
             | Nop | Debugger | PushThis | PushImportMeta | PushNewTarget | SetThis => 0,
@@ -204,7 +211,7 @@ impl Op {
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
             | DefineLocal | ResetLocalCell | GetProp | SetProp | NewArray | InitProp
-            | MakeClosure | MakeArrow | CaptureLocal | CaptureUpvalue => 2,
+            | MakeClosure | MakeArrow | CaptureLocal | CaptureUpvalue | DeleteProp => 2,
             PushI32 | Jump | JumpIfTrue | JumpIfFalse
             | JumpIfTrueKeep | JumpIfFalseKeep | JumpIfNullish
             | InitIndex | TryEnter => 4,
@@ -270,7 +277,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
         0x84 => SetPrototype,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,
-        0xA0 => Typeof, 0xA1 => Void, 0xA2 => Delete,
+        0xA0 => Typeof, 0xA1 => Void, 0xA2 => Delete, 0xA3 => DeleteProp, 0xA4 => DeleteIndex,
         0xB0 => MakeClosure, 0xB1 => MakeArrow,
         0xB2 => CaptureLocal, 0xB3 => CaptureUpvalue,
         0xC0 => Throw, 0xC1 => TryEnter, 0xC2 => TryExit,

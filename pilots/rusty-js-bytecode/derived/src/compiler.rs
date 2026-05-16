@@ -53,6 +53,13 @@ pub struct FunctionProto {
     /// resolve via Array indexing; .length, .slice, etc. work via the
     /// Array prototype chain.
     pub arguments_slot: Option<u16>,
+    /// Tier-Ω.5.kkkkk: slot for the named-function-expression self-binding.
+    /// When the function is `function NAME() { ... }` AS AN EXPRESSION (not
+    /// a declaration), NAME is bound inside the body to the function itself
+    /// per ECMA-262 §15.2.5. call_function populates this slot with the
+    /// closure object on entry. just-curry-it's recursive `function curried()
+    /// { ... curried.apply(...) }` pattern depends on this.
+    pub self_name_slot: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -2273,7 +2280,7 @@ impl Compiler {
     /// resolve to an enclosing local are captured as upvalues.
     fn compile_function_proto(
         &mut self,
-        _name: Option<BindingIdentifier>,
+        name: Option<BindingIdentifier>,
         _is_async: bool,
         _is_generator: bool,
         params: &[Parameter],
@@ -2385,6 +2392,18 @@ impl Compiler {
             kind: VariableKind::Var,
             depth: 0,
         }));
+        // Tier-Ω.5.kkkkk: self-name slot for named function expressions /
+        // declarations. Populated by call_function with the closure object.
+        // Per ECMA-262 §15.2.5 the body sees its own name bound to itself.
+        let self_name_slot = if let Some(n) = &name {
+            // Skip if a parameter already shadows the name — the param wins.
+            let already = sub.locals.iter().any(|l| l.name == n.name);
+            if !already {
+                Some(sub.alloc_local(LocalDescriptor {
+                    name: n.name.clone(), kind: VariableKind::Var, depth: 0,
+                }))
+            } else { None }
+        } else { None };
         // Tier-Ω.5.ee: function-declaration hoisting per ECMA-262 §10.2.1.3.
         // Two-phase to preserve upvalue resolution: phase H1 pre-allocates
         // ALL top-level var/let/const slots so nested function bodies that
@@ -2466,6 +2485,7 @@ impl Compiler {
             upvalues: sub.upvalues,
             rest_param_slot,
             arguments_slot,
+            self_name_slot,
         })
     }
 

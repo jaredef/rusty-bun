@@ -1270,10 +1270,14 @@ impl Runtime {
             }
             Some(Value::Object(self.alloc_object(arr)))
         } else { None };
+        // Tier-Ω.5.kkkkk: self-binding for named function expr/decl.
+        let self_slot = proto.self_name_slot;
         for (i, _) in proto.locals.iter().enumerate() {
             let slot = i as u16;
             if Some(slot) == args_slot {
                 locals.push(arguments_value.clone().unwrap_or(Value::Undefined));
+            } else if Some(slot) == self_slot {
+                locals.push(Value::Object(id));
             } else if Some(slot) == rest_slot {
                 let mut rest = crate::value::Object::new_array();
                 let tail: Vec<Value> = if (i as usize) < args.len() {

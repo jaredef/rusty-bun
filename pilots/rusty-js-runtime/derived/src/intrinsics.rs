@@ -2530,6 +2530,71 @@ impl Runtime {
             self.object_set(ctor_id, "prototype".into(), Value::Object(proto_id));
             // proto.constructor = ctor (per spec).
             self.object_set(proto_id, "constructor".into(), Value::Object(ctor_id));
+            // Tier-Ω.5.JJJJJJJ: Error.captureStackTrace(target, ctorOpt) per V8
+            // convention. http-errors / koa / serve-static (via depd) call it
+            // at module-init to attach a `stack` string to a fresh error-like
+            // object. Spec is V8-extension, not ECMA; implementation sets
+            // target.stack = "" (no real trace yet — engine doesn't capture
+            // frame data) so callers' presence-and-shape checks pass.
+            // Installed on every Error-family constructor (TypeError /
+            // RangeError / etc.) since real Node attaches it to all of them.
+            register_method(self, ctor_id, "captureStackTrace", |rt, args| {
+                if let Some(Value::Object(target)) = args.first() {
+                    // Per V8 convention, if Error.prepareStackTrace is set, it
+                    // is invoked with (target, framesArray) and its return
+                    // value becomes target.stack. depd does this to capture
+                    // file/line info for deprecation warnings:
+                    //     Error.prepareStackTrace = (err, frames) => frames;
+                    //     Error.captureStackTrace(obj);
+                    //     obj.stack[0].getFileName();
+                    // Build a 1-element framesArray with a stub CallSite that
+                    // answers getFileName/getLineNumber/etc with placeholders.
+                    let prepare = rt
+                        .globals
+                        .get("Error")
+                        .and_then(|v| if let Value::Object(eid) = v { Some(*eid) } else { None })
+                        .map(|eid| rt.object_get(eid, "prepareStackTrace"));
+                    if let Some(Value::Object(_)) = &prepare {
+                        let call_site = rt.alloc_object(crate::value::Object::new_ordinary());
+                        register_method(rt, call_site, "getFileName", |_rt, _a| {
+                            Ok(Value::String(Rc::new("<native>".into())))
+                        });
+                        register_method(rt, call_site, "getLineNumber", |_rt, _a| Ok(Value::Number(0.0)));
+                        register_method(rt, call_site, "getColumnNumber", |_rt, _a| Ok(Value::Number(0.0)));
+                        register_method(rt, call_site, "getFunctionName", |_rt, _a| {
+                            Ok(Value::String(Rc::new("<anonymous>".into())))
+                        });
+                        register_method(rt, call_site, "getMethodName", |_rt, _a| Ok(Value::Null));
+                        register_method(rt, call_site, "getTypeName", |_rt, _a| {
+                            Ok(Value::String(Rc::new("<anonymous>".into())))
+                        });
+                        register_method(rt, call_site, "isNative", |_rt, _a| Ok(Value::Boolean(true)));
+                        register_method(rt, call_site, "isConstructor", |_rt, _a| Ok(Value::Boolean(false)));
+                        register_method(rt, call_site, "isToplevel", |_rt, _a| Ok(Value::Boolean(true)));
+                        register_method(rt, call_site, "isEval", |_rt, _a| Ok(Value::Boolean(false)));
+                        // Build a small stack of stub frames so consumers
+                        // doing `callSites.slice(1)[0]` (depd / err-stack)
+                        // still find a defined CallSite.
+                        let frames = rt.alloc_object(crate::value::Object::new_array());
+                        for i in 0..6 {
+                            rt.object_set(frames, i.to_string(), Value::Object(call_site));
+                        }
+                        rt.object_set(frames, "length".into(), Value::Number(6.0));
+                        let result = rt.call_function(
+                            prepare.unwrap(),
+                            Value::Undefined,
+                            vec![Value::Object(*target), Value::Object(frames)],
+                        )?;
+                        rt.object_set(*target, "stack".into(), result);
+                    } else {
+                        rt.object_set(*target, "stack".into(), Value::String(Rc::new("".into())));
+                    }
+                }
+                Ok(Value::Undefined)
+            });
+            // Error.stackTraceLimit — Node default is 10; consumers occasionally
+            // probe `Error.stackTraceLimit = Infinity` then set back.
+            self.object_set(ctor_id, "stackTraceLimit".into(), Value::Number(10.0));
             self.globals.insert((*name).to_string(), Value::Object(ctor_id));
         }
     }

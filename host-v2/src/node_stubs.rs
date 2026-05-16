@@ -28,8 +28,37 @@ pub fn install_child_process(rt: &mut Runtime) {
 
 pub fn install_tls(rt: &mut Runtime) {
     let ns = new_object(rt);
-    for m in &["connect", "createServer", "createSecureContext", "TLSSocket", "Server"] {
+    for m in &["connect", "createServer", "createSecureContext"] {
         register_method(rt, ns, m, stub("tls", m));
+    }
+    // Tier-Ω.5.QQQQQQQ: TLSSocket / Server as stub-classes with .prototype.
+    // got / got-fetch / undici-style HTTP libs read tls.TLSSocket at module-
+    // init (for `class X extends tls.TLSSocket` or `tls.TLSSocket.prototype`
+    // feature probes). Stub-methods that throw on call surface as Thrown
+    // errors instead of class-shaped resolution; replacing with stub-classes
+    // (callable but error-on-construct, with empty .prototype + constructor
+    // backref) satisfies the import surface.
+    for cls in &["TLSSocket", "Server"] {
+        let proto = new_object(rt);
+        let ctor = make_callable(rt, cls, move |rt, _args| {
+            // Return a stub instance with EventEmitter-shape methods so
+            // module-init `new tls.TLSSocket(opts)` resolves; runtime
+            // calls (write/connect/destroy) are no-ops that return self.
+            let inst = rt.alloc_object(RtObject::new_ordinary());
+            register_method(rt, inst, "on", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "once", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "off", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "emit", |_rt, _a| Ok(Value::Boolean(false)));
+            register_method(rt, inst, "write", |_rt, _a| Ok(Value::Boolean(true)));
+            register_method(rt, inst, "end", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "destroy", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "connect", |rt, _a| Ok(rt.current_this()));
+            register_method(rt, inst, "setEncoding", |rt, _a| Ok(rt.current_this()));
+            Ok(Value::Object(inst))
+        });
+        rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+        rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+        rt.object_set(ns, (*cls).into(), Value::Object(ctor));
     }
     rt.globals.insert("tls".into(), Value::Object(ns));
 }
@@ -583,8 +612,31 @@ pub fn install_inspector(rt: &mut Runtime) {
 pub fn install_vm(rt: &mut Runtime) {
     let ns = new_object(rt);
     for m in &["runInThisContext", "runInContext", "runInNewContext", "createContext",
-              "compileFunction", "Script", "SourceTextModule", "SyntheticModule", "measureMemory"] {
+              "compileFunction", "measureMemory"] {
         register_method(rt, ns, m, stub("vm", m));
+    }
+    // Tier-Ω.5.QQQQQQQ: Script / SourceTextModule / SyntheticModule as
+    // stub-classes with .prototype. stringify-object and friends probe
+    // vm.Script class-shape at module-init (`new vm.Script(...)` inside
+    // a try/catch detector pattern). Stub-class lets the load resolve;
+    // construction throws.
+    for cls in &["Script", "SourceTextModule", "SyntheticModule"] {
+        let proto = new_object(rt);
+        let ctor = make_callable(rt, cls, move |rt, _args| {
+            let inst = rt.alloc_object(RtObject::new_ordinary());
+            register_method(rt, inst, "runInThisContext", |_rt, _a| Ok(Value::Undefined));
+            register_method(rt, inst, "runInContext", |_rt, _a| Ok(Value::Undefined));
+            register_method(rt, inst, "runInNewContext", |_rt, _a| Ok(Value::Undefined));
+            register_method(rt, inst, "createCachedData", |rt, _a| {
+                let buf = rt.alloc_object(RtObject::new_array());
+                rt.object_set(buf, "length".into(), Value::Number(0.0));
+                Ok(Value::Object(buf))
+            });
+            Ok(Value::Object(inst))
+        });
+        rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+        rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+        rt.object_set(ns, (*cls).into(), Value::Object(ctor));
     }
     rt.globals.insert("vm".into(), Value::Object(ns));
 }

@@ -81,6 +81,42 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         rt.object_set(arr, "1".into(), Value::Number(d.subsec_nanos() as f64));
         Ok(Value::Object(arr))
     });
+    // Tier-Ω.5.DDDDDDDD: process.hrtime.bigint() returns nanosecond BigInt
+    // since the unix epoch. pino / pino-http call this at module-init for
+    // their time-stamping closures.
+    if let rusty_js_runtime::Value::Object(hrtime_id) = rt.object_get(process, "hrtime") {
+        let bigint_fn: rusty_js_runtime::value::NativeFn = std::rc::Rc::new(|_rt, _args| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let ns = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i64;
+            Ok(Value::BigInt(std::rc::Rc::new(format!("{}", ns))))
+        });
+        let bigint_obj = rusty_js_runtime::value::Object {
+            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            internal_kind: rusty_js_runtime::value::InternalKind::Function(
+                rusty_js_runtime::value::FunctionInternals { name: "bigint".into(), native: bigint_fn }
+            ),
+        };
+        let bigint_id = rt.alloc_object(bigint_obj);
+        rt.object_set(hrtime_id, "bigint".into(), Value::Object(bigint_id));
+    }
+
+    // Tier-Ω.5.DDDDDDDD: process.binding(name) — legacy internal API.
+    // mock-fs and a handful of low-level packages probe it. Returns
+    // empty namespace object so module-init reads pass; downstream
+    // .fs / .uv methods return undefined.
+    register_method(rt, process, "binding", |rt, _args| {
+        let o = rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary());
+        Ok(Value::Object(o))
+    });
+    // process.report — Node's reporting surface. nx + others touch it.
+    let report = rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary());
+    rt.object_set(report, "reportOnFatalError".into(), Value::Boolean(false));
+    rt.object_set(report, "reportOnSignal".into(), Value::Boolean(false));
+    rt.object_set(report, "reportOnUncaughtException".into(), Value::Boolean(false));
+    rt.object_set(report, "directory".into(), Value::String(std::rc::Rc::new(String::new())));
+    register_method(rt, report, "writeReport", |_rt, _a| Ok(Value::String(std::rc::Rc::new(String::new()))));
+    register_method(rt, report, "getReport", |rt, _a| Ok(Value::Object(rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary()))));
+    rt.object_set(process, "report".into(), Value::Object(report));
 
     // Tier-Ω.5.cccc: process.nextTick(cb, ...args) — synchronous-ish
     // queuing of the callback. v1 deviation: invokes immediately since

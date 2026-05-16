@@ -63,6 +63,13 @@ pub fn install(rt: &mut Runtime) {
     register_method(rt, os, "totalmem", |_rt, _args| Ok(Value::Number(8.0 * 1024.0 * 1024.0 * 1024.0)));
     register_method(rt, os, "freemem", |_rt, _args| Ok(Value::Number(4.0 * 1024.0 * 1024.0 * 1024.0)));
     register_method(rt, os, "uptime", |_rt, _args| Ok(Value::Number(0.0)));
+    // Tier-Ω.5.DDDDDDDD: os.availableParallelism() per Node 20+ API.
+    // piscina and other worker-thread packages read this at module-init
+    // to size their thread pool. Defaults to 4 (a plausible commodity
+    // core count); real impl would query the OS.
+    register_method(rt, os, "availableParallelism", |_rt, _args| {
+        Ok(Value::Number(4.0))
+    });
     register_method(rt, os, "loadavg", |rt, _args| {
         let arr = rt.alloc_object(rusty_js_runtime::value::Object::new_array());
         for i in 0..3 { rt.object_set(arr, i.to_string(), Value::Number(0.0)); }

@@ -103,6 +103,48 @@ fn install_object_proto(rt: &mut Runtime, host: ObjectRef) {
         Ok(Value::Boolean(owns))
     });
     register_method(rt, host, "valueOf", |rt, _args| Ok(rt.current_this()));
+    // Tier-Ω.5.DDDDDDDD: Object.prototype.__defineGetter__/__defineSetter__
+    // per ECMA Annex B.2.2.2/2.2.3 (legacy but ubiquitous — pg, slonik,
+    // sockjs, mongoose use them at module-init for shape augmentation).
+    register_method(rt, host, "__defineGetter__", |rt, args| {
+        let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+        let key = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined)).as_str().to_string();
+        let getter = args.get(1).cloned().unwrap_or(Value::Undefined);
+        if !matches!(getter, Value::Object(_)) {
+            return Err(RuntimeError::TypeError("__defineGetter__: getter must be callable".into()));
+        }
+        rt.obj_mut(this).properties.insert(key, crate::value::PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false, enumerable: true, configurable: true,
+            getter: Some(getter), setter: None,
+        });
+        Ok(Value::Undefined)
+    });
+    register_method(rt, host, "__defineSetter__", |rt, args| {
+        let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+        let key = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined)).as_str().to_string();
+        let setter = args.get(1).cloned().unwrap_or(Value::Undefined);
+        if !matches!(setter, Value::Object(_)) {
+            return Err(RuntimeError::TypeError("__defineSetter__: setter must be callable".into()));
+        }
+        let existing_getter = rt.obj(this).properties.get(&key).and_then(|d| d.getter.clone());
+        rt.obj_mut(this).properties.insert(key, crate::value::PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false, enumerable: true, configurable: true,
+            getter: existing_getter, setter: Some(setter),
+        });
+        Ok(Value::Undefined)
+    });
+    register_method(rt, host, "__lookupGetter__", |rt, args| {
+        let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+        let key = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined)).as_str().to_string();
+        Ok(rt.obj(this).properties.get(&key).and_then(|d| d.getter.clone()).unwrap_or(Value::Undefined))
+    });
+    register_method(rt, host, "__lookupSetter__", |rt, args| {
+        let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+        let key = abstract_ops::to_string(&args.first().cloned().unwrap_or(Value::Undefined)).as_str().to_string();
+        Ok(rt.obj(this).properties.get(&key).and_then(|d| d.setter.clone()).unwrap_or(Value::Undefined))
+    });
     // Tier-Ω.5.jjjj: Object.prototype.propertyIsEnumerable per ECMA-262
     // §20.1.3.4. Returns true if the receiver has an own enumerable
     // property at the given key. v1 returns true for any own property

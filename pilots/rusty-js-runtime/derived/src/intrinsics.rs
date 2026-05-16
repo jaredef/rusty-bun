@@ -1483,6 +1483,55 @@ impl Runtime {
         });
         self.globals.insert("URL".into(), Value::Object(url_id));
 
+        // Tier-Ω.5.AAAAAAA: AbortController + AbortSignal globals per WHATWG DOM
+        // AbortController interface. execa / node-fetch / undici-style HTTP
+        // consumers do `new AbortController()` and reference `.signal` at
+        // module-init or in the closure that defines a request helper. Class
+        // shape needs to exist for the class compile / instance construction
+        // to resolve; the signal's `aborted`/`reason`/`onabort` slots are
+        // present on the prototype (false / undefined respectively); abort()
+        // flips `signal.aborted` to true. Event-dispatch to listeners is
+        // deferred — sufficient for load-time presence and the most common
+        // sync-check pattern (`if (signal.aborted) { ... }`).
+        let abort_signal_proto = self.alloc_object(Object::new_ordinary());
+        let abort_signal_ctor = make_native("AbortSignal", |_rt, _args| {
+            Err(RuntimeError::TypeError(
+                "AbortSignal constructor not directly callable (use AbortController) — Tier-Ω.5.AAAAAAA stub".into()
+            ))
+        });
+        let abort_signal_id = self.alloc_object(abort_signal_ctor);
+        self.object_set(abort_signal_id, "prototype".into(), Value::Object(abort_signal_proto));
+        self.object_set(abort_signal_proto, "constructor".into(), Value::Object(abort_signal_id));
+        // Static factories per spec §3.1.3.
+        register_method(self, abort_signal_id, "abort", |rt, args| {
+            let sig = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(sig, "aborted".into(), Value::Boolean(true));
+            rt.object_set(sig, "reason".into(), args.first().cloned().unwrap_or(Value::Undefined));
+            Ok(Value::Object(sig))
+        });
+        register_method(self, abort_signal_id, "timeout", |rt, _args| {
+            let sig = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(sig, "aborted".into(), Value::Boolean(false));
+            rt.object_set(sig, "reason".into(), Value::Undefined);
+            Ok(Value::Object(sig))
+        });
+        self.globals.insert("AbortSignal".into(), Value::Object(abort_signal_id));
+
+        let abort_controller_proto = self.alloc_object(Object::new_ordinary());
+        let abort_controller_ctor = make_native("AbortController", |rt, _args| {
+            let inst = rt.alloc_object(Object::new_ordinary());
+            let sig = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(sig, "aborted".into(), Value::Boolean(false));
+            rt.object_set(sig, "reason".into(), Value::Undefined);
+            rt.object_set(sig, "onabort".into(), Value::Null);
+            rt.object_set(inst, "signal".into(), Value::Object(sig));
+            Ok(Value::Object(inst))
+        });
+        let abort_controller_id = self.alloc_object(abort_controller_ctor);
+        self.object_set(abort_controller_id, "prototype".into(), Value::Object(abort_controller_proto));
+        self.object_set(abort_controller_proto, "constructor".into(), Value::Object(abort_controller_id));
+        self.globals.insert("AbortController".into(), Value::Object(abort_controller_id));
+
         // Tier-Ω.5.xxxxxx: URLSearchParams as a callable global Function with
         // .prototype. node-fetch's headers.js does `class Headers extends
         // URLSearchParams`; the class compile reads `URLSearchParams.prototype`

@@ -68,15 +68,17 @@ impl<'src> Parser<'src> {
         if self.looks_like_arrow_function_head() {
             return self.parse_arrow_function(false);
         }
-        // FunctionExpression / ClassExpression.
-        if self.is_ident("function") {
-            let f = self.parse_function_expression(false)?;
-            return self.continue_lhs_continuation(f);
-        }
-        if self.is_ident("class") {
-            let c = self.parse_class_expression()?;
-            return self.continue_lhs_continuation(c);
-        }
+        // Tier-Ω.5.GGGGGGGG: removed early-return short-circuit for bare
+        // function/class expressions. Previously `function(){...}(arg) ? a : b`
+        // failed because parse_assignment_expression's short-circuit returned
+        // the LHS without routing through parse_conditional_expression's
+        // ternary handler. Now function/class expressions flow through
+        // parse_primary_expression (which handles them at line 573-574),
+        // then through parse_lhs / parse_binary / parse_conditional, picking
+        // up trailing call-args, binary ops, and ternaries in the spec-correct
+        // precedence order.
+        // mailparser/leac, release-it/jiti, unbuild/jiti all use the
+        // IIFE-then-ternary pattern at module-init.
 
         let left = self.parse_conditional_expression()?;
         if let Some(op) = self.peek_assign_op() {

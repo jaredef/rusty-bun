@@ -1852,9 +1852,29 @@ impl Runtime {
                 let storage = rt.alloc_object(Object::new_ordinary());
                 rt.object_set(id, "__map_data".into(), Value::Object(storage));
                 rt.object_set(id, "size".into(), Value::Number(0.0));
-                // Optional initial iterable.
-                if let Some(_init) = args.first() {
-                    // Skipped for v1; documented deviation.
+                // Tier-Ω.5.LLLLLLL: iterable-arg processing per ECMA §24.1.1.1.
+                // `new Map(iterable)` iterates each entry (array-like with [k,v])
+                // and inserts. Common patterns: new Map([['a',1]]), new Map(other),
+                // new Map(otherArray.map(x => [x.key, x.value])).
+                // Eager-collect: if arg is array-shape, walk indices 0..length;
+                // for each entry that's also array-shape, read [0] and [1] as
+                // (key, value) and store. Real iterator-protocol with next()/done
+                // is deferred — array-shape covers the dense majority.
+                if let Some(init) = args.first().cloned() {
+                    if let Value::Object(arr_id) = init {
+                        let len = rt.array_length(arr_id);
+                        for i in 0..len {
+                            let entry = rt.object_get(arr_id, &i.to_string());
+                            if let Value::Object(eid) = entry {
+                                let k = rt.object_get(eid, "0");
+                                let v = rt.object_get(eid, "1");
+                                let key_s = abstract_ops::to_string(&k).as_str().to_string();
+                                rt.object_set(storage, key_s, v);
+                            }
+                        }
+                        let cnt = rt.obj(storage).properties.len() as f64;
+                        rt.object_set(id, "size".into(), Value::Number(cnt));
+                    }
                 }
                 Ok(Value::Object(id))
             });

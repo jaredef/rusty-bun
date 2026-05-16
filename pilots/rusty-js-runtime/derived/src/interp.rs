@@ -437,6 +437,13 @@ impl Runtime {
                     let v = frame.upvalues.get(slot)
                         .map(|cell| cell.borrow().clone())
                         .unwrap_or(Value::Undefined);
+                    // Tier-Ω.5.sssss: tag the upvalue name for callee
+                    // diagnostics. Minified closures resolve callees via
+                    // upvalues, so without this tag the trace lost the
+                    // last identifier name before a failing call.
+                    if let Some(desc) = frame.upvalue_names.get(slot) {
+                        frame.last_property_lookup = Some(format!("^{}", desc.name));
+                    }
                     frame.push(v);
                 }
                 Op::StoreUpvalue => {
@@ -1308,6 +1315,7 @@ impl Runtime {
             bytecode: &proto.bytecode,
             constants: &proto.constants,
             locals_names: &proto.locals,
+            upvalue_names: &proto.upvalues,
             locals,
             local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),
@@ -1377,6 +1385,11 @@ pub struct Frame<'a> {
     /// resolved to an undefined callee. Empty when the frame doesn't
     /// carry descriptors (legacy paths or hand-built frames).
     pub locals_names: &'a [rusty_js_bytecode::LocalDescriptor],
+    /// Tier-Ω.5.sssss: parallel to `upvalues`, carries the compiler's
+    /// upvalue-descriptor names so error messages name the upvalue that
+    /// resolved to undefined. Empty when the frame doesn't carry
+    /// descriptors (hand-built frames).
+    pub upvalue_names: &'a [rusty_js_bytecode::UpvalueDescriptor],
     pub locals: Vec<Value>,
     /// Parallel to `locals`. Tier-Ω.5.e: when a nested closure captures
     /// this frame's local slot `i`, `local_cells[i]` becomes
@@ -1424,6 +1437,7 @@ impl<'a> Frame<'a> {
             bytecode: &m.bytecode,
             constants: &m.constants,
             locals_names: &m.locals,
+            upvalue_names: &[],
             locals,
             local_cells: Vec::new(),
             operand_stack: Vec::with_capacity(32),

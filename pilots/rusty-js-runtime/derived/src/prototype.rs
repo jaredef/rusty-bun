@@ -712,6 +712,16 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
             None => Ok(Value::Number(f64::NAN)),
         }
     });
+    // Tier-Ω.5.TTTTTTT: String.prototype.concat per ECMA-262 §22.1.3.3.
+    // Returns the receiver concatenated with all string-coerced args.
+    // mathjs / io-ts-types use it in variadic shape; receiver is a string.
+    register_method(rt, host, "concat", |rt, args| {
+        let mut s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        for a in args {
+            s.push_str(&abstract_ops::to_string(a).as_str().to_string());
+        }
+        Ok(Value::String(Rc::new(s)))
+    });
     // Tier-Ω.5.GGGGGGG: String.prototype.codePointAt per ECMA-262 §22.1.3.4.
     // Returns the full code point (handles surrogate pairs) at the given
     // UTF-16 index; returns undefined if the index is out of range.

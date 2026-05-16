@@ -1566,6 +1566,88 @@ impl Runtime {
     /// expose `.length` / `.byteLength` / `.buffer`. Real binary semantics
     /// deferred to a substrate round.
     fn install_typed_array_stubs(&mut self) {
+        // Tier-Ω.5.xxxx: shared TypedArray prototype with subarray / set /
+        // slice / fill. tweetnacl, hash libs, and the crypto cluster reach
+        // these methods at every step. Prior stub instances had no .subarray
+        // so `keyPair()` failed at first byte op.
+        let ta_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, ta_proto, "subarray", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("subarray: this must be a TypedArray".into())),
+            };
+            let len = match rt.object_get(this_id, "length") {
+                Value::Number(n) => n as usize, _ => 0,
+            };
+            let start = args.first().and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(0);
+            let end = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(len as i64);
+            let start = (if start < 0 { (len as i64 + start).max(0) } else { start }).min(len as i64) as usize;
+            let end = (if end < 0 { (len as i64 + end).max(0) } else { end }).min(len as i64) as usize;
+            let slice_len = end.saturating_sub(start);
+            let kind = match rt.object_get(this_id, "__kind") { Value::String(s) => (*s).clone(), _ => "Uint8Array".into() };
+            let mut o = Object::new_ordinary();
+            o.set_own("length".into(), Value::Number(slice_len as f64));
+            o.set_own("__kind".into(), Value::String(Rc::new(kind)));
+            let new_id = rt.alloc_object(o);
+            for i in 0..slice_len {
+                let v = rt.object_get(this_id, &(start + i).to_string());
+                rt.object_set(new_id, i.to_string(), v);
+            }
+            // Inherit prototype from the source so subarray methods chain.
+            let src_proto = rt.obj(this_id).proto;
+            rt.obj_mut(new_id).proto = src_proto;
+            Ok(Value::Object(new_id))
+        });
+        register_method(self, ta_proto, "set", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("set: this must be a TypedArray".into())),
+            };
+            let src = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Undefined),
+            };
+            let offset = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+            let src_len = match rt.object_get(src, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..src_len {
+                let v = rt.object_get(src, &i.to_string());
+                rt.object_set(this_id, (offset + i).to_string(), v);
+            }
+            Ok(Value::Undefined)
+        });
+        register_method(self, ta_proto, "fill", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("fill: this must be a TypedArray".into())),
+            };
+            let v = args.first().cloned().unwrap_or(Value::Number(0.0));
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len { rt.object_set(this_id, i.to_string(), v.clone()); }
+            Ok(Value::Object(this_id))
+        });
+        register_method(self, ta_proto, "slice", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("slice: this must be a TypedArray".into())),
+            };
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            let start = args.first().and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(0);
+            let end = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(len as i64);
+            let start = (if start < 0 { (len as i64 + start).max(0) } else { start }).min(len as i64) as usize;
+            let end = (if end < 0 { (len as i64 + end).max(0) } else { end }).min(len as i64) as usize;
+            let slice_len = end.saturating_sub(start);
+            let mut o = Object::new_ordinary();
+            o.set_own("length".into(), Value::Number(slice_len as f64));
+            let new_id = rt.alloc_object(o);
+            for i in 0..slice_len {
+                let v = rt.object_get(this_id, &(start + i).to_string());
+                rt.object_set(new_id, i.to_string(), v);
+            }
+            let src_proto = rt.obj(this_id).proto;
+            rt.obj_mut(new_id).proto = src_proto;
+            Ok(Value::Object(new_id))
+        });
+
         for name in &[
             "ArrayBuffer", "SharedArrayBuffer", "DataView",
             "Uint8Array", "Uint8ClampedArray", "Int8Array",
@@ -1573,20 +1655,45 @@ impl Runtime {
             "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
         ] {
             let n = (*name).to_string();
+            let proto_id = ta_proto;
             let ctor_obj = make_native(name, move |rt, args| {
                 let len = match args.first() {
                     Some(Value::Number(n)) => *n,
+                    Some(Value::Object(arr)) => {
+                        // new Uint8Array(arrayLike) — copy length+contents.
+                        match rt.object_get(*arr, "length") {
+                            Value::Number(n) => n,
+                            _ => 0.0,
+                        }
+                    }
                     _ => 0.0,
                 };
                 let mut o = Object::new_ordinary();
                 o.set_own("length".into(), Value::Number(len));
                 o.set_own("byteLength".into(), Value::Number(len * 4.0));
                 o.set_own("__kind".into(), Value::String(Rc::new(n.clone())));
-                Ok(Value::Object(rt.alloc_object(o)))
+                o.proto = Some(proto_id);
+                let id = rt.alloc_object(o);
+                // Copy from source if first arg was an object.
+                if let Some(Value::Object(src)) = args.first() {
+                    let src_len = len as usize;
+                    for i in 0..src_len {
+                        let v = rt.object_get(*src, &i.to_string());
+                        rt.object_set(id, i.to_string(), v);
+                    }
+                } else {
+                    // Zero-initialize for new Uint8Array(N).
+                    let cap = (len as usize).min(65536);
+                    for i in 0..cap {
+                        rt.object_set(id, i.to_string(), Value::Number(0.0));
+                    }
+                }
+                Ok(Value::Object(id))
             });
             let id = self.alloc_object(ctor_obj);
             register_method(self, id, "isView", |_rt, _args| Ok(Value::Boolean(false)));
-            register_method(self, id, "from", |rt, args| {
+            let from_proto = ta_proto;
+            register_method(self, id, "from", move |rt, args| {
                 let src = args.first().cloned().unwrap_or(Value::Undefined);
                 let len: usize = match &src {
                     Value::Object(id) => rt.array_length(*id) as usize,
@@ -1595,8 +1702,17 @@ impl Runtime {
                 };
                 let mut o = Object::new_ordinary();
                 o.set_own("length".into(), Value::Number(len as f64));
-                Ok(Value::Object(rt.alloc_object(o)))
+                o.proto = Some(from_proto);
+                let new_id = rt.alloc_object(o);
+                if let Value::Object(sid) = &src {
+                    for i in 0..len {
+                        let v = rt.object_get(*sid, &i.to_string());
+                        rt.object_set(new_id, i.to_string(), v);
+                    }
+                }
+                Ok(Value::Object(new_id))
             });
+            self.object_set(id, "prototype".into(), Value::Object(ta_proto));
             self.globals.insert((*name).to_string(), Value::Object(id));
         }
     }

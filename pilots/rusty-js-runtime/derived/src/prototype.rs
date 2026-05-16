@@ -712,6 +712,32 @@ fn install_string_proto(rt: &mut Runtime, host: ObjectRef) {
             None => Ok(Value::Number(f64::NAN)),
         }
     });
+    // Tier-Ω.5.GGGGGGG: String.prototype.codePointAt per ECMA-262 §22.1.3.4.
+    // Returns the full code point (handles surrogate pairs) at the given
+    // UTF-16 index; returns undefined if the index is out of range.
+    // cli-truncate/execa/multiformats/strip-final-newline/tar all read
+    // codePointAt at module-init for ANSI / encoding detection.
+    register_method(rt, host, "codePointAt", |rt, args| {
+        let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
+        let i = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as i64;
+        if i < 0 { return Ok(Value::Undefined); }
+        // The spec is UTF-16 indexed; our Rust strings are UTF-8 / chars().
+        // Iterate chars accumulating UTF-16 code-units; when the cumulative
+        // count crosses i, return the current char's code point.
+        let mut u16_idx: i64 = 0;
+        for c in s.chars() {
+            let units = c.len_utf16() as i64;
+            if u16_idx == i { return Ok(Value::Number(c as u32 as f64)); }
+            if u16_idx < i && i < u16_idx + units {
+                // Trail surrogate — return the low surrogate value.
+                let cp = c as u32;
+                let low = 0xDC00 + ((cp - 0x10000) & 0x3FF);
+                return Ok(Value::Number(low as f64));
+            }
+            u16_idx += units;
+        }
+        Ok(Value::Undefined)
+    });
     register_method(rt, host, "slice", |rt, args| {
         let s = abstract_ops::to_string(&rt.current_this()).as_str().to_string();
         let chars: Vec<char> = s.chars().collect();

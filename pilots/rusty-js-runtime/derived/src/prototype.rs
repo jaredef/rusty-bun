@@ -229,6 +229,25 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         }
         Ok(Value::Boolean(false))
     });
+    // Tier-Ω.5.cccccc: Array.prototype.reverse per ECMA-262 §23.1.3.21.
+    // micromark slices events then reverses; without this, .reverse() was
+    // undefined and every state-machine token finalization failed.
+    register_method(rt, host, "reverse", |rt, _args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.reverse: this is not an Array".into())),
+        };
+        let len = rt.array_length(id) as i64;
+        let mid = len / 2;
+        for i in 0..mid {
+            let j = len - 1 - i;
+            let a = rt.object_get(id, &i.to_string());
+            let b = rt.object_get(id, &j.to_string());
+            rt.object_set(id, i.to_string(), b);
+            rt.object_set(id, j.to_string(), a);
+        }
+        Ok(Value::Object(id))
+    });
     register_method(rt, host, "slice", |rt, args| {
         let id = match rt.current_this() {
             Value::Object(id) => id,

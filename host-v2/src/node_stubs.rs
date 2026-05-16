@@ -619,6 +619,55 @@ pub fn install_performance(rt: &mut Runtime) {
         Ok(Value::Object(o))
     });
     rt.globals.insert("performance".into(), Value::Object(perf));
+
+    // Tier-Ω.5.VVVVVVV: global PerformanceObserver (WHATWG). nx / many
+    // monitoring libs do `new PerformanceObserver(callback)` then
+    // `.observe({entryTypes:['measure']})` at module-init. Stub class
+    // with .observe / .disconnect / .takeRecords no-ops.
+    let po_ctor = make_callable(rt, "PerformanceObserver", |rt, _args| {
+        let inst = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, inst, "observe", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, inst, "disconnect", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, inst, "takeRecords", |rt, _a| {
+            let arr = rt.alloc_object(RtObject::new_array());
+            rt.object_set(arr, "length".into(), Value::Number(0.0));
+            Ok(Value::Object(arr))
+        });
+        Ok(Value::Object(inst))
+    });
+    let po_proto = new_object(rt);
+    rt.object_set(po_ctor, "prototype".into(), Value::Object(po_proto));
+    rt.object_set(po_proto, "constructor".into(), Value::Object(po_ctor));
+    let st_arr = rt.alloc_object(RtObject::new_array());
+    for (i, t) in ["mark","measure","resource","navigation","function"].iter().enumerate() {
+        rt.object_set(st_arr, i.to_string(), Value::String(Rc::new((*t).into())));
+    }
+    rt.object_set(st_arr, "length".into(), Value::Number(5.0));
+    rt.object_set(po_ctor, "supportedEntryTypes".into(), Value::Object(st_arr));
+    rt.globals.insert("PerformanceObserver".into(), Value::Object(po_ctor));
+
+    // node:perf_hooks namespace mirrors the relevant globals.
+    let ph = new_object(rt);
+    rt.object_set(ph, "performance".into(), Value::Object(perf));
+    rt.object_set(ph, "PerformanceObserver".into(), Value::Object(po_ctor));
+    register_method(rt, ph, "monitorEventLoopDelay", |rt, _a| {
+        let h = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, h, "enable", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, h, "disable", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, h, "reset", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, h, "percentile", |_rt, _a| Ok(Value::Number(0.0)));
+        crate::register::set_constant(rt, h, "min", Value::Number(0.0));
+        crate::register::set_constant(rt, h, "max", Value::Number(0.0));
+        crate::register::set_constant(rt, h, "mean", Value::Number(0.0));
+        Ok(Value::Object(h))
+    });
+    register_method(rt, ph, "createHistogram", |rt, _a| {
+        let h = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, h, "record", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, h, "reset", |_rt, _a| Ok(Value::Undefined));
+        Ok(Value::Object(h))
+    });
+    rt.globals.insert("perf_hooks".into(), Value::Object(ph));
 }
 
 /// Tier-Ω.5.RRRRRRR: node:async_hooks stub with AsyncResource as a

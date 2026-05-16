@@ -116,7 +116,7 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:console" | "console" => "console",
             "node:util/types" | "util/types" => "util",
             "node:async_hooks" | "async_hooks" => "async_hooks",
-            "node:perf_hooks" | "perf_hooks" => "events",
+            "node:perf_hooks" | "perf_hooks" => "perf_hooks",
             "node:worker_threads" | "worker_threads" => "events",
             "node:querystring" | "querystring" => "url",
             "node:timers" | "timers" | "node:timers/promises" | "timers/promises" => "events",

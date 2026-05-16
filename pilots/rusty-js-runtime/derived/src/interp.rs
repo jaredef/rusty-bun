@@ -206,6 +206,19 @@ impl Runtime {
     /// Tier-Ω.5.nnn: walk the prototype chain looking for an accessor
     /// getter at `key`. Returns the getter function (Value::Object) if
     /// found, None for data properties or no-property.
+    /// Tier-Ω.5.jjjjj: ToNumber with object valueOf dispatch.
+    pub fn to_num_coerced(&mut self, v: &Value) -> Result<f64, RuntimeError> {
+        match v {
+            Value::Object(id) => {
+                let vo = self.object_get(*id, "valueOf");
+                if matches!(vo, Value::Object(_)) {
+                    let r = self.call_function(vo, Value::Object(*id), Vec::new())?;
+                    Ok(to_number(&r))
+                } else { Ok(to_number(v)) }
+            }
+            _ => Ok(to_number(v)),
+        }
+    }
     pub fn find_getter(&self, id: ObjectRef, key: &str) -> Option<Value> {
         let mut cur = Some(id);
         while let Some(c) = cur {
@@ -490,32 +503,53 @@ impl Runtime {
                     frame.push(op_add(&l, &r));
                 }
                 Op::Sub => {
-                    let r = to_number(&frame.pop()?); let l = to_number(&frame.pop()?);
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
                     frame.push(Value::Number(l - r));
                 }
                 Op::Mul => {
-                    let r = to_number(&frame.pop()?); let l = to_number(&frame.pop()?);
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
                     frame.push(Value::Number(l * r));
                 }
                 Op::Div => {
-                    let r = to_number(&frame.pop()?); let l = to_number(&frame.pop()?);
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
                     frame.push(Value::Number(l / r));
                 }
                 Op::Mod => {
-                    let r = to_number(&frame.pop()?); let l = to_number(&frame.pop()?);
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
                     frame.push(Value::Number(l % r));
                 }
                 Op::Pow => {
-                    let r = to_number(&frame.pop()?); let l = to_number(&frame.pop()?);
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
                     frame.push(Value::Number(l.powf(r)));
                 }
                 Op::Neg => {
-                    let v = to_number(&frame.pop()?);
+                    let raw = frame.pop()?;
+                    let v = self.to_num_coerced(&raw)?;
                     frame.push(Value::Number(-v));
                 }
                 Op::Pos => {
-                    let v = to_number(&frame.pop()?);
-                    frame.push(Value::Number(v));
+                    // Tier-Ω.5.jjjjj: unary `+` per ECMA-262 §13.5.4. When
+                    // operand is an object, invoke its [Symbol.toPrimitive]
+                    // / valueOf hook before to_number. Without this,
+                    // `+new Date(...)` is NaN, which broke date-fns / luxon
+                    // / dayjs and any lib that coerces a Date via +.
+                    let raw = frame.pop()?;
+                    let n = match raw {
+                        Value::Object(id) => {
+                            let v = self.object_get(id, "valueOf");
+                            if matches!(v, Value::Object(_)) {
+                                let r = self.call_function(v, Value::Object(id), Vec::new())?;
+                                to_number(&r)
+                            } else { to_number(&raw) }
+                        }
+                        _ => to_number(&raw),
+                    };
+                    frame.push(Value::Number(n));
                 }
                 Op::Inc => {
                     let v = to_number(&frame.pop()?);

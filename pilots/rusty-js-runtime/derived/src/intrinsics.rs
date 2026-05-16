@@ -1076,6 +1076,14 @@ impl Runtime {
         self.object_set(num, "POSITIVE_INFINITY".into(), Value::Number(f64::INFINITY));
         self.object_set(num, "NEGATIVE_INFINITY".into(), Value::Number(f64::NEG_INFINITY));
         self.object_set(num, "NaN".into(), Value::Number(f64::NAN));
+        // Tier-Ω.5.ggggg: global Infinity / NaN / undefined per ECMA-262
+        // §19.1. acorn's tokenizer uses `Infinity` as a sentinel in
+        // `for (var i=0, e=Infinity; i<e; ...)`; without the global,
+        // i<undefined is false, the loop never runs, every numeric literal
+        // fails to tokenize.
+        self.globals.insert("Infinity".into(), Value::Number(f64::INFINITY));
+        self.globals.insert("NaN".into(), Value::Number(f64::NAN));
+        self.globals.insert("undefined".into(), Value::Undefined);
         // Predicates. Note: Number.isX (capital-N) differs from global
         // isX in NOT coercing — typeof check first, false otherwise.
         register_method(self, num, "isInteger", |_rt, args| {
@@ -1673,27 +1681,29 @@ impl Runtime {
         });
         let proto_for_ctor = proto;
         let ctor_obj = make_native("Date", move |rt, args| {
-            let ms = match args.first() {
+            // Tier-Ω.5.iiiii: Date(y, mo, d, h, m, s, ms) multi-arg ctor
+            // must be checked FIRST per ECMA-262 §21.4.2.1 step 2 — when
+            // NewTarget supplies ≥ 2 args, treat them as date components.
+            // The prior order let Date(2026,4,15) fall through to the
+            // single-Number arm and treat 2026 as a unix-ms timestamp.
+            let ms = if args.len() >= 2 {
+                let y = match &args[0] { Value::Number(n) => *n as i64, _ => 0 };
+                let mo = match &args[1] { Value::Number(n) => *n as i64, _ => 0 };
+                let d = args.get(2).map(|v| match v { Value::Number(n) => *n as i64, _ => 1 }).unwrap_or(1);
+                let h = args.get(3).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                let mi = args.get(4).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                let se = args.get(5).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                let mss = args.get(6).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                (ymd_to_ms(y, mo, d) + h * 3_600_000 + mi * 60_000 + se * 1000 + mss) as f64
+            } else { match args.first() {
                 None => {
                     use std::time::{SystemTime, UNIX_EPOCH};
                     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
                 }
                 Some(Value::Number(n)) => *n,
                 Some(Value::String(s)) => parse_date_string(s.as_str()),
-                _ => {
-                    // Multi-arg constructor: (year, monthIdx, day=1, h=0, m=0, s=0, ms=0)
-                    if args.len() >= 2 {
-                        let y = match &args[0] { Value::Number(n) => *n as i64, _ => 0 };
-                        let mo = match &args[1] { Value::Number(n) => *n as i64, _ => 0 };
-                        let d = args.get(2).map(|v| match v { Value::Number(n) => *n as i64, _ => 1 }).unwrap_or(1);
-                        let h = args.get(3).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                        let mi = args.get(4).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                        let se = args.get(5).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                        let mss = args.get(6).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                        (ymd_to_ms(y, mo, d) + h * 3_600_000 + mi * 60_000 + se * 1000 + mss) as f64
-                    } else { 0.0 }
-                }
-            };
+                _ => 0.0,
+            }};
             let mut o = Object::new_ordinary();
             o.proto = Some(proto_for_ctor);
             let id = rt.alloc_object(o);

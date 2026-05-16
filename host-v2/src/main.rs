@@ -3,8 +3,28 @@
 //! completion, exits.
 
 use rusty_bun_host_v2::install_bun_host;
-use rusty_js_runtime::Runtime;
+use rusty_js_runtime::{Runtime, Value};
 use std::process::ExitCode;
+
+fn format_thrown(rt: &Runtime, v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("Thrown: {}", s),
+        Value::Object(id) => {
+            let name = match rt.object_get(*id, "name") { Value::String(s) => (*s).clone(), _ => String::new() };
+            let message = match rt.object_get(*id, "message") { Value::String(s) => (*s).clone(), _ => String::new() };
+            if !name.is_empty() && !message.is_empty() {
+                format!("Thrown: {}: {}", name, message)
+            } else if !message.is_empty() {
+                format!("Thrown: {}", message)
+            } else if !name.is_empty() {
+                format!("Thrown: {}", name)
+            } else {
+                format!("Thrown: {:?}", v)
+            }
+        }
+        _ => format!("Thrown: {:?}", v),
+    }
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -29,8 +49,16 @@ fn main() -> ExitCode {
     match rt.evaluate_module(&source, &url) {
         Ok(_namespace) => {}
         Err(e) => {
-            eprintln!("rusty-bun-host-v2: evaluation error: {:?}", e);
-            return ExitCode::from(70); // EX_SOFTWARE
+            // Tier-Ω.5.hhhhh: stringify thrown Error objects via their
+            // `message` / `name` properties rather than `[Object #NNN]`.
+            // Doc 723 Layer-A: the surface message should at least name
+            // what happened.
+            let msg = match &e {
+                rusty_js_runtime::RuntimeError::Thrown(v) => format_thrown(&rt, v),
+                _ => format!("{:?}", e),
+            };
+            eprintln!("rusty-bun-host-v2: evaluation error: {}", msg);
+            return ExitCode::from(70);
         }
     }
 

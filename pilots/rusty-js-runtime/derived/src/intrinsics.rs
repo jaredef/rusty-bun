@@ -1506,6 +1506,49 @@ impl Runtime {
         });
         self.object_set(bool_id, "prototype".into(), Value::Object(bool_proto));
         self.globals.insert("Boolean".into(), Value::Object(bool_id));
+        // Tier-Ω.5.tttttt: EventTarget + Event + CustomEvent global stubs
+        // (chai / web-platform-ish libs). v1: ordinary objects with the
+        // standard surface; no actual dispatch.
+        let et = make_native("EventTarget", |rt, _args| {
+            let mut o = Object::new_ordinary();
+            o.set_own("__listeners__".into(), Value::Object(rt.alloc_object(Object::new_ordinary())));
+            Ok(Value::Object(rt.alloc_object(o)))
+        });
+        let et_id = self.alloc_object(et);
+        let et_proto = self.alloc_object(Object::new_ordinary());
+        register_method(self, et_proto, "addEventListener", |rt, _args| { let _=rt; Ok(Value::Undefined) });
+        register_method(self, et_proto, "removeEventListener", |rt, _args| { let _=rt; Ok(Value::Undefined) });
+        register_method(self, et_proto, "dispatchEvent", |_rt, _args| Ok(Value::Boolean(false)));
+        self.object_set(et_id, "prototype".into(), Value::Object(et_proto));
+        self.globals.insert("EventTarget".into(), Value::Object(et_id));
+        let ev = make_native("Event", |rt, args| {
+            let mut o = Object::new_ordinary();
+            let ty = match args.first() { Some(Value::String(s)) => (**s).clone(), _ => String::new() };
+            o.set_own("type".into(), Value::String(Rc::new(ty)));
+            o.set_own("bubbles".into(), Value::Boolean(false));
+            o.set_own("cancelable".into(), Value::Boolean(false));
+            o.set_own("defaultPrevented".into(), Value::Boolean(false));
+            Ok(Value::Object(rt.alloc_object(o)))
+        });
+        let ev_id = self.alloc_object(ev);
+        let ev_proto = self.alloc_object(Object::new_ordinary());
+        self.object_set(ev_id, "prototype".into(), Value::Object(ev_proto));
+        self.globals.insert("Event".into(), Value::Object(ev_id));
+        let ce = make_native("CustomEvent", |rt, args| {
+            let mut o = Object::new_ordinary();
+            let ty = match args.first() { Some(Value::String(s)) => (**s).clone(), _ => String::new() };
+            o.set_own("type".into(), Value::String(Rc::new(ty)));
+            let detail = match args.get(1) {
+                Some(Value::Object(id)) => rt.object_get(*id, "detail"),
+                _ => Value::Undefined,
+            };
+            o.set_own("detail".into(), detail);
+            Ok(Value::Object(rt.alloc_object(o)))
+        });
+        let ce_id = self.alloc_object(ce);
+        let ce_proto = self.alloc_object(Object::new_ordinary());
+        self.object_set(ce_id, "prototype".into(), Value::Object(ce_proto));
+        self.globals.insert("CustomEvent".into(), Value::Object(ce_id));
         self.install_error_globals();
         self.install_reflect();
         self.install_map_set_globals();

@@ -608,7 +608,7 @@ impl Runtime {
             bytecode: Vec::new(), constants: Default::default(),
             locals: Vec::new(), source_map: Vec::new(),
             imports: Vec::new(), exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
         });
         self.modules.insert(specifier.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: specifier.to_string(), status: ModuleStatus::Evaluated,
@@ -662,6 +662,17 @@ impl Runtime {
                 self.load_module(&resolved)?
             };
             reexport_namespaces.insert(spec.clone(), ns);
+        }
+        // Tier-Ω.5.IIIIIIII: evaluate side-effect ImportDeclarations per
+        // ECMA-262 §16.2.1.5. Previously `import "X"` was a silent no-op
+        // because the compiler tracked only bound imports.
+        for spec in &bytecode_rc.side_effect_imports {
+            let resolved = self.resolve_module_full(url, spec, ModuleKind::ESM)?;
+            let _ns = if resolved.starts_with("node:") {
+                self.resolve_builtin_namespace(&resolved)?
+            } else {
+                self.load_module(&resolved)?
+            };
         }
 
         // Resolve every import to a value vector parallel to
@@ -869,7 +880,7 @@ impl Runtime {
             bytecode: Vec::new(), constants: Default::default(),
             locals: Vec::new(), source_map: Vec::new(),
             imports: Vec::new(), exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
         });
         let record = Rc::new(RefCell::new(ModuleRecord {
             url: url.to_string(),
@@ -1099,7 +1110,7 @@ impl Runtime {
             bytecode: Vec::new(), constants: Default::default(),
             locals: Vec::new(), source_map: Vec::new(),
             imports: Vec::new(), exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
         });
         self.modules.insert(url.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: url.to_string(), status: ModuleStatus::Evaluated,
@@ -1216,7 +1227,7 @@ impl Runtime {
             bytecode: Vec::new(), constants: Default::default(),
             locals: Vec::new(), source_map: Vec::new(),
             imports: Vec::new(), exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
         });
         self.modules.insert(spec.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: spec.to_string(), status: ModuleStatus::Evaluated,

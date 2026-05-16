@@ -90,6 +90,14 @@ pub struct CompiledModule {
     /// so their namespaces are populated in the module cache before the
     /// namespace-build phase reads from them.
     pub reexport_sources: Vec<String>,
+    /// Tier-Ω.5.IIIIIIII: side-effect ImportDeclaration sources — i.e.
+    /// `import "X"` (no default / namespace / named bindings). Per ECMA-262
+    /// §16.2.1.5 these still require module evaluation; the runtime loads
+    /// them before running the module body. Previously the compiler tracked
+    /// only bound imports in `self.imports`, so side-effect imports were
+    /// silently no-ops (autoprefixer / many node_modules use this for
+    /// CSS / runtime-side-effect setup).
+    pub side_effect_imports: Vec<String>,
 }
 
 /// One ESM import binding. Compiled from ImportDeclaration entries.
@@ -198,6 +206,9 @@ pub struct Compiler {
     exports: Vec<ExportBinding>,
     /// Tier-Ω.5.h: re-export source dependencies (`from "..."` specifiers).
     reexport_sources: Vec<String>,
+    /// Tier-Ω.5.IIIIIIII: side-effect ImportDeclaration specifiers
+    /// (`import "X"` with no bindings).
+    side_effect_imports: Vec<String>,
     /// Tier-Ω.5.b: snapshot of named local-or-default exports seen so far,
     /// pending slot lookup. For `export { name }` the slot is the local
     /// previously declared by `const name = ...` / `function name() {}`.
@@ -305,7 +316,7 @@ impl Compiler {
             class_seq: 0,
             imports: Vec::new(),
             exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
             pending_named_exports: Vec::new(),
             pre_allocated_slots: std::collections::HashMap::new(),
         }
@@ -319,6 +330,13 @@ impl Compiler {
         for item in &m.body {
             if let ModuleItem::Import(imp) = item {
                 let module_request = imp.specifier.value.clone();
+                // Tier-Ω.5.IIIIIIII: track side-effect imports for evaluation.
+                let has_bindings = imp.default_binding.is_some()
+                    || imp.namespace_binding.is_some()
+                    || !imp.named_imports.is_empty();
+                if !has_bindings {
+                    self.side_effect_imports.push(module_request.clone());
+                }
                 if let Some(def) = &imp.default_binding {
                     let slot = self.alloc_local(LocalDescriptor {
                         name: def.name.clone(), kind: VariableKind::Const, depth: 0,
@@ -560,6 +578,7 @@ impl Compiler {
             imports: std::mem::take(&mut self.imports),
             exports: std::mem::take(&mut self.exports),
             reexport_sources: std::mem::take(&mut self.reexport_sources),
+            side_effect_imports: std::mem::take(&mut self.side_effect_imports),
         })
     }
 
@@ -2422,7 +2441,7 @@ impl Compiler {
             class_seq: self.class_seq,
             imports: Vec::new(),
             exports: Vec::new(),
-            reexport_sources: Vec::new(),
+            reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
             pending_named_exports: Vec::new(),
             pre_allocated_slots: std::collections::HashMap::new(),
         };

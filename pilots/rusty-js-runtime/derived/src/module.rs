@@ -997,7 +997,22 @@ impl Runtime {
             RuntimeError::CompileError(format!("parse (json module): {:?} @url={}", e, url))
         })?;
         let ns = self.alloc_object(Object::new_module_namespace());
-        self.object_set(ns, "default".to_string(), value);
+        self.object_set(ns, "default".to_string(), value.clone());
+        // Tier-Ω.5.IIIIIII: also mirror the parsed value's own properties
+        // onto the namespace so `import { name } from "./x.json"` works
+        // alongside the default-import. AND set cjs_exports = parsed value
+        // so `require("./x.json")` returns the *data*, not the namespace
+        // object (which would have only `default` as a key — statuses/
+        // express's CJS read of statuses/codes.json was hitting exactly
+        // this: Object.keys(codes) returned ['default'] instead of the
+        // numeric status codes, then codes[code].toLowerCase() failed).
+        if let Value::Object(oid) = &value {
+            let pairs: Vec<(String, Value)> = self.obj(*oid).properties.iter()
+                .map(|(k, d)| (k.clone(), d.value.clone())).collect();
+            for (k, v) in pairs {
+                self.object_set(ns, k, v);
+            }
+        }
         let empty_ast = Rc::new(AstModule {
             span: rusty_js_ast::Span::new(0, 0),
             body: Vec::new(),
@@ -1015,7 +1030,7 @@ impl Runtime {
         self.modules.insert(url.to_string(), Rc::new(RefCell::new(ModuleRecord {
             url: url.to_string(), status: ModuleStatus::Evaluated,
             ast: empty_ast, bytecode: empty_bc, namespace: Some(ns),
-            kind: ModuleKind::ESM, cjs_exports: None,
+            kind: ModuleKind::ESM, cjs_exports: Some(value),
         })));
         Ok(ns)
     }

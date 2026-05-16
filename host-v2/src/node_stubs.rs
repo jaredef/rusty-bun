@@ -5,7 +5,7 @@
 //! Modules covered: child_process, tls, readline, constants,
 //! string_decoder, buffer.
 
-use crate::register::{new_object, register_method};
+use crate::register::{make_callable, new_object, register_method};
 use rusty_js_runtime::value::Object as RtObject;
 use rusty_js_runtime::{Runtime, RuntimeError, Value};
 use std::rc::Rc;
@@ -216,7 +216,50 @@ pub fn install_buffer(rt: &mut Runtime) {
     // node:buffer exposes Buffer + Blob. v1: stub class with .from / .alloc
     // / .isBuffer / .byteLength. Real Buffer needs binary internals.
     let ns = new_object(rt);
-    let buf_ctor = new_object(rt);
+    // Tier-Ω.5.OOOOOOO: Buffer is callable as `new Buffer(arg)` per Node
+    // legacy API. single-line-log / keyv-redis / many older packages do
+    // `new Buffer(len)` (deprecated since Node 6) or `new Buffer(string)`.
+    // Route to Buffer.alloc(N) or Buffer.from(arg) depending on arg shape.
+    // Buffer was previously an ordinary object; the global Buffer call
+    // hit 'callee is not callable: Object(keys=[prototype,alloc,...])'.
+    let buf_ctor = make_callable(rt, "Buffer", |rt, args| {
+        match args.first() {
+            Some(Value::Number(n)) => {
+                let n = *n as usize;
+                let mut o = RtObject::new_ordinary();
+                o.set_own("length".into(), Value::Number(n as f64));
+                o.set_own("__is_buffer__".into(), Value::Boolean(true));
+                for i in 0..n.min(65536) {
+                    o.set_own(i.to_string(), Value::Number(0.0));
+                }
+                let id = rt.alloc_object(o);
+                install_buffer_methods(rt, id);
+                Ok(Value::Object(id))
+            }
+            Some(Value::String(s)) => {
+                let s = s.as_str().to_string();
+                let mut o = RtObject::new_ordinary();
+                o.set_own("__buffer_data".into(), Value::String(Rc::new(s.clone())));
+                o.set_own("length".into(), Value::Number(s.as_bytes().len() as f64));
+                o.set_own("__is_buffer__".into(), Value::Boolean(true));
+                for (i, b) in s.as_bytes().iter().enumerate() {
+                    o.set_own(i.to_string(), Value::Number(*b as f64));
+                }
+                let id = rt.alloc_object(o);
+                install_buffer_methods(rt, id);
+                Ok(Value::Object(id))
+            }
+            _ => {
+                // Treat array-like / other: empty buffer fallback.
+                let mut o = RtObject::new_ordinary();
+                o.set_own("length".into(), Value::Number(0.0));
+                o.set_own("__is_buffer__".into(), Value::Boolean(true));
+                let id = rt.alloc_object(o);
+                install_buffer_methods(rt, id);
+                Ok(Value::Object(id))
+            }
+        }
+    });
     register_method(rt, buf_ctor, "from", |rt, args| {
         // Buffer.from(str) → produces a plain object pretending to be a Buffer.
         let s = match args.first() {

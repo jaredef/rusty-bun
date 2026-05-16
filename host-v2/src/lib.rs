@@ -109,6 +109,9 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:async_hooks" | "async_hooks" => "events",
             "node:perf_hooks" | "perf_hooks" => "events",
             "node:worker_threads" | "worker_threads" => "events",
+            "node:querystring" | "querystring" => "url",
+            "node:timers" | "timers" | "node:timers/promises" | "timers/promises" => "events",
+            "node:string_decoder" => "string_decoder",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

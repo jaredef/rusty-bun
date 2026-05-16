@@ -921,6 +921,29 @@ impl Runtime {
             rt.object_set(out, "configurable".into(), Value::Boolean(configurable));
             Ok(Value::Object(out))
         });
+        // Tier-Ω.5.rrrrrr: Object.getOwnPropertyDescriptors per §20.1.2.10.
+        register_method(self, obj_ctor, "getOwnPropertyDescriptors", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_ordinary()))),
+            };
+            let entries: Vec<(String, Value, bool, bool, bool, Option<Value>, Option<Value>)> = {
+                let o = rt.obj(id);
+                o.properties.iter().map(|(k, d)| (k.clone(), d.value.clone(), d.writable, d.enumerable, d.configurable, d.getter.clone(), d.setter.clone())).collect()
+            };
+            let out = rt.alloc_object(Object::new_ordinary());
+            for (k, v, w, e, c, getter, setter) in entries {
+                let desc = rt.alloc_object(Object::new_ordinary());
+                if let Some(g) = getter { rt.object_set(desc, "get".into(), g); }
+                if let Some(s) = setter { rt.object_set(desc, "set".into(), s); }
+                if !matches!(v, Value::Undefined) { rt.object_set(desc, "value".into(), v); }
+                rt.object_set(desc, "writable".into(), Value::Boolean(w));
+                rt.object_set(desc, "enumerable".into(), Value::Boolean(e));
+                rt.object_set(desc, "configurable".into(), Value::Boolean(c));
+                rt.object_set(out, k, Value::Object(desc));
+            }
+            Ok(Value::Object(out))
+        });
         register_method(self, obj_ctor, "getOwnPropertyNames", |rt, args| {
             let id = match args.first() {
                 Some(Value::Object(id)) => *id,

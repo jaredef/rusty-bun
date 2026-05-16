@@ -325,19 +325,36 @@ impl Runtime {
         // throw bubbles up, walk the try_stack and either resume at a
         // catch handler or re-raise to the caller.
         loop {
+            // Tier-Ω.5.mmmmmm: try/catch catches engine-side TypeError /
+            // RangeError / ReferenceError, per ECMA-262 §13.15.
+            // get-intrinsic (the es-shim ecosystem) intentionally throws
+            // `null.error` to capture an Error instance — without this,
+            // every es-abstract-using shim package fails at load.
             match self.run_frame_inner(frame) {
                 Ok(v) => return Ok(v),
-                Err(RuntimeError::Thrown(v)) => {
-                    if let Some(t) = frame.try_stack.pop() {
-                        frame.operand_stack.truncate(t.sp_at_entry);
-                        frame.operand_stack.push(v);
-                        frame.pc = t.catch_offset;
-                        // Continue the outer loop -> re-enter the dispatch.
-                    } else {
-                        return Err(RuntimeError::Thrown(v));
-                    }
+                Err(e) => {
+                    let (catchable_msg, catchable_name): (Option<String>, &str) = match &e {
+                        RuntimeError::Thrown(_) => (None, ""),
+                        RuntimeError::TypeError(m) => (Some(m.clone()), "TypeError"),
+                        RuntimeError::RangeError(m) => (Some(m.clone()), "RangeError"),
+                        RuntimeError::ReferenceError(m) => (Some(m.clone()), "ReferenceError"),
+                        _ => return Err(e),
+                    };
+                    if frame.try_stack.is_empty() { return Err(e); }
+                    let v = if let RuntimeError::Thrown(v) = e { v } else {
+                        let msg = catchable_msg.unwrap();
+                        let mut o = crate::value::Object::new_ordinary();
+                        if let Some(ep) = self.object_prototype { o.proto = Some(ep); }
+                        o.set_own("message".into(), Value::String(std::rc::Rc::new(msg.clone())));
+                        o.set_own("name".into(), Value::String(std::rc::Rc::new(catchable_name.into())));
+                        o.set_own("stack".into(), Value::String(std::rc::Rc::new(format!("{}: {}", catchable_name, msg))));
+                        Value::Object(self.alloc_object(o))
+                    };
+                    let t = frame.try_stack.pop().unwrap();
+                    frame.operand_stack.truncate(t.sp_at_entry);
+                    frame.operand_stack.push(v);
+                    frame.pc = t.catch_offset;
                 }
-                Err(e) => return Err(e),
             }
         }
     }

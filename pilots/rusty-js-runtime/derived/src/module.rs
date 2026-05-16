@@ -956,6 +956,58 @@ impl Runtime {
             ),
         };
         let require_id = self.alloc_object(require_obj);
+        // Tier-Ω.5.YYYYYYY: require.resolve(specifier) returns the resolved
+        // module URL string (not the module's value). gulp-uglify / metro /
+        // metro-config / many Node toolchains read require.resolve at
+        // module-init for path lookups. Real Node resolves through Module's
+        // _resolveFilename; for load-test purposes return a synthetic URL
+        // pointing to a plausible resolved location.
+        let require_resolve_url = url.to_string();
+        let require_resolve_fn: crate::value::NativeFn = std::rc::Rc::new(move |rt, args| {
+            let spec = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(RuntimeError::TypeError(
+                    "require.resolve: argument must be a string specifier".into())),
+            };
+            // Best-effort: ask the resolver for the URL, fallback to spec.
+            let resolved = rt.resolve_module_full(&require_resolve_url, &spec, ModuleKind::CJS)
+                .unwrap_or(spec.clone());
+            // Strip file:// prefix per Node's resolve-returns-filesystem-path convention.
+            let path = resolved.strip_prefix("file://").unwrap_or(&resolved).to_string();
+            Ok(Value::String(std::rc::Rc::new(path)))
+        });
+        let require_resolve_obj = Object {
+            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            internal_kind: crate::value::InternalKind::Function(
+                crate::value::FunctionInternals {
+                    name: "resolve".to_string(), native: require_resolve_fn,
+                }
+            ),
+        };
+        let require_resolve_id = self.alloc_object(require_resolve_obj);
+        // .paths(spec) returns an array of candidate node_modules dirs.
+        let require_paths_fn: crate::value::NativeFn = std::rc::Rc::new(|rt, _args| {
+            let arr = rt.alloc_object(Object::new_array());
+            rt.object_set(arr, "length".into(), Value::Number(0.0));
+            Ok(Value::Object(arr))
+        });
+        let require_paths_obj = Object {
+            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            internal_kind: crate::value::InternalKind::Function(
+                crate::value::FunctionInternals {
+                    name: "paths".to_string(), native: require_paths_fn,
+                }
+            ),
+        };
+        let require_paths_id = self.alloc_object(require_paths_obj);
+        self.object_set(require_resolve_id, "paths".into(), Value::Object(require_paths_id));
+        self.object_set(require_id, "resolve".into(), Value::Object(require_resolve_id));
+        // require.cache — empty module cache for compatibility probes.
+        let require_cache = self.alloc_object(Object::new_ordinary());
+        self.object_set(require_id, "cache".into(), Value::Object(require_cache));
+        // require.extensions — legacy, returns empty object.
+        let require_extensions = self.alloc_object(Object::new_ordinary());
+        self.object_set(require_id, "extensions".into(), Value::Object(require_extensions));
         let require_v = Value::Object(require_id);
 
         // Build the `module` object: { exports: <initial_exports_obj> }.

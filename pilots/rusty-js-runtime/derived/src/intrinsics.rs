@@ -35,11 +35,26 @@ impl Runtime {
         self.install_test_record();
         self.install_destructure_helpers();
         self.install_spread_helpers();
-        // Tier-Ω.5.ff: dynamic import stub.
-        register_global_fn(self, "__dynamic_import", |_rt, _args| {
-            Err(RuntimeError::Thrown(Value::String(Rc::new(
-                "TypeError: dynamic import() not yet supported (Tier-Ω.5.ff stub)".into()
-            ))))
+        // Tier-Ω.5.CCCCCCC: dynamic import() returns a rejected Promise
+        // (was: threw synchronously per Tier-Ω.5.ff). Real consumers wire
+        // `.catch(() => fallback)` around dynamic-import expressions for
+        // optional-feature polyfills (lru-cache/diagnostics-channel.js does
+        // `import('node:diagnostics_channel').then(...).catch(() => {})`);
+        // a sync throw bypasses .catch. A rejected promise threads through
+        // the chain correctly and the .catch handler runs.
+        // Module resolution semantics (succeeding for known specifiers)
+        // remain deferred — for now any dynamic import rejects.
+        register_global_fn(self, "__dynamic_import", |rt, args| {
+            let spec = args.first()
+                .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
+                .unwrap_or_else(|| "<unknown>".into());
+            let p = crate::promise::new_promise(rt);
+            let reason = Value::String(Rc::new(format!(
+                "TypeError: dynamic import('{}') not yet supported (Tier-Ω.5.CCCCCCC stub — now rejects rather than throws)",
+                spec
+            )));
+            crate::promise::reject_promise(rt, p, reason);
+            Ok(Value::Object(p))
         });
         self.install_global_this();
     }

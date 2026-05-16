@@ -448,4 +448,36 @@ pub fn install_all(rt: &mut Runtime) {
     install_dns(rt);
     install_module(rt);
     install_http2(rt);
+    install_diagnostics_channel(rt);
+}
+
+/// Tier-Ω.5.CCCCCCC: node:diagnostics_channel stub. lru-cache /
+/// fastify / undici call `dc.channel(name)` and `dc.tracingChannel(name)`
+/// at module-init, then read `.hasSubscribers` on the result. Both
+/// return objects with `hasSubscribers: false`, satisfying the
+/// short-circuit check; publish/subscribe queued for downstream.
+pub fn install_diagnostics_channel(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    register_method(rt, ns, "channel", |rt, _args| {
+        let ch = new_object(rt);
+        rt.object_set(ch, "hasSubscribers".into(), Value::Boolean(false));
+        register_method(rt, ch, "publish", |_rt, _args| Ok(Value::Undefined));
+        register_method(rt, ch, "subscribe", |_rt, _args| Ok(Value::Undefined));
+        register_method(rt, ch, "unsubscribe", |_rt, _args| Ok(Value::Boolean(false)));
+        Ok(Value::Object(ch))
+    });
+    register_method(rt, ns, "tracingChannel", |rt, _args| {
+        let ch = new_object(rt);
+        rt.object_set(ch, "hasSubscribers".into(), Value::Boolean(false));
+        for m in &["start", "end", "asyncStart", "asyncEnd", "error", "traceSync", "tracePromise", "traceCallback"] {
+            register_method(rt, ch, m, |_rt, args| {
+                Ok(args.get(1).cloned().unwrap_or(Value::Undefined))
+            });
+        }
+        Ok(Value::Object(ch))
+    });
+    register_method(rt, ns, "subscribe", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ns, "unsubscribe", |_rt, _args| Ok(Value::Boolean(false)));
+    register_method(rt, ns, "hasSubscribers", |_rt, _args| Ok(Value::Boolean(false)));
+    rt.globals.insert("diagnostics_channel".into(), Value::Object(ns));
 }

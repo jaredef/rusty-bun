@@ -976,24 +976,53 @@ impl Runtime {
                     // pops [obj, ctor]; ctor on top.
                     let ctor_v = frame.pop()?;
                     let obj_v = frame.pop()?;
-                    let result = match (&obj_v, &ctor_v) {
-                        (Value::Object(obj_id), Value::Object(ctor_id)) => {
-                            // Read ctor.prototype (own + proto-chain), walk obj's proto chain.
-                            let proto_v = self.object_get(*ctor_id, "prototype");
-                            match proto_v {
-                                Value::Object(target_proto) => {
-                                    let mut cur = self.obj(*obj_id).proto;
-                                    let mut found = false;
-                                    while let Some(c) = cur {
-                                        if c == target_proto { found = true; break; }
-                                        cur = self.obj(c).proto;
+                    // Tier-Ω.5.hhhhhh: dispatch ctor[Symbol.hasInstance] when
+                    // present per ECMA-262 §13.10.1 step 4. readable-stream's
+                    // Writable customizes hasInstance for the Duplex inheritance
+                    // shape; without dispatch, every `obj instanceof Writable`
+                    // hits the fallback proto-chain check that always returns
+                    // false for the userspace Writable.
+                    let hi_result = if let Value::Object(ctor_id) = &ctor_v {
+                        // Symbol.hasInstance is interned as "@@sym:0:hasInstance"
+                        // in our engine. Try a few keys for compatibility.
+                        let hi = self.object_get(*ctor_id, "Symbol(Symbol.hasInstance)");
+                        let hi = if matches!(hi, Value::Undefined) {
+                            self.object_get(*ctor_id, "@@hasInstance")
+                        } else { hi };
+                        let hi = if matches!(hi, Value::Undefined) {
+                            // Try Symbol.hasInstance's string form.
+                            let sym = self.globals.get("Symbol").cloned();
+                            if let Some(Value::Object(sym_id)) = sym {
+                                let hi_sym = self.object_get(sym_id, "hasInstance");
+                                if let Value::String(s) = hi_sym {
+                                    self.object_get(*ctor_id, &s)
+                                } else { Value::Undefined }
+                            } else { Value::Undefined }
+                        } else { hi };
+                        if matches!(hi, Value::Object(_)) {
+                            let r = self.call_function(hi, ctor_v.clone(), vec![obj_v.clone()])?;
+                            Some(matches!(r, Value::Boolean(true)) || (!matches!(r, Value::Boolean(false) | Value::Undefined | Value::Null) && match &r { Value::Number(n) => *n != 0.0, Value::String(s) => !s.is_empty(), _ => true }))
+                        } else { None }
+                    } else { None };
+                    let result = if let Some(b) = hi_result { b } else {
+                        match (&obj_v, &ctor_v) {
+                            (Value::Object(obj_id), Value::Object(ctor_id)) => {
+                                let proto_v = self.object_get(*ctor_id, "prototype");
+                                match proto_v {
+                                    Value::Object(target_proto) => {
+                                        let mut cur = self.obj(*obj_id).proto;
+                                        let mut found = false;
+                                        while let Some(c) = cur {
+                                            if c == target_proto { found = true; break; }
+                                            cur = self.obj(c).proto;
+                                        }
+                                        found
                                     }
-                                    found
+                                    _ => false,
                                 }
-                                _ => false,
                             }
+                            _ => false,
                         }
-                        _ => false,
                     };
                     frame.push(Value::Boolean(result));
                 }

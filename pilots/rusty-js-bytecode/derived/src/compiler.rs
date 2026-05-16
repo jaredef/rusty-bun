@@ -711,7 +711,28 @@ impl Compiler {
             }
             Stmt::Empty { .. } => {}
             Stmt::Block { body, .. } => {
+                // Tier-Ω.5.ttttt: block-scope let/const. Snapshot the
+                // local-table depth on entry; on exit, rename locals
+                // added inside the block so resolve_local no longer
+                // matches them. Slot is preserved (closures that
+                // captured them still find their cell), but later
+                // identifier resolution falls through to upvalue /
+                // global as if the binding had gone out of scope.
+                // Reason: without this, `if(...){const r=...; }` then
+                // a later `r(...)` resolved to the inner shadow rather
+                // than the outer upvalue r — ts-pattern's o function
+                // hit exactly this when the first branch redeclared
+                // `r` and `i` via destructuring.
+                let snapshot = self.locals.len();
                 for s in body { self.compile_stmt(s)?; }
+                for i in snapshot..self.locals.len() {
+                    // Don't rename pre-allocated names (let/const var
+                    // hoisted from outer); they're meant to outlive.
+                    let nm = &self.locals[i].name;
+                    if !nm.starts_with('<') {
+                        self.locals[i].name = format!("<scoped@{}>{}", i, nm);
+                    }
+                }
             }
             Stmt::Variable(v) => {
                 for d in &v.declarators {

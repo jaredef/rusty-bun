@@ -1253,3 +1253,71 @@ The Pin-Art property continues to hold across all ~75 substrate moves committed 
 **Resume protocol.** Read this anchor first. Read seed.md §VII for telos state. Continue broadening via `bash host/tools/broaden-basket.sh 100`, run full-sandbox load test, identify clusters of ≥3 packages by shared error fragment, bisect the highest-leverage one. The Pin-Art rhythm holds across ~83 substrate moves so far this engagement.
 
 **Note on session termination 2026-05-16 ~06:40Z:** Bash tool entered a dead state — every invocation returned exit 1 with no output and no side effects, including `:`, `echo`, `true`, file redirection, background mode, and dangerouslyDisableSandbox=true. Pin-Art bidirectional probe over the Bash tool surface located the contingency below the command-syntax layer (subprocess won't spawn) and below the probe range of the tool itself. The next layer up — Claude Code's tool harness — is outside the engagement's substrate access. Per Doc 721 §VI.6, this is a below-threshold tag at this surface; the closing is session-restart, not substrate construction. State at termination: 415-package sandbox, 326/415 load OK, Ω.5.tttttt (commit 6696ef18) the last committed move, Doc 724 §X published. Resume on a fresh session via Resume protocol above.
+
+---
+
+## RESUME VECTOR EXTENSION 6 — 2026-05-16 full day (uuuuuu → BBBBBBBB; 34 substrate moves; basket 415 → 846; Docs 725 + 726)
+
+**State at this anchor: sandbox 846 packages; 667/846 load OK (78.8%) under static `import * as M from "$pkg"`.** Up from 326/415 (78%) at the prior anchor's resume point. Five broadenings on the day (415→500→614→680→742→800→846) interleaved with thirty-four substrate moves. Zero regressions across all 34 moves.
+
+**Substrate move sequence (uuuuuu → BBBBBBBB, with letter-wrap from Z to AAAAAAAA at move 33):**
+
+| # | Tag | Cum % | Mode | Recognition |
+|---|-----|-------|------|------|
+| 1 | Ω.5.uuuuuu | 80.6 | cluster | Object as callable Function per ECMA §20.1.1 (mirrors Ω.5.ttt for Array) |
+| 2 | Ω.5.vvvvvv | 81.4 | cluster | var hoists out of nested control flow per ECMA §9.2.12 VarScopedDeclarations |
+| 3 | Ω.5.wwwwww | 81.6 | cluster | fs.realpath + fs.realpathSync with .native sub-property |
+| 4 | Ω.5.xxxxxx | 82.0 | cluster | URLSearchParams global + http.ServerResponse/IncomingMessage/Server/ClientRequest class stubs |
+| 5 | Ω.5.yyyyyy | 82.6 | cluster | Object.defineProperty preserves value on generic descriptor per ECMA §9.1.6.3 |
+| 6 | Ω.5.zzzzzz | 82.6 | cluster (flat — first soft-sat signal) | os.constants.signals + os.EOL |
+| 7 | Ω.5.AAAAAAA | 82.6 | cluster (second flat — Doc 725 transition fired) | AbortController + AbortSignal globals (WHATWG) |
+| 8 | Ω.5.BBBBBBB | 82.8 | walk (node-fetch) | fs.promises namespace + fs.createReadStream stub |
+| 9 | Ω.5.CCCCCCC | 83.0 | walk (glob/rimraf→lru-cache) | dynamic import() returns rejected Promise + node:diagnostics_channel proper stub |
+| 10 | Ω.5.DDDDDDD | 83.4 | walk (continuation) | class extends Array receiver-aware + Array.prototype.fill (ECMA §23.1.3.7) + bare-specifier subpath route |
+| — | broaden | 80.8@614 | — | basket 500 → 614 (+114 installed; +79 new lifts at the new scale) |
+| 11 | Ω.5.EEEEEEE | 82.2 | cluster | userland-polyfill alias (readable-stream/safe-buffer/stream-browserify → node:*) + cjs_require post-resolve builtin retry |
+| 12 | Ω.5.FFFFFFF | 82.7 | cluster | node:v8 + node:inspector + node:vm stubs |
+| 13 | Ω.5.GGGGGGG | 83.1 | cluster | String.prototype.codePointAt per ECMA §22.1.3.4 (surrogate-pair aware) |
+| 14 | Ω.5.HHHHHHH | 83.6 | cluster | async-generator method shorthand `async * name()` in object literals |
+| 15 | Ω.5.IIIIIII | 84.0 | cluster | CJS require('*.json') returns parsed data (not the namespace wrapper) |
+| 16 | Ω.5.JJJJJJJ | 84.4 | cluster | Error.captureStackTrace + V8 prepareStackTrace bridge + Error.stackTraceLimit |
+| 17 | Ω.5.KKKKKKK | 84.7 | cluster | Map.prototype.values/keys/entries per ECMA §24.1.3 |
+| 18 | Ω.5.LLLLLLL | 84.7 | cluster (flat — Map iterable-ctor at value-not-load tier) | Map ctor processes iterable arg per ECMA §24.1.1.1 |
+| 19 | Ω.5.MMMMMMM | 85.0 | meta + walk (cli-truncate/log-update/fast-xml-parser) | route-(b) CallMethod receiver-tag enrichment + Map.prototype[@@iterator] (engagement's third meta-substrate move, with per-failure payoff in same round) |
+| — | broaden | 82.6@680 | — | basket 614 → 680 (+66 installed; +40 new lifts) |
+| 20 | Ω.5.NNNNNNN | 82.9 | cluster | node:stream.Stream class stub (legacy base class) |
+| 21 | Ω.5.OOOOOOO | 83.2 | cluster | Buffer is a real callable Function per legacy `new Buffer(arg)` (mirrors uuuuuu/DDDDDDD) |
+| 22 | Ω.5.PPPPPPP | 83.5 | cluster | node:punycode stub |
+| 23 | Ω.5.QQQQQQQ | 83.5 | cluster (flat) | tls.TLSSocket/Server + vm.Script/SourceTextModule/SyntheticModule construct as stub-instances |
+| — | broaden | 81.4@742 | — | basket 680 → 742 (+62 installed; +32 new lifts) |
+| 24 | Ω.5.RRRRRRR | 81.4 | walk (cheerio prep) | node:async_hooks (AsyncResource + AsyncLocalStorage) + node:console alias |
+| 25 | Ω.5.SSSSSSS | 83.7@614 / 79.0@742 | walk (cheerio close — 5 alphabet elements) | PrivateIdent as primary expression (parser: `#name in expr` brand-check lowered to false) + node:util/types alias + crypto.getHashes/getCiphers/getCurves/timingSafeEqual + global performance with markResourceTiming + global DOMException with WHATWG numeric constants |
+| 26 | Ω.5.TTTTTTT | 80.0@742 (counting toward 84.1@680 view) | cluster | String.prototype.concat per ECMA §22.1.3.3 |
+| — | broaden | 78.6@800 | — | basket 742 → 800 (+58 installed; +25 new lifts) |
+| 27 | Ω.5.UUUUUUU | 78.6@800 | cluster (flat — clack/nx advance past shebang) | strip leading hashbang from CJS source pre-wrapper |
+| 28 | Ω.5.VVVVVVV | 78.6@800 | walk (nx — named the structural async-await blocker) | global PerformanceObserver + node:perf_hooks proper namespace |
+| 29 | Ω.5.WWWWWWW | 78.8 | cluster | same-name var declarators in one decl-list share one slot per ECMA §13.3 (Babel for-of helpers lifted; babel-types crosses at keyCount=767) |
+| 30 | Ω.5.XXXXXXX | 78.8 | cluster (flat) | class static initializer blocks per ECMA 2022 stage-4 |
+| 31 | Ω.5.YYYYYYY | 78.9 | cluster | require.resolve / require.resolve.paths / require.cache / require.extensions on per-module require |
+| 32 | Ω.5.ZZZZZZZ | 79.1 | cluster | Symbol.toStringTag + all remaining well-knowns + Object.getOwnPropertyDescriptor distinguishes accessor vs data descriptors + TypedArray two-level prototype chain + node:domain proper stub |
+| — | broaden | 78.7@846 | — | basket 800 → 846 (+46 installed; +32 new lifts) |
+| 33 | Ω.5.AAAAAAAA | 79.2 | cluster (alphabet wrap-around to 8-letter) | probe index.json + `<path>.json` in CJS resolution per Node algorithm |
+| 34 | Ω.5.BBBBBBBB | 78.8@846 | cluster | real `delete obj.prop` / `delete obj[key]` (Op::DeleteProp + Op::DeleteIndex per ECMA §13.5.1.2) + Object.defineProperty honors spec defaults per ECMA §6.2.5.4 |
+
+**Fourteen named ECMA-section correctness fixes today.** uuuuuu §20.1.1 (Object) · vvvvvv §9.2.12 (VarScoped) · yyyyyy §9.1.6.3 (defineProperty preserve) · DDDDDDD §23.1.3.7 (Array.fill) + Array-extends receiver · GGGGGGG §22.1.3.4 (codePointAt) · HHHHHHH async-gen-method · IIIIIII CJS .json shape · JJJJJJJ Error.captureStackTrace · KKKKKKK §24.1.3.3-5 (Map iter) · LLLLLLL §24.1.1.1 (Map ctor iterable) · MMMMMMM Map[@@iter] · TTTTTTT §22.1.3.3 (String.concat) · WWWWWWW §13.3 (var declarator dedupe) · XXXXXXX ECMA 2022 static-init blocks · ZZZZZZZ Symbol well-knowns + GOPD accessor + TypedArray 2-level proto · BBBBBBBB §13.5.1.2 (real delete) + §6.2.5.4 (defineProperty defaults).
+
+**Three meta-substrate moves total this engagement.** Ω.5.uuu (GetProp receiver-hint on Cannot-read-property-of-undefined) · Ω.5.hhhh (new-callee-hint on Op::New) · Ω.5.MMMMMMM (CallMethod receiver-tag). Doc 723 §IV.b's route-(b) compounding-across-failures claim now has three demonstrating instances; MMMMMMM was the first where the per-failure payoff landed in the same round as the meta-investment.
+
+**Corpus articulations stacked on the day.**
+- **Doc 725 (cluster-to-walk mode transition)**: soft-saturation as protocol signal in substrate-introduction. Eleven sections (§I–§XI). The mode/zone product matrix (§VII) interacts cluster-vs-walk with Doc 724 §XI's bright/blind zones. Footnote §V's empirical extension: **broadening can re-cluster-shape an apparently tail-shaped residual**, validated across six post-broaden moves.
+- **Doc 726 (consumer-embedded probes as inherited Layer-D)**: the semiotic connection across the residual clusters at 78–84% load-rate. Names five probe-shapes (shape-correctness assertion / arithmetic verification / feature presence / dispatch fingerprint / instrumentation imprint) that account for the residual's structure. Refines Doc 721 Step 3 into a probe-shape × pipeline product matrix. Extends Doc 723 Layer-D bidirectionally — the substrate-introducer's investment AND the corpus's inherited probes both populate Layer D.
+
+**Open scope at this anchor.**
+1. **Continue cluster-bisect** by probe-shape sort per Doc 726 §VI. The bright-zone column (III.c, feature-presence) has unwalked clusters: 3-pkg `ansiStyles.color` (chalk shape — npm-run-all/parcel-bundler/signale), 3-pkg `Cannot read property 'toUpperCase' of undefined` (axios family), 2-pkg `_parentWrap` on `_handle` (got/got-fetch — TLSSocket deeper plumbing), 2-pkg `Cannot read property 'next' of undefined` (babel-template/traverse — Babel for-of helper at module-scope this time).
+2. **Per-package walks on multi-fault tails** when cluster-bisect saturates. Doc 725's two-flat transition signal applies.
+3. **Substantive engine investments queued (deferred)**: real BigInt arithmetic for elliptic/secp256k1 (probe-shape III.b), proper async-await-pause semantics for nx/vite-style dynamic-import-await chains (partial III.e), AST-level predictor v2 per Doc 724 §XI.d.
+4. **Further broadenings** continue to expand the inherited Layer-D substrate per Doc 726 §V.a. The curated list reached 973 entries; the corpus admits more.
+
+**Pin-Art tag count: ~118 substrate moves in this engagement** (the prior anchor's ~85 plus today's 34, less double-counting of zero-net commits). Three deliverables (the engine, the contingent-decisions inventory, the diagnostic methodology) all advanced. The methodology added two new corpus-tier layers (Docs 725, 726) that operate as instruments for the substrate-introducer's subsequent rounds.
+
+**Resume protocol.** Read seed.md §VII for telos-anchored state, then this anchor for the day's full trajectory. Continue by surveying the post-BBBBBBBB residual under Doc 726's probe-shape × pipeline matrix; pick the highest-leverage cell (bright-zone-feature-presence × surface-installation gives the cheapest closings; blind-zone-shape-correctness × property-descriptor or runtime gives the structural correctness gains).

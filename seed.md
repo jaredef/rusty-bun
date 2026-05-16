@@ -398,6 +398,16 @@ A complementary signal: run Web Platform Tests against the integrated runtime vi
 
 **Status at 2026-05-16 mid-day: corpus broadening + cluster-bisect regime + Doc 724 §X published.** The curated 71-sample saturated at 67/71 after the engine-features stretch. Per the keeper's broadening directive, the sandbox grew from 119 packages → 178 → 257 → 336 → 415 packages over four install passes (host/tools/broaden-basket.sh + parity-top500.txt curated list). At 415-scale: **326/415 packages (78%) load OK** under `import * as M from "$pkg"`.
 
+**Status at 2026-05-16 evening close: thirty-four substrate moves (uuuuuu → BBBBBBBB), five broadenings to 846 packages, two corpus-tier articulations (Docs 725 + 726).** The full day's trajectory is detailed in trajectory.md's RESUME VECTOR EXTENSION 6 anchor. Headline movements:
+
+- **Load rate**: 78% @ 415 → 84.7% @ 614 (peak) → 78.8% @ 846 (current). Five broadenings absorbed the rate drift; the engagement compounds across basket size rather than holding a single percentage.
+- **Substrate moves**: thirty-four, with the alphabet tag wrapping once (Z → AAAAAAAA at move 33). Zero regressions across all 34. Fourteen named ECMA-section correctness fixes; ten surface installs; three meta-substrate (route-(b)) moves.
+- **Mode pattern** per Doc 725: five cluster moves, two flats (zzzzzz/AAAAAAA), three walks (BBBBBBB/CCCCCCC/DDDDDDD), then six post-broaden cluster moves, soft-sat-flats, more walks. The cluster→walk transition fired four times across the day; broadening reset cluster mode each time.
+- **Probe-shape distribution** per Doc 726: III.a (shape-correctness assertion) drove the most lifts (color-convert chain, defineProperty defaults, getOwnPropertyDescriptor accessor-shape); III.c (feature-presence) drove the surface installs; III.b (arithmetic verification) on ethereumjs/secp256k1 named the BigInt-arithmetic substantive investment as the queue-of-record.
+- **Corpus articulations**: Doc 725 (cluster→walk mode transition; broadening as mode-resetting operation) and Doc 726 (consumer-embedded probes as inherited Layer-D substrate; probe-shape × pipeline product matrix as refinement of Doc 721 Step 3) both published through the master → resolve → jaredfoy.com pipeline.
+
+The forward queue is now sorted by Doc 726's probe-shape × pipeline matrix. Cheap closings (bright-zone column: III.c feature-presence + surface-installation pipeline) continue to drop the residual; structural correctness fixes (blind-zone column: III.a / III.d + property-descriptor / parser-compiler pipelines) compound with the inherited Layer-D the corpus expands at each broadening; substantive engine investments (III.b arithmetic, partial III.e instrumentation+async-pause) wait for a scope-deliberate session.
+
 The percentage holds at 75-78% across every install pass, validating Doc 724 §X.c's structural prediction: ~80% of npm packages exercise only feature sites already in the engine, and the remaining 20% concentrates on shared spec gaps that lift in clusters.
 
 **Cluster-bisect closings landed this stretch** (Ω.5.mmmmmm through Ω.5.tttttt):

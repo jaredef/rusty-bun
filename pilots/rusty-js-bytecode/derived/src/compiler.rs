@@ -743,19 +743,35 @@ impl Compiler {
                 }
             }
             Stmt::Variable(v) => {
+                // Tier-Ω.5.WWWWWWW: dedupe same-name declarators within a
+                // single `var`/`let`/`const` declarator list per ECMA §13.3.
+                // `var x = a, x = x` is a single binding `x` whose init runs
+                // twice (last write wins); prior code alloc_local'd a fresh
+                // slot per declarator, producing two `x` slots and breaking
+                // the second declarator's RHS lookup (it resolved to the
+                // freshly-allocated slot, undefined, before the store).
+                // Babel's for-of transpilation hits this exact pattern at
+                // every iteration site (`var _iter = arr, _isArr = ..., _i =
+                // 0, _iter = _isArr ? _iter : getIterator(_iter)`).
+                let mut local_slots: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
                 for d in &v.declarators {
                     match &d.target {
                         rusty_js_ast::BindingPattern::Identifier(id) => {
-                            // Tier-Ω.5.ee: reuse pre-allocated slot if the
-                            // hoisting pass already created one for this name.
+                            // Reuse pre-allocated slot if the H1 hoisting
+                            // pass already created one; else reuse a slot
+                            // from earlier-in-this-list; else alloc.
                             let slot = if let Some(s) = self.pre_allocated_slots.get(&id.name).copied() {
                                 s
+                            } else if let Some(s) = local_slots.get(&id.name).copied() {
+                                s
                             } else {
-                                self.alloc_local(LocalDescriptor {
+                                let s = self.alloc_local(LocalDescriptor {
                                     name: id.name.clone(),
                                     kind: v.kind,
                                     depth: 0,
-                                })
+                                });
+                                local_slots.insert(id.name.clone(), s);
+                                s
                             };
                             if let Some(init) = &d.init {
                                 self.compile_expr(init)?;

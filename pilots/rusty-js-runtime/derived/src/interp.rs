@@ -824,7 +824,9 @@ impl Runtime {
                         }
                         _ => Value::Undefined,
                     };
-                    frame.last_property_lookup = Some(key);
+                    frame.last_property_lookup = Some(key.clone());
+                    // Tier-Ω.5.yyyyy: pending_method survives arg loads.
+                    frame.pending_method_name = Some(key);
                     frame.push(v);
                 }
                 Op::SetProp => {
@@ -1068,6 +1070,7 @@ impl Runtime {
                     args.reverse();
                     let callee = frame.pop()?;
                     let callee_hint = frame.last_property_lookup.clone();
+                    frame.pending_method_name = None;
                     let result = self.call_function(callee, Value::Undefined, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
                             RuntimeError::TypeError(format!("{} (callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
@@ -1094,7 +1097,11 @@ impl Runtime {
                     args.reverse();
                     let method = frame.pop()?;
                     let receiver = frame.pop()?;
-                    let method_name = frame.last_property_lookup.clone();
+                    // Tier-Ω.5.yyyyy: prefer pending_method_name (captured
+                    // at GetProp time) over last_property_lookup (which may
+                    // have been overwritten by arg-load).
+                    let method_name = frame.pending_method_name.take()
+                        .or_else(|| frame.last_property_lookup.clone());
                     let result = self.call_function(method, receiver, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
                             RuntimeError::TypeError(format!("{} (method='{}')", msg, method_name.unwrap_or_else(|| "?".into())))
@@ -1354,6 +1361,7 @@ impl Runtime {
             this_value: this,
             upvalues,
             last_property_lookup: None,
+            pending_method_name: None,
             import_meta: None,
             new_target: nt_for_this_call.clone(),
         };
@@ -1440,6 +1448,11 @@ pub struct Frame<'a> {
     /// Diagnostic: name of the property most recently read by Op::GetProp.
     /// Used to enrich "callee is not callable" errors with the method name.
     pub last_property_lookup: Option<String>,
+    /// Tier-Ω.5.yyyyy: method-name captured at GetProp time, only reset
+    /// when consumed by Op::Call / Op::CallMethod / Op::New. Args loaded
+    /// between GetProp and the call no longer overwrite it (the prior
+    /// last_property_lookup was wrong for method-name diagnostics).
+    pub pending_method_name: Option<String>,
     /// Tier-Ω.5.r: synthetic `import.meta` object for this module frame.
     /// Populated by `evaluate_module` (ESM path) with `{ url, dir }` keys.
     /// Frames that didn't enter through the module loader (raw run_module
@@ -1476,6 +1489,7 @@ impl<'a> Frame<'a> {
             this_value: Value::Undefined,
             upvalues: Vec::new(),
             last_property_lookup: None,
+            pending_method_name: None,
             import_meta: None,
             new_target: None,
         }

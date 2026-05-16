@@ -1223,6 +1223,19 @@ impl Runtime {
             Ok(target)
         });
         let proxy_id = self.alloc_object(proxy_obj);
+        // Tier-Ω.5.zzzzz: Proxy.revocable(target, handler) → { proxy, revoke }.
+        // immer reaches for revocable at every produce() to enforce
+        // post-draft-finalization invariants. v1 deviation: proxy is the
+        // target (no trap dispatch); revoke is a no-op.
+        register_method(self, proxy_id, "revocable", |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            let revoke = make_native("revoke", |_rt, _args| Ok(Value::Undefined));
+            let revoke_id = rt.alloc_object(revoke);
+            let mut o = Object::new_ordinary();
+            o.set_own("proxy".into(), target);
+            o.set_own("revoke".into(), Value::Object(revoke_id));
+            Ok(Value::Object(rt.alloc_object(o)))
+        });
         self.globals.insert("Proxy".into(), Value::Object(proxy_id));
 
         // Tier-Ω.5.ccccc: minimal WHATWG URL global. Parses

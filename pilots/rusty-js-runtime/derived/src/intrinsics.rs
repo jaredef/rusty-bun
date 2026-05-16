@@ -2016,8 +2016,79 @@ impl Runtime {
             if let Value::Object(oid) = v {
                 let dp = self.object_get(oid, "defineProperty");
                 if !matches!(dp, Value::Undefined) { self.object_set(r, "defineProperty".into(), dp); }
+                let gopd = self.object_get(oid, "getOwnPropertyDescriptor");
+                if !matches!(gopd, Value::Undefined) { self.object_set(r, "getOwnPropertyDescriptor".into(), gopd); }
             }
         }
+        // Tier-Ω.5.rrrrr: Reflect.setPrototypeOf / apply / construct.
+        // ansi-colors uses Reflect.setPrototypeOf at module-init time;
+        // without it, the import of `ansi-colors` (which calls
+        // create() at the bottom) failed before module.exports was set.
+        register_method(self, r, "setPrototypeOf", |rt, args| {
+            let obj = args.first().cloned().unwrap_or(Value::Undefined);
+            let proto = args.get(1).cloned().unwrap_or(Value::Null);
+            let id = match obj {
+                Value::Object(id) => id,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            let new_proto = match proto {
+                Value::Object(p) => Some(p),
+                Value::Null => None,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            rt.obj_mut(id).proto = new_proto;
+            Ok(Value::Boolean(true))
+        });
+        register_method(self, r, "apply", |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+            let arg_list: Vec<Value> = match args.get(2) {
+                Some(Value::Object(arr)) => {
+                    let len = rt.array_length(*arr);
+                    (0..len).map(|i| rt.object_get(*arr, &i.to_string())).collect()
+                }
+                _ => Vec::new(),
+            };
+            rt.call_function(target, this_arg, arg_list)
+        });
+        register_method(self, r, "construct", |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            let arg_list: Vec<Value> = match args.get(1) {
+                Some(Value::Object(arr)) => {
+                    let len = rt.array_length(*arr);
+                    (0..len).map(|i| rt.object_get(*arr, &i.to_string())).collect()
+                }
+                _ => Vec::new(),
+            };
+            // Use Op::New-equivalent via call_function with a fresh this.
+            let proto_id = match &target {
+                Value::Object(tid) => match rt.object_get(*tid, "prototype") {
+                    Value::Object(pid) => Some(pid),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let mut o = Object::new_ordinary();
+            o.proto = proto_id;
+            let this_id = rt.alloc_object(o);
+            let this_obj = Value::Object(this_id);
+            rt.pending_new_target = Some(target.clone());
+            let ret = rt.call_function(target, this_obj.clone(), arg_list)?;
+            Ok(match ret { Value::Object(_) => ret, _ => this_obj })
+        });
+        register_method(self, r, "isExtensible", |rt, args| {
+            match args.first() {
+                Some(Value::Object(id)) => Ok(Value::Boolean(rt.obj(*id).extensible)),
+                _ => Ok(Value::Boolean(false)),
+            }
+        });
+        register_method(self, r, "preventExtensions", |rt, args| {
+            if let Some(Value::Object(id)) = args.first() {
+                rt.obj_mut(*id).extensible = false;
+                return Ok(Value::Boolean(true));
+            }
+            Ok(Value::Boolean(false))
+        });
         self.globals.insert("Reflect".into(), Value::Object(r));
     }
 

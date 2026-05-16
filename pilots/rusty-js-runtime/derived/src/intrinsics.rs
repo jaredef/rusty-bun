@@ -1217,6 +1217,118 @@ impl Runtime {
         let proxy_id = self.alloc_object(proxy_obj);
         self.globals.insert("Proxy".into(), Value::Object(proxy_id));
 
+        // Tier-Ω.5.ccccc: minimal WHATWG URL global. Parses
+        // scheme://[user:pass@]host[:port]/path?query#fragment and exposes
+        // the standard read-only properties. Real spec parsing is intricate
+        // (punycode, percent-encoding canonicalization, IDN); v1 covers
+        // the URL shapes the corpus actually constructs.
+        let url_ctor = make_native("URL", |rt, args| {
+            let input = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                Some(v) => crate::abstract_ops::to_string(v).as_str().to_string(),
+                None => return Err(RuntimeError::TypeError("URL: invalid URL".into())),
+            };
+            let base = match args.get(1) {
+                Some(Value::String(s)) => Some(s.as_str().to_string()),
+                _ => None,
+            };
+            // Resolve against base if provided and input is relative.
+            let full = match base {
+                Some(b) if !input.contains("://") && !input.starts_with("//") => {
+                    // Strip filename from base path, append input.
+                    let cut = b.rfind('/').map(|i| &b[..=i]).unwrap_or(&b);
+                    format!("{}{}", cut, input)
+                }
+                _ => input.clone(),
+            };
+            let mut rest: &str = &full;
+            let (protocol, after_scheme) = if let Some(i) = rest.find("://") {
+                let p = format!("{}:", &rest[..i]);
+                rest = &rest[i+3..];
+                (p, true)
+            } else if let Some(i) = rest.find(':') {
+                let p = format!("{}:", &rest[..i]);
+                rest = &rest[i+1..];
+                (p, false)
+            } else {
+                ("".to_string(), false)
+            };
+            let (hash, rest2) = match rest.find('#') {
+                Some(i) => (rest[i..].to_string(), &rest[..i]),
+                None => ("".to_string(), rest),
+            };
+            let (search, rest3) = match rest2.find('?') {
+                Some(i) => (rest2[i..].to_string(), &rest2[..i]),
+                None => ("".to_string(), rest2),
+            };
+            let (authority, path) = if after_scheme {
+                match rest3.find('/') {
+                    Some(i) => (&rest3[..i], &rest3[i..]),
+                    None => (rest3, ""),
+                }
+            } else {
+                ("", rest3)
+            };
+            let path_s = if path.is_empty() && after_scheme { "/".to_string() } else { path.to_string() };
+            let (userinfo, hostport) = match authority.rfind('@') {
+                Some(i) => (&authority[..i], &authority[i+1..]),
+                None => ("", authority),
+            };
+            let (username, password) = match userinfo.find(':') {
+                Some(i) => (&userinfo[..i], &userinfo[i+1..]),
+                None => (userinfo, ""),
+            };
+            let (hostname, port) = if hostport.starts_with('[') {
+                // IPv6 literal.
+                match hostport.find("]:") {
+                    Some(i) => (&hostport[..=i], &hostport[i+2..]),
+                    None => (hostport, ""),
+                }
+            } else {
+                match hostport.rfind(':') {
+                    Some(i) => (&hostport[..i], &hostport[i+1..]),
+                    None => (hostport, ""),
+                }
+            };
+            let origin = if protocol.is_empty() {
+                "null".to_string()
+            } else {
+                format!("{}//{}", protocol, hostport)
+            };
+            let href = full.clone();
+
+            let url_obj = match rt.current_this() {
+                Value::Object(id) => id,
+                _ => rt.alloc_object(Object::new_ordinary()),
+            };
+            rt.object_set(url_obj, "href".into(), Value::String(Rc::new(href)));
+            rt.object_set(url_obj, "protocol".into(), Value::String(Rc::new(protocol)));
+            rt.object_set(url_obj, "username".into(), Value::String(Rc::new(username.into())));
+            rt.object_set(url_obj, "password".into(), Value::String(Rc::new(password.into())));
+            rt.object_set(url_obj, "host".into(), Value::String(Rc::new(hostport.into())));
+            rt.object_set(url_obj, "hostname".into(), Value::String(Rc::new(hostname.into())));
+            rt.object_set(url_obj, "port".into(), Value::String(Rc::new(port.into())));
+            rt.object_set(url_obj, "pathname".into(), Value::String(Rc::new(path_s)));
+            rt.object_set(url_obj, "search".into(), Value::String(Rc::new(search)));
+            rt.object_set(url_obj, "hash".into(), Value::String(Rc::new(hash)));
+            rt.object_set(url_obj, "origin".into(), Value::String(Rc::new(origin)));
+            register_method(rt, url_obj, "toString", |rt, _args| {
+                Ok(rt.object_get(match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new(String::new()))) }, "href"))
+            });
+            register_method(rt, url_obj, "toJSON", |rt, _args| {
+                Ok(rt.object_get(match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::String(Rc::new(String::new()))) }, "href"))
+            });
+            Ok(Value::Object(url_obj))
+        });
+        let url_id = self.alloc_object(url_ctor);
+        let url_proto = self.alloc_object(Object::new_ordinary());
+        self.object_set(url_id, "prototype".into(), Value::Object(url_proto));
+        register_method(self, url_id, "canParse", |_rt, args| {
+            let s = match args.first() { Some(Value::String(s)) => s.as_str().to_string(), _ => return Ok(Value::Boolean(false)) };
+            Ok(Value::Boolean(s.contains("://") || s.starts_with("file:") || s.starts_with("data:")))
+        });
+        self.globals.insert("URL".into(), Value::Object(url_id));
+
         // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
         let bi_obj = make_native("BigInt", |_rt, args| {
             let v = args.first().cloned().unwrap_or(Value::Undefined);

@@ -687,8 +687,16 @@ impl<'src> Parser<'src> {
                 // shorthand. Drop async semantics in v1 (runtime treats it
                 // as a regular function); the parse-past is what unblocks
                 // p-limit + many others.
+                // Tier-Ω.5.HHHHHHH: also `async * name(...) { body }` and
+                // `async *[computed](...) { body }` — async-generator method
+                // shorthand (p-map / many top-700 packages do this for
+                // [Symbol.asyncIterator]).
                 let prop_start = self.lookahead_span().start;
                 self.bump()?; // consume `async`
+                let is_generator = if matches!(self.current_kind(), TokenKind::Punct(Punct::Star)) {
+                    self.bump()?; // consume `*`
+                    true
+                } else { false };
                 let key = self.parse_object_key()?;
                 let params = self.parse_function_parameters()?;
                 let body = self.parse_function_body()?;
@@ -696,7 +704,7 @@ impl<'src> Parser<'src> {
                 let func = Expr::Function {
                     name: None,
                     is_async: true,
-                    is_generator: false,
+                    is_generator,
                     params,
                     body,
                     span: Span::new(prop_start, end),
@@ -910,6 +918,18 @@ impl<'src> Parser<'src> {
             match src[j] {
                 b' ' | b'\t' => j += 1,
                 _ => break,
+            }
+        }
+        // Tier-Ω.5.HHHHHHH: async-generator method shorthand `async * name(...)
+        // { body }` and `async *[computed](...) { body }`. Skip an optional
+        // `*` (with surrounding ws/tabs) before the name discriminator.
+        if let Some(&b'*') = src.get(j) {
+            j += 1;
+            while j < src.len() {
+                match src[j] {
+                    b' ' | b'\t' => j += 1,
+                    _ => break,
+                }
             }
         }
         match src.get(j) {

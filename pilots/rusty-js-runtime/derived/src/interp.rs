@@ -893,6 +893,10 @@ impl Runtime {
                             return Err(RuntimeError::TypeError("Cannot index undefined/null".into())),
                         _ => Value::Undefined,
                     };
+                    // Tier-Ω.5.yyyyy: tag the computed-key read so method
+                    // diagnostics name the key. Mirrors GetProp's tagging.
+                    frame.last_property_lookup = Some(key.clone());
+                    frame.pending_method_name = Some(format!("[{}]", key));
                     frame.push(v);
                 }
                 Op::SetPrototype => {

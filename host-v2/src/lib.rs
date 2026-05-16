@@ -115,6 +115,7 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             // Tier-Ω.5.RRRRRRR — surfaced via cheerio tail-walk
             "node:console" | "console" => "console",
             "node:util/types" | "util/types" => "util",
+            "node:domain" | "domain" => "domain",
             "node:async_hooks" | "async_hooks" => "async_hooks",
             "node:perf_hooks" | "perf_hooks" => "perf_hooks",
             "node:worker_threads" | "worker_threads" => "events",

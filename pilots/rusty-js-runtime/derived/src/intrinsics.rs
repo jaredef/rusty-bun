@@ -955,17 +955,30 @@ impl Runtime {
             };
             let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined))
                 .as_str().to_string();
-            let (has, value, writable, enumerable, configurable) = {
+            // Tier-Ω.5.ZZZZZZZ: distinguish accessor descriptors (return {get,
+            // set, enumerable, configurable}) from data descriptors (return
+            // {value, writable, enumerable, configurable}). Previously
+            // accessor properties had their getter/setter dropped, returning
+            // a data-shape descriptor whose .value was undefined and whose
+            // consumers read .get and got undefined.
+            // safe-stable-stringify (under roarr / slonik / mongoose) does:
+            //   Object.getOwnPropertyDescriptor(TypedArrayProto, @@toStringTag).get
+            let (has, value, writable, enumerable, configurable, getter, setter) = {
                 let o = rt.obj(id);
                 match o.properties.get(&key) {
-                    Some(d) => (true, d.value.clone(), d.writable, d.enumerable, d.configurable),
-                    None => (false, Value::Undefined, false, false, false),
+                    Some(d) => (true, d.value.clone(), d.writable, d.enumerable, d.configurable, d.getter.clone(), d.setter.clone()),
+                    None => (false, Value::Undefined, false, false, false, None, None),
                 }
             };
             if !has { return Ok(Value::Undefined); }
             let out = rt.alloc_object(Object::new_ordinary());
-            rt.object_set(out, "value".into(), value);
-            rt.object_set(out, "writable".into(), Value::Boolean(writable));
+            if getter.is_some() || setter.is_some() {
+                rt.object_set(out, "get".into(), getter.unwrap_or(Value::Undefined));
+                rt.object_set(out, "set".into(), setter.unwrap_or(Value::Undefined));
+            } else {
+                rt.object_set(out, "value".into(), value);
+                rt.object_set(out, "writable".into(), Value::Boolean(writable));
+            }
             rt.object_set(out, "enumerable".into(), Value::Boolean(enumerable));
             rt.object_set(out, "configurable".into(), Value::Boolean(configurable));
             Ok(Value::Object(out))
@@ -2292,6 +2305,40 @@ impl Runtime {
             Ok(Value::Object(it_id))
         });
 
+        // Tier-Ω.5.ZZZZZZZ: install @@toStringTag accessor at the spec
+        // location — on %TypedArray%.prototype, which sits ONE LEVEL ABOVE
+        // each per-element-type prototype (Int8Array.prototype etc.).
+        // safe-stable-stringify (under roarr / slonik / mongoose) walks
+        //   Object.getPrototypeOf(Object.getPrototypeOf(new Int8Array()))
+        // (i.e. two levels) and reads
+        //   Object.getOwnPropertyDescriptor(__, Symbol.toStringTag).get
+        // V1 layout had a single shared ta_proto; this commit splits it into
+        // a per-instance level (ta_proto, still holding subarray/set/fill/
+        // slice/@@iterator) whose [[Prototype]] is a fresh %TypedArray%
+        // prototype-stub that carries the toStringTag accessor. Both walks
+        // (1 or 2 levels) now reach an object with the accessor at level 2.
+        let tag_getter = make_native("get @@toStringTag", |rt, _args| {
+            match rt.current_this() {
+                Value::Object(id) => match rt.object_get(id, "__ta_kind") {
+                    v @ Value::String(_) => Ok(v),
+                    _ => Ok(Value::Undefined),
+                },
+                _ => Ok(Value::Undefined),
+            }
+        });
+        let tag_getter_id = self.alloc_object(tag_getter);
+        let ta_proto_proto = self.alloc_object(Object::new_ordinary());
+        self.obj_mut(ta_proto_proto).properties.insert(
+            "@@toStringTag".into(),
+            crate::value::PropertyDescriptor {
+                value: Value::Undefined,
+                writable: false, enumerable: false, configurable: true,
+                getter: Some(Value::Object(tag_getter_id)),
+                setter: None,
+            },
+        );
+        self.obj_mut(ta_proto).proto = Some(ta_proto_proto);
+
         for name in &[
             "ArrayBuffer", "SharedArrayBuffer", "DataView",
             "Uint8Array", "Uint8ClampedArray", "Int8Array",
@@ -2726,6 +2773,20 @@ impl Runtime {
         self.object_set(sym, "asyncIterator".into(), Value::String(Rc::new("@@asyncIterator".into())));
         self.object_set(sym, "hasInstance".into(), Value::String(Rc::new("@@hasInstance".into())));
         self.object_set(sym, "toPrimitive".into(), Value::String(Rc::new("@@toPrimitive".into())));
+        // Tier-Ω.5.ZZZZZZZ: additional well-known symbols. roarr / slonik /
+        // mongoose read Symbol.toStringTag at module-init for tag-based
+        // type tests. has-tostringtag / es-set-tostringtag in particular.
+        self.object_set(sym, "toStringTag".into(), Value::String(Rc::new("@@toStringTag".into())));
+        self.object_set(sym, "isConcatSpreadable".into(), Value::String(Rc::new("@@isConcatSpreadable".into())));
+        self.object_set(sym, "species".into(), Value::String(Rc::new("@@species".into())));
+        self.object_set(sym, "match".into(), Value::String(Rc::new("@@match".into())));
+        self.object_set(sym, "matchAll".into(), Value::String(Rc::new("@@matchAll".into())));
+        self.object_set(sym, "replace".into(), Value::String(Rc::new("@@replace".into())));
+        self.object_set(sym, "search".into(), Value::String(Rc::new("@@search".into())));
+        self.object_set(sym, "split".into(), Value::String(Rc::new("@@split".into())));
+        self.object_set(sym, "unscopables".into(), Value::String(Rc::new("@@unscopables".into())));
+        self.object_set(sym, "dispose".into(), Value::String(Rc::new("@@dispose".into())));
+        self.object_set(sym, "asyncDispose".into(), Value::String(Rc::new("@@asyncDispose".into())));
         register_method(self, sym, "for", |_rt, args| {
             let s = args.first().map(|v| crate::abstract_ops::to_string(v).as_str().to_string()).unwrap_or_default();
             Ok(Value::String(Rc::new(format!("@@sym:{}", s))))

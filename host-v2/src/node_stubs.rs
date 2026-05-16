@@ -528,6 +528,38 @@ pub fn install_all(rt: &mut Runtime) {
     install_async_hooks(rt);
     install_performance(rt);
     install_dom_exception(rt);
+    install_domain(rt);
+}
+
+/// Tier-Ω.5.ZZZZZZZ: node:domain stub. Deprecated but still used by
+/// aws-sdk / gulp / older Node tooling. create() returns an EE-shape
+/// instance; .active is null.
+pub fn install_domain(rt: &mut Runtime) {
+    let ns = new_object(rt);
+    register_method(rt, ns, "create", |rt, _a| {
+        let d = rt.alloc_object(RtObject::new_ordinary());
+        register_method(rt, d, "run", |rt, args| {
+            let cb = args.first().cloned().unwrap_or(Value::Undefined);
+            rt.call_function(cb, Value::Undefined, Vec::new())
+        });
+        register_method(rt, d, "add", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, d, "remove", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, d, "bind", |rt, args| Ok(args.first().cloned().unwrap_or(rt.current_this())));
+        register_method(rt, d, "intercept", |rt, args| Ok(args.first().cloned().unwrap_or(rt.current_this())));
+        register_method(rt, d, "on", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, d, "once", |rt, _a| Ok(rt.current_this()));
+        register_method(rt, d, "emit", |_rt, _a| Ok(Value::Boolean(false)));
+        register_method(rt, d, "enter", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, d, "exit", |_rt, _a| Ok(Value::Undefined));
+        register_method(rt, d, "dispose", |_rt, _a| Ok(Value::Undefined));
+        let arr = rt.alloc_object(RtObject::new_array());
+        rt.object_set(d, "members".into(), Value::Object(arr));
+        Ok(Value::Object(d))
+    });
+    rt.object_set(ns, "active".into(), Value::Null);
+    let dom_class = new_object(rt);
+    rt.object_set(ns, "Domain".into(), Value::Object(dom_class));
+    rt.globals.insert("domain".into(), Value::Object(ns));
 }
 
 /// Tier-Ω.5.SSSSSSS: DOMException global. WHATWG WebIDL interface used

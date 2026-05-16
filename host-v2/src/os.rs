@@ -83,6 +83,34 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::Object(o))
     });
 
+    // Tier-Ω.5.zzzzzz: os.constants.signals per Node convention. human-signals /
+    // signal-exit / execa / clipboardy / shelljs read this as a name→number map
+    // and `Object.entries(...).map(...)` over it at module-init. Without it,
+    // `const { signals } = require('os').constants` destructures undefined.
+    let constants = new_object(rt);
+    let signals = new_object(rt);
+    // Linux signal numbers — Node returns these on Linux platforms; macOS/BSD
+    // differ on a few (SIGSTKFLT/SIGPWR are Linux-only). The consumer set
+    // only reads from this map; no semantic dependency on the host kernel.
+    for (name, num) in &[
+        ("SIGHUP", 1), ("SIGINT", 2), ("SIGQUIT", 3), ("SIGILL", 4),
+        ("SIGTRAP", 5), ("SIGABRT", 6), ("SIGIOT", 6), ("SIGBUS", 7),
+        ("SIGFPE", 8), ("SIGKILL", 9), ("SIGUSR1", 10), ("SIGSEGV", 11),
+        ("SIGUSR2", 12), ("SIGPIPE", 13), ("SIGALRM", 14), ("SIGTERM", 15),
+        ("SIGSTKFLT", 16), ("SIGCHLD", 17), ("SIGCONT", 18), ("SIGSTOP", 19),
+        ("SIGTSTP", 20), ("SIGTTIN", 21), ("SIGTTOU", 22), ("SIGURG", 23),
+        ("SIGXCPU", 24), ("SIGXFSZ", 25), ("SIGVTALRM", 26), ("SIGPROF", 27),
+        ("SIGWINCH", 28), ("SIGIO", 29), ("SIGPOLL", 29), ("SIGPWR", 30),
+        ("SIGSYS", 31), ("SIGUNUSED", 31),
+    ] {
+        set_constant(rt, signals, name, Value::Number(*num as f64));
+    }
+    set_constant(rt, constants, "signals", Value::Object(signals));
+    set_constant(rt, os, "constants", Value::Object(constants));
+
+    // EOL — child_process / readline writers ask for it.
+    set_constant(rt, os, "EOL", Value::String(Rc::new("\n".into())));
+
     rt.globals.insert("os".into(), Value::Object(os));
 }
 

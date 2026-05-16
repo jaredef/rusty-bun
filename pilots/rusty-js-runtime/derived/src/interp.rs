@@ -1156,9 +1156,24 @@ impl Runtime {
                     let callee = frame.pop()?;
                     let callee_hint = frame.last_property_lookup.clone();
                     frame.pending_method_name = None;
+                    // Tier-Ω.5.CCCCCCCC: also capture the callee's *value shape*
+                    // before invoking. The 'callee is not callable' tag previously
+                    // named the upstream local but not what it resolved to.
+                    // Per Doc 726 §III's probe-shape taxonomy, the residual long-
+                    // tail decomposes by callee-value-shape (Object{keys=[...]}
+                    // = bundle-internal namespace wrapper / String("...") =
+                    // primitive-as-callee bug / Function = receiver-aware
+                    // ctor case / etc.) — naming the shape at the engine site
+                    // raises the signal level for every future failure here.
+                    let callee_tag = describe_value_for_diag(self, &callee);
                     let result = self.call_function(callee, Value::Undefined, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
-                            RuntimeError::TypeError(format!("{} (callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
+                            RuntimeError::TypeError(format!(
+                                "{} (callee='{}') (callee_val={})",
+                                msg,
+                                callee_hint.unwrap_or_else(|| "?".into()),
+                                callee_tag,
+                            ))
                         }
                         // Tier-Ω.5.ssss: route-(b) escalation per Doc 721 §VI.6.
                         // Native callees that throw TypeError without naming a
@@ -1278,6 +1293,10 @@ impl Runtime {
                     // current_new_target).
                     self.pending_new_target = Some(callee.clone());
                     let callee_hint = frame.last_property_lookup.clone();
+                    // Tier-Ω.5.CCCCCCCC: also capture the new-callee's value
+                    // shape (mirrors Ω.5.hhhh's name-only tag with §III.d
+                    // dispatch-fingerprint shape info per Doc 726).
+                    let new_callee_tag = describe_value_for_diag(self, &callee);
                     let ret = self.call_function(callee, this_obj.clone(), args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
                             // Tier-Ω.5.hhhh: Op::New now appends the
@@ -1285,7 +1304,12 @@ impl Runtime {
                             // route-(b). Before, bare `new X()` with X
                             // undefined produced unannotated 'callee is
                             // not callable: undefined' (below threshold).
-                            RuntimeError::TypeError(format!("{} (new-callee='{}')", msg, callee_hint.unwrap_or_else(|| "?".into())))
+                            RuntimeError::TypeError(format!(
+                                "{} (new-callee='{}') (new_val={})",
+                                msg,
+                                callee_hint.unwrap_or_else(|| "?".into()),
+                                new_callee_tag,
+                            ))
                         }
                         other => other,
                     })?;

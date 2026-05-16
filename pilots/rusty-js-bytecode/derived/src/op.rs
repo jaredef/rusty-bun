@@ -123,6 +123,12 @@ pub enum Op {
     /// via plain Call leave the slot None, in which case PushNewTarget
     /// pushes Undefined per ECMA-262 §15.7.5.1. Tier-Ω.5.s.
     PushNewTarget = 0x77,
+    /// SET_THIS — Tier-Ω.5.nnnnn. Pops the top of stack; if it is an
+    /// Object, assigns it to the current frame's this_value. Used after
+    /// super(...) to implement ECMA-262 §15.4.5.4 step 9 (when parent
+    /// constructor returns an object, that object replaces `this` for
+    /// the derived ctor body).
+    SetThis = 0x78,
 
     // Member access
     /// GET_PROP <u16>
@@ -193,7 +199,7 @@ impl Op {
             | Typeof | Void | Delete
             | Throw | TryExit
             | IterInit | IterNext | IterClose
-            | Nop | Debugger | PushThis | PushImportMeta | PushNewTarget => 0,
+            | Nop | Debugger | PushThis | PushImportMeta | PushNewTarget | SetThis => 0,
             Call | New | CallMethod => 1,
             PushConst | LoadLocal | StoreLocal | LoadArg | StoreArg
             | LoadGlobal | StoreGlobal | LoadUpvalue | StoreUpvalue
@@ -260,7 +266,7 @@ pub fn op_from_byte(b: u8) -> Option<Op> {
         0x60 => Jump, 0x61 => JumpIfTrue, 0x62 => JumpIfFalse,
         0x63 => JumpIfTrueKeep, 0x64 => JumpIfFalseKeep, 0x65 => JumpIfNullish,
         0x70 => Call, 0x71 => New, 0x72 => Return, 0x73 => ReturnUndef,
-        0x74 => CallMethod, 0x75 => PushThis, 0x76 => PushImportMeta, 0x77 => PushNewTarget,
+        0x74 => CallMethod, 0x75 => PushThis, 0x76 => PushImportMeta, 0x77 => PushNewTarget, 0x78 => SetThis,
         0x80 => GetProp, 0x81 => SetProp, 0x82 => GetIndex, 0x83 => SetIndex,
         0x84 => SetPrototype,
         0x90 => NewObject, 0x91 => NewArray, 0x92 => InitProp, 0x93 => InitIndex,

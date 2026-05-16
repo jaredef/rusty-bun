@@ -3717,6 +3717,15 @@ impl Compiler {
             encode_op(&mut self.bytecode, Op::CallMethod);
             encode_u8(&mut self.bytecode, n as u8);
         }
+        // Tier-Ω.5.nnnnn: rebind `this` if super() returned an Object.
+        // Per ECMA-262 §15.4.5.4 step 9, when the parent constructor
+        // returns an object, that object replaces `this` for the rest
+        // of the derived ctor body. Stack flow: CallMethod left [result]
+        // → Dup [result, result] → SetThis (pops top, conditionally
+        // rebinds) [result]. Final: result on stack as the expression
+        // value of `super(...)`.
+        encode_op(&mut self.bytecode, Op::Dup);
+        encode_op(&mut self.bytecode, Op::SetThis);
         Ok(())
     }
 

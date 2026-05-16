@@ -270,10 +270,29 @@ pub fn install(rt: &mut Runtime) {
     // EventEmitter constructor.
     let proto_for_ctor = proto;
     let ctor = make_callable(rt, "EventEmitter", move |rt, _args| {
-        let mut o = RtObject::new_ordinary();
-        o.proto = Some(proto_for_ctor);
-        let id = rt.alloc_object(o);
-        Ok(Value::Object(id))
+        // Tier-Ω.5.ooooo: mutate the receiver when called as super(). The
+        // EventEmitter ctor takes no real state; returning a fresh object
+        // here would (now that Ω.5.nnnnn rebinds this on super-return)
+        // wreck subclasses by replacing the subclass instance with a
+        // bare-prototype EventEmitter. Returning Undefined keeps the
+        // Op::New / SetThis paths happy with the original `this`.
+        match rt.current_this() {
+            Value::Object(id) => {
+                // Optional: pre-create the listeners bag so subclass code
+                // that reads _events at construction sees an empty map.
+                let bag = rt.alloc_object(RtObject::new_ordinary());
+                rt.object_set(id, "_events".into(), Value::Object(bag));
+                rt.object_set(id, "_eventsCount".into(), Value::Number(0.0));
+                Ok(Value::Undefined)
+            }
+            _ => {
+                // Bare-call (no `new`): allocate a fresh instance.
+                let mut o = RtObject::new_ordinary();
+                o.proto = Some(proto_for_ctor);
+                let id = rt.alloc_object(o);
+                Ok(Value::Object(id))
+            }
+        }
     });
     rt.object_set(ctor, "prototype".into(), Value::Object(proto));
     rt.object_set(proto, "constructor".into(), Value::Object(ctor));

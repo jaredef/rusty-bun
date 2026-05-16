@@ -1123,6 +1123,15 @@ impl Runtime {
                     let v = frame.new_target.clone().unwrap_or(Value::Undefined);
                     frame.push(v);
                 }
+                Op::SetThis => {
+                    // Tier-Ω.5.nnnnn: rebind this when super(...) returns
+                    // an Object. Pops the top of stack; if Object, replaces
+                    // this_value; otherwise leaves this_value unchanged.
+                    let v = frame.pop()?;
+                    if matches!(&v, Value::Object(_)) {
+                        frame.this_value = v;
+                    }
+                }
                 Op::New => {
                     let n = frame.bytecode[frame.pc] as usize;
                     frame.pc += 1;
@@ -1308,9 +1317,19 @@ impl Runtime {
             upvalues,
             last_property_lookup: None,
             import_meta: None,
-            new_target: nt_for_this_call,
+            new_target: nt_for_this_call.clone(),
         };
-        self.run_frame(&mut inner)
+        let body_result = self.run_frame(&mut inner)?;
+        // Tier-Ω.5.nnnnn: if this was a constructor call (new.target set)
+        // and the body did not explicitly return a non-undefined value,
+        // return the (possibly rebound by Op::SetThis) this_value. This
+        // matters for `class D extends C { constructor() { super(...); } }`
+        // where the super(...) Op::SetThis re-bound `this` to the parent's
+        // returned object; the implicit return must surface that.
+        let result = if nt_for_this_call.is_some() && matches!(body_result, Value::Undefined) {
+            inner.this_value.clone()
+        } else { body_result };
+        Ok(result)
     }
 
     fn constant_to_value(&self, frame: &Frame, idx: u16) -> Result<Value, RuntimeError> {

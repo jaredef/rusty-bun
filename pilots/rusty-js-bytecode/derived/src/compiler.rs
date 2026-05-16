@@ -2172,10 +2172,21 @@ impl Compiler {
                         ObjectProperty::Property { key, value, .. } => {
                             match key {
                                 ObjectKey::Identifier { name, .. } | ObjectKey::String { value: name, .. } => {
-                                    self.compile_expr(value)?;
-                                    let idx = self.constants.intern(Constant::String(name.clone()));
-                                    encode_op(&mut self.bytecode, Op::InitProp);
-                                    encode_u16(&mut self.bytecode, idx);
+                                    // Tier-Ω.5.ssssss: `{__proto__: X}` sets
+                                    // [[Prototype]] per ECMA-262 §13.2.5.5
+                                    // (not a normal own property). graceful-fs
+                                    // / fs-extra clone via `var copy = {
+                                    // __proto__: getPrototypeOf(obj) }`.
+                                    if name == "__proto__" {
+                                        encode_op(&mut self.bytecode, Op::Dup);
+                                        self.compile_expr(value)?;
+                                        encode_op(&mut self.bytecode, Op::SetPrototype);
+                                    } else {
+                                        self.compile_expr(value)?;
+                                        let idx = self.constants.intern(Constant::String(name.clone()));
+                                        encode_op(&mut self.bytecode, Op::InitProp);
+                                        encode_u16(&mut self.bytecode, idx);
+                                    }
                                 }
                                 ObjectKey::Number { value: num, .. } => {
                                     self.compile_expr(value)?;

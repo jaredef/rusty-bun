@@ -3579,7 +3579,22 @@ impl Compiler {
         let seq = self.class_seq;
         self.class_seq += 1;
 
-        let super_ctor_name = format!("<class${}.super.ctor>", seq);
+        // Tier-Ω.5.NNNNNNNN: include source-identifier suffix in the
+        // super-ctor slot name so the diagnostic receiver-tag at the
+        // GetProp(prototype) failure names the textual identifier from
+        // `class X extends Y`. The whole string is used uniformly at
+        // both alloc and super-call resolution sites (line ~3753 / ~4006 /
+        // ~4020 / ~4029), so exact-name match still works.
+        let super_ctor_suffix = match super_class {
+            Some(rusty_js_ast::Expr::Identifier { name, .. }) => format!(":{}", name),
+            Some(rusty_js_ast::Expr::Member { property, .. }) => match property.as_ref() {
+                rusty_js_ast::MemberProperty::Identifier { name, .. }
+                | rusty_js_ast::MemberProperty::Private { name, .. } => format!(":.{}", name),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        };
+        let super_ctor_name = format!("<class${}.super.ctor{}>", seq, super_ctor_suffix);
         let super_proto_name = format!("<class${}.super.proto>", seq);
         let proto_name = format!("<class${}.proto>", seq);
         let ctor_name = format!("<class${}.ctor>", seq);

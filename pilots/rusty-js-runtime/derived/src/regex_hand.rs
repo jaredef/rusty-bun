@@ -134,7 +134,7 @@ pub fn compile(pattern: &str, flag_str: &str) -> Result<HandRolledRegex, String>
             _ => return Err(format!("unsupported flag '{}'", c)),
         }
     }
-    let mut p = Parser { chars: pattern.chars().collect(), pos: 0, next_group: 1, group_count: 0 };
+    let mut p = Parser { chars: pattern.chars().collect(), pos: 0, next_group: 1, group_count: 0, named_groups: std::collections::HashMap::new() };
     let ast = p.parse_alt()?;
     if p.pos < p.chars.len() {
         return Err(format!("unexpected '{}' at position {}", p.chars[p.pos], p.pos));
@@ -152,6 +152,8 @@ struct Parser {
     pos: usize,
     next_group: usize,
     group_count: usize,
+    // Tier-Ω.5.vvvvv: named capture group support.
+    named_groups: std::collections::HashMap<String, usize>,
 }
 
 impl Parser {
@@ -274,6 +276,19 @@ impl Parser {
             d if d.is_ascii_digit() && d != '0' => {
                 Ok(Node::Backref((d as u8 - b'0') as usize))
             }
+            'k' => {
+                // Tier-Ω.5.vvvvv: named backreference \k<name>.
+                if !self.eat('<') { return Err("expected < after \\k".into()); }
+                let mut name = String::new();
+                while let Some(c) = self.peek() {
+                    if c == '>' { break; }
+                    name.push(c); self.bump();
+                }
+                if !self.eat('>') { return Err("unterminated named backref".into()); }
+                let idx = self.named_groups.get(&name).copied()
+                    .ok_or_else(|| format!("unknown named group '{}'", name))?;
+                Ok(Node::Backref(idx))
+            }
             // Escaped meta or non-special char — treat as literal.
             _ => Ok(Node::Char(c)),
         }
@@ -345,14 +360,34 @@ impl Parser {
                     Node::Look { ahead: true, positive: false, inner: Box::new(inner) }
                 }
                 Some('<') => {
-                    let positive = match self.bump() {
-                        Some('=') => true,
-                        Some('!') => false,
-                        Some(c) => return Err(format!("unsupported group prefix (?<{}", c)),
-                        None => return Err("unterminated group prefix".into()),
-                    };
-                    let inner = self.parse_alt()?;
-                    Node::Look { ahead: false, positive, inner: Box::new(inner) }
+                    match self.peek() {
+                        Some('=') | Some('!') => {
+                            let positive = self.bump() == Some('=');
+                            let inner = self.parse_alt()?;
+                            Node::Look { ahead: false, positive, inner: Box::new(inner) }
+                        }
+                        Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {
+                            // Tier-Ω.5.vvvvv: named capture group (?<name>...).
+                            // marked uses (?<a>`+) + \k<a> for matched-tick
+                            // sequences. We allocate a normal indexed group
+                            // and side-record the name → index mapping so
+                            // \k<name> resolves to the index at parse time.
+                            let mut name = String::new();
+                            while let Some(c) = self.peek() {
+                                if c.is_alphanumeric() || c == '_' || c == '$' {
+                                    name.push(c); self.bump();
+                                } else { break; }
+                            }
+                            if !self.eat('>') { return Err("expected > after group name".into()); }
+                            let idx = self.next_group;
+                            self.next_group += 1;
+                            self.group_count = self.group_count.max(idx);
+                            self.named_groups.insert(name, idx);
+                            let inner = self.parse_alt()?;
+                            Node::Group { index: idx, inner: Box::new(inner) }
+                        }
+                        _ => return Err("unsupported group prefix".into()),
+                    }
                 }
                 Some(c) => return Err(format!("unsupported group prefix (?{}", c)),
                 None => return Err("unterminated group prefix".into()),

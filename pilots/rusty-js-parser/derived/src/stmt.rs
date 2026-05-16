@@ -229,21 +229,31 @@ impl<'src> Parser<'src> {
             }
             let m_start = self.lookahead_span().start;
             let is_static = if self.is_ident("static") {
-                // Disambiguate `static { ... }` (static-block) from
-                // `static method/field` by peek.
+                // Disambiguate `static { ... }` (static-block), `static (`
+                // / `static =` / `static ;` (method or field named `static`),
+                // and `static method/field` (the modifier).
                 let pos = self.lookahead_span().end;
                 let bytes = self.source().as_bytes();
                 let mut p = pos;
                 while p < bytes.len() && bytes[p].is_ascii_whitespace() { p += 1; }
-                if bytes.get(p) == Some(&b'{') {
+                let next = bytes.get(p).copied();
+                if next == Some(b'{') {
                     self.bump()?; // `static`
                     let body = self.parse_function_body()?;
                     let end = self.last_span_end();
                     out.push(ClassMember::StaticBlock { body, span: Span::new(m_start, end) });
                     continue;
                 }
-                self.bump()?;
-                true
+                // If `static` is immediately followed by `(`, `=`, `;`, or
+                // `}`, it's a method-name / field-name, not the modifier.
+                // fast-glob's compiled output uses `static(patterns,opts)`
+                // as a real method.
+                if matches!(next, Some(b'(') | Some(b'=') | Some(b';') | Some(b'}')) {
+                    false
+                } else {
+                    self.bump()?;
+                    true
+                }
             } else { false };
 
             // Detect getter / setter / async / generator modifiers.

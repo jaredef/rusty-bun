@@ -42,6 +42,21 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
     rt.object_set(versions, "modules".into(), Value::String(Rc::new("115".into())));
     set_constant(rt, process, "versions", Value::Object(versions));
     set_constant(rt, process, "pid", Value::Number(std::process::id() as f64));
+    // Tier-Ω.5.nnnnnn: process.stdout / stderr / stdin minimal shapes
+    // — many libs check isTTY + fd at module-load to choose color/style.
+    for (name, fd_num) in [("stdout", 1.0), ("stderr", 2.0), ("stdin", 0.0)] {
+        let s = new_object(rt);
+        rt.object_set(s, "isTTY".into(), Value::Boolean(false));
+        rt.object_set(s, "fd".into(), Value::Number(fd_num));
+        rt.object_set(s, "columns".into(), Value::Number(80.0));
+        rt.object_set(s, "rows".into(), Value::Number(24.0));
+        register_method(rt, s, "write", |_rt, args| {
+            if let Some(Value::String(s)) = args.first() { eprint!("{}", s); }
+            Ok(Value::Boolean(true))
+        });
+        register_method(rt, s, "on", |rt, _args| Ok(rt.current_this()));
+        set_constant(rt, process, name, Value::Object(s));
+    }
 
     register_method(rt, process, "cwd", |_rt, _args| {
         let cwd = std::env::current_dir()

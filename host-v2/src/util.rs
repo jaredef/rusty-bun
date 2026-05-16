@@ -13,6 +13,18 @@ use std::rc::Rc;
 pub fn install(rt: &mut Runtime) {
     let util = new_object(rt);
 
+    // Tier-Ω.5.nnnnnn: util.debuglog(section) → no-op callable logger.
+    register_method(rt, util, "debuglog", |rt, _args| {
+        // Return a callable native function that ignores its args.
+        // Reuse the global Function ctor pattern via make-stub-fn.
+        let f = crate::register::make_callable(rt, "debuglog_fn", |_rt, _args| Ok(Value::Undefined));
+        rt.object_set(f, "enabled".into(), Value::Boolean(false));
+        Ok(Value::Object(f))
+    });
+    register_method(rt, util, "deprecate", |_rt, args| {
+        // Returns the original function unchanged (skip deprecation wrapper).
+        Ok(args.first().cloned().unwrap_or(Value::Undefined))
+    });
     // inspect(v) → JSON.stringify(v, null, 2). Close enough for v1.
     register_method(rt, util, "inspect", |rt, args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);

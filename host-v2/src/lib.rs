@@ -103,6 +103,12 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:dns" | "dns" | "node:dns/promises" | "dns/promises" => "dns",
             "node:module" | "module" => "module",
             "node:http2" | "http2" => "http2",
+            // Tier-Ω.5.nnnnnn: additional node:* stubs from broader basket
+            "node:net" | "net" => "tls",
+            "node:diagnostics_channel" | "diagnostics_channel" => "events",
+            "node:async_hooks" | "async_hooks" => "events",
+            "node:perf_hooks" | "perf_hooks" => "events",
+            "node:worker_threads" | "worker_threads" => "events",
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

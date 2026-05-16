@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 RB=/media/jaredef/T7/rusty-bun-target/debug/rusty-bun-host-v2
-SANDBOX=/tmp/parity-sandbox
+SANDBOX="${PARITY_SANDBOX:-/tmp/parity-sandbox}"
 declare -A probes
 probes[nanoid]='import { nanoid } from "nanoid"; const id = nanoid(); console.log(typeof id, id?.length===21 ? "OK" : "BAD len="+id?.length);'
 probes[uuid]='import { v4 } from "uuid"; const id = v4(); console.log(typeof id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? "OK" : "BAD: "+id);'

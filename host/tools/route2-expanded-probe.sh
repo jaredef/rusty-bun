@@ -3,7 +3,7 @@
 # original 24-package sample.
 set -u
 RB=/media/jaredef/T7/rusty-bun-target/release/rusty-bun-host-v2
-SANDBOX=/tmp/parity-sandbox
+SANDBOX="${PARITY_SANDBOX:-/tmp/parity-sandbox}"
 declare -A probes
 
 # === Original 24 (carry forward) ===

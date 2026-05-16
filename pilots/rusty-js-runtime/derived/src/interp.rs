@@ -622,38 +622,50 @@ impl Runtime {
                 }
 
                 // ─── Bitwise / shift ───
+                // Tier-Ω.5.JJJJJJJJ: all bitwise ops use ECMA-spec ToInt32 /
+                // ToUint32. The Rust `n as i32` saturates for big f64 (e.g.
+                // 7.2e16); spec-correct conversion is trunc-then-mod-2^32.
+                // `n as i64 as i32` does exactly that (i64 holds the
+                // truncated integer, i32 cast keeps lower 32 bits with
+                // sign extension). bn.js's 26-bit limb arithmetic depended
+                // on these being correct for big intermediate values.
                 Op::BitAnd => {
-                    let r = to_number(&frame.pop()?) as i32;
-                    let l = to_number(&frame.pop()?) as i32;
+                    let r = to_number(&frame.pop()?) as i64 as i32;
+                    let l = to_number(&frame.pop()?) as i64 as i32;
                     frame.push(Value::Number((l & r) as f64));
                 }
                 Op::BitOr => {
-                    let r = to_number(&frame.pop()?) as i32;
-                    let l = to_number(&frame.pop()?) as i32;
+                    let r = to_number(&frame.pop()?) as i64 as i32;
+                    let l = to_number(&frame.pop()?) as i64 as i32;
                     frame.push(Value::Number((l | r) as f64));
                 }
                 Op::BitXor => {
-                    let r = to_number(&frame.pop()?) as i32;
-                    let l = to_number(&frame.pop()?) as i32;
+                    let r = to_number(&frame.pop()?) as i64 as i32;
+                    let l = to_number(&frame.pop()?) as i64 as i32;
                     frame.push(Value::Number((l ^ r) as f64));
                 }
                 Op::BitNot => {
-                    let v = to_number(&frame.pop()?) as i32;
+                    let v = to_number(&frame.pop()?) as i64 as i32;
                     frame.push(Value::Number((!v) as f64));
                 }
                 Op::Shl => {
-                    let r = (to_number(&frame.pop()?) as u32) & 0x1F;
-                    let l = to_number(&frame.pop()?) as i32;
-                    frame.push(Value::Number((l << r) as f64));
+                    let r = (to_number(&frame.pop()?) as i64 as i32 as u32) & 0x1F;
+                    let l = to_number(&frame.pop()?) as i64 as i32;
+                    frame.push(Value::Number((l.wrapping_shl(r)) as f64));
                 }
                 Op::Shr => {
-                    let r = (to_number(&frame.pop()?) as u32) & 0x1F;
-                    let l = to_number(&frame.pop()?) as i32;
+                    let r = (to_number(&frame.pop()?) as i64 as i32 as u32) & 0x1F;
+                    let l = to_number(&frame.pop()?) as i64 as i32;
                     frame.push(Value::Number((l >> r) as f64));
                 }
                 Op::UShr => {
-                    let r = (to_number(&frame.pop()?) as u32) & 0x1F;
-                    let l = to_number(&frame.pop()?) as u32;
+                    // Tier-Ω.5.JJJJJJJJ: spec-correct ToUint32 per ECMA §7.1.7.
+                    // Previously `n as u32` saturated for n >= 2^32, producing
+                    // 0xFFFFFFFF for big f64s. Required: trunc-to-int64 then
+                    // bit-cast to u32 (drops upper bits). bn.js's 26-bit limb
+                    // arithmetic via `(x * y) >>> 0` was producing wrong limbs.
+                    let r = (to_number(&frame.pop()?) as i64 as i32 as u32) & 0x1F;
+                    let l = to_number(&frame.pop()?) as i64 as i32 as u32;
                     frame.push(Value::Number((l >> r) as f64));
                 }
 

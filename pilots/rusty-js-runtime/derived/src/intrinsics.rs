@@ -630,6 +630,82 @@ impl Runtime {
         self.object_set(math, "LOG10E".into(), Value::Number(std::f64::consts::LOG10_E));
         self.object_set(math, "SQRT2".into(), Value::Number(std::f64::consts::SQRT_2));
 
+        // Tier-Ω.5.JJJJJJJJ: Math.imul / Math.fround / Math.clz32 / Math.sign /
+        // Math.expm1 / Math.log1p / Math.log2 / Math.log10 / Math.cbrt /
+        // Math.hypot / Math.sinh / Math.cosh / Math.tanh / Math.asinh /
+        // Math.acosh / Math.atanh per ECMA-262 §21.3.
+        //
+        // The load-bearing one is Math.imul: bn.js's 26-bit limb arithmetic
+        // depends on it for safe 32-bit integer multiplication. Without it,
+        // bn.js's modular reduction produces wrong results, and elliptic's
+        // secp256k1 generator-point validation fails with 'Invalid curve'
+        // (4-package cluster: ethereumjs-tx / ethereumjs-util /
+        // ethereumjs-wallet / secp256k1).
+        register_method(self, math, "imul", |_rt, args| {
+            let a = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as i64 as i32;
+            let b = args.get(1).map(abstract_ops::to_number).unwrap_or(0.0) as i64 as i32;
+            Ok(Value::Number((a.wrapping_mul(b)) as f64))
+        });
+        register_method(self, math, "fround", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n as f32 as f64))
+        });
+        register_method(self, math, "clz32", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(0.0) as i64 as u32;
+            Ok(Value::Number(n.leading_zeros() as f64))
+        });
+        register_method(self, math, "sign", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            if n.is_nan() { Ok(Value::Number(f64::NAN)) }
+            else if n > 0.0 { Ok(Value::Number(1.0)) }
+            else if n < 0.0 { Ok(Value::Number(-1.0)) }
+            else { Ok(Value::Number(n)) } // preserves +0/-0
+        });
+        register_method(self, math, "expm1", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n.exp_m1()))
+        });
+        register_method(self, math, "log1p", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n.ln_1p()))
+        });
+        register_method(self, math, "log2", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n.log2()))
+        });
+        register_method(self, math, "log10", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n.log10()))
+        });
+        register_method(self, math, "cbrt", |_rt, args| {
+            let n = args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN);
+            Ok(Value::Number(n.cbrt()))
+        });
+        register_method(self, math, "hypot", |_rt, args| {
+            let s: f64 = args.iter()
+                .map(|v| { let n = abstract_ops::to_number(v); n * n })
+                .sum();
+            Ok(Value::Number(s.sqrt()))
+        });
+        register_method(self, math, "sinh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).sinh()))
+        });
+        register_method(self, math, "cosh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).cosh()))
+        });
+        register_method(self, math, "tanh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).tanh()))
+        });
+        register_method(self, math, "asinh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).asinh()))
+        });
+        register_method(self, math, "acosh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).acosh()))
+        });
+        register_method(self, math, "atanh", |_rt, args| {
+            Ok(Value::Number(args.first().map(abstract_ops::to_number).unwrap_or(f64::NAN).atanh()))
+        });
+
         self.globals.insert("Math".into(), Value::Object(math));
     }
 

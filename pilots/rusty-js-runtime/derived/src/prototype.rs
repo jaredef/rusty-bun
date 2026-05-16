@@ -64,10 +64,20 @@ impl Runtime {
 
 fn install_object_proto(rt: &mut Runtime, host: ObjectRef) {
     register_method(rt, host, "toString", |rt, _args| {
+        // Tier-Ω.5.lllll: Object.prototype.toString per ECMA-262 §20.1.3.6.
+        // Internal-slot tags drive the output; spec-named tags are
+        // PascalCase. Prior impl returned "[object string]" / "[object
+        // number]" for primitives (lowercase via type_of) and "[object
+        // Object]" for RegExp instances, which broke isString/isRegExp
+        // duck-tests in linkify-it / yup / many libs.
         let this = rt.current_this();
         let s = match this {
             Value::Undefined => "[object Undefined]".to_string(),
             Value::Null => "[object Null]".to_string(),
+            Value::Boolean(_) => "[object Boolean]".to_string(),
+            Value::Number(_) => "[object Number]".to_string(),
+            Value::String(_) => "[object String]".to_string(),
+            Value::BigInt(_) => "[object BigInt]".to_string(),
             Value::Object(id) => {
                 let tag = match &rt.obj(id).internal_kind {
                     InternalKind::Array => "Array",
@@ -76,11 +86,11 @@ fn install_object_proto(rt: &mut Runtime, host: ObjectRef) {
                     | InternalKind::BoundFunction(_) => "Function",
                     InternalKind::Promise(_) => "Promise",
                     InternalKind::Error => "Error",
+                    InternalKind::RegExp(_) => "RegExp",
                     _ => "Object",
                 };
                 format!("[object {}]", tag)
             }
-            _ => format!("[object {}]", this.type_of()),
         };
         Ok(Value::String(Rc::new(s)))
     });

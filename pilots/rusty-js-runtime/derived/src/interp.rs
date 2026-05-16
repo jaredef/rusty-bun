@@ -1212,7 +1212,24 @@ impl Runtime {
     pub fn call_function(&mut self, callee: Value, this: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
         let id = match callee {
             Value::Object(id) => id,
-            other => return Err(RuntimeError::TypeError(format!("callee is not callable: {:?}", other))),
+            // Tier-Ω.5.xxxxx: enrich callee-type tag with the actual
+            // primitive type. Was: "callee is not callable: undefined".
+            // Now: "callee is not callable: undefined" plus args-arity
+            // so deeper bisects can see arg-count mismatches.
+            other => {
+                let tag = match &other {
+                    Value::Undefined => "undefined",
+                    Value::Null => "null",
+                    Value::Boolean(_) => "boolean",
+                    Value::Number(_) => "number",
+                    Value::String(_) => "string",
+                    Value::BigInt(_) => "bigint",
+                    Value::Object(_) => "object",
+                };
+                return Err(RuntimeError::TypeError(format!(
+                    "callee is not callable: {} [argc={}]", tag, args.len()
+                )));
+            }
         };
         // Tier-Ω.5.s: claim the pending new.target slot for this invocation.
         // Op::New sets it just before dispatching; plain Call sites leave it
@@ -1245,7 +1262,20 @@ impl Runtime {
                     self.pending_new_target = nt_for_this_call;
                     return self.call_function(Value::Object(target), bound_this, bound_args);
                 }
-                other => return Err(RuntimeError::TypeError(format!("callee is not callable: Object(kind={})", other.kind_name()))),
+                other => {
+                    // Tier-Ω.5.xxxxx: enrich Object-callee tag with
+                    // shape info — own-key count + first few keys so
+                    // bisects can identify which object got mistakenly
+                    // called. Also note presence of toString tag.
+                    let kind = other.kind_name().to_string();
+                    drop(o);
+                    let keys: Vec<String> = self.obj(id).properties.keys().take(5).cloned().collect();
+                    let nkeys = self.obj(id).properties.len();
+                    let preview = if keys.is_empty() { String::new() } else { format!(" keys=[{}{}]", keys.join(","), if nkeys > 5 { ",…" } else { "" }) };
+                    return Err(RuntimeError::TypeError(format!(
+                        "callee is not callable: Object(kind={}{}) [argc={}]", kind, preview, args.len()
+                    )));
+                }
             }
         };
         if let Some(native) = native_opt {

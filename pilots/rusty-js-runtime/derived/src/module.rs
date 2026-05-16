@@ -338,6 +338,29 @@ impl Runtime {
         specifier: &str,
         importer_kind: ModuleKind,
     ) -> Result<String, RuntimeError> {
+        // Tier-Ω.5.EEEEEEE: userland-polyfill aliases. Several historically-
+        // important npm packages exist as userland reimplementations of
+        // Node built-ins so that browser bundlers can substitute them.
+        // Real runtimes (Bun, Deno's node compat layer) alias these to the
+        // host's built-in equivalent rather than evaluating their source —
+        // the source files are heavy (~6000 LOC for readable-stream) and
+        // their module-init exercises legacy ES5-prototype patterns that
+        // hit subtle correctness gaps. Aliasing closes a cluster of
+        // packages whose only fault is depending on these polyfills.
+        let aliased = match specifier {
+            "readable-stream" | "readable-stream/duplex" | "readable-stream/readable"
+            | "readable-stream/writable" | "readable-stream/transform"
+            | "readable-stream/passthrough" => Some("node:stream"),
+            "safe-buffer" => Some("node:buffer"),
+            "stream-browserify" => Some("node:stream"),
+            "buffer" if !specifier.starts_with("./") => Some("node:buffer"),
+            "events" if !specifier.starts_with("./") => Some("node:events"),
+            "util" if !specifier.starts_with("./") => Some("node:util"),
+            _ => None,
+        };
+        if let Some(target) = aliased {
+            return Runtime::resolve_module(parent_url, target);
+        }
         // Non-bare paths reuse the existing logic.
         if specifier.starts_with("node:")
             || specifier.starts_with("./")
@@ -1047,6 +1070,13 @@ impl Runtime {
         }
         // (2) Disk resolution — relative, absolute, OR bare via Ω.5.q.
         let resolved = self.resolve_module_full(parent_url, spec, ModuleKind::CJS)?;
+        // Tier-Ω.5.EEEEEEE: resolver may rewrite to `node:` (userland-polyfill
+        // alias path); re-try the builtin dispatch on the rewritten target.
+        if resolved.starts_with("node:") {
+            if let Ok(Some(ns)) = self.try_resolve_builtin(&resolved) {
+                return Ok(Value::Object(ns));
+            }
+        }
         // Cache check first.
         if let Some(rec) = self.modules.get(&resolved) {
             let r = rec.borrow();

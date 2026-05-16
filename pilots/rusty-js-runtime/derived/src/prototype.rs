@@ -394,6 +394,35 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         if idx < 0 || idx >= len { return Ok(Value::Undefined); }
         Ok(rt.object_get(id, &idx.to_string()))
     });
+    // Tier-Ω.5.DDDDDDD: Array.prototype.fill per ECMA §23.1.3.7. Receiver
+    // is this; fills positions [start, end) with the value. lru-cache's
+    // ZeroArray ctor does `super(size); this.fill(0)` to zero-initialize.
+    register_method(rt, host, "fill", |rt, args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Err(RuntimeError::TypeError("Array.prototype.fill: this not Array".into())),
+        };
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        let len = rt.array_length(id);
+        let start = match args.get(1) {
+            Some(v) => {
+                let n = abstract_ops::to_number(v) as i64;
+                if n < 0 { (len as i64 + n).max(0) as usize } else { (n as usize).min(len) }
+            }
+            None => 0,
+        };
+        let end = match args.get(2) {
+            Some(Value::Undefined) | None => len,
+            Some(v) => {
+                let n = abstract_ops::to_number(v) as i64;
+                if n < 0 { (len as i64 + n).max(0) as usize } else { (n as usize).min(len) }
+            }
+        };
+        for i in start..end {
+            rt.object_set(id, i.to_string(), value.clone());
+        }
+        Ok(Value::Object(id))
+    });
     // Tier-Ω.5.iiiiii: Array.prototype.flat per ECMA §23.1.3.10.
     register_method(rt, host, "flat", |rt, args| {
         let id = match rt.current_this() {

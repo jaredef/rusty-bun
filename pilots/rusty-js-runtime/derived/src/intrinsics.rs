@@ -1137,21 +1137,37 @@ impl Runtime {
         // many polyfill patterns depend on this.
         let arr_proto_ref = self.array_prototype;
         let arr_ctor_native = make_native("Array", move |rt, args| {
-            let mut o = Object::new_array();
+            // Tier-Ω.5.DDDDDDD: receiver-aware Array constructor for
+            // `class Z extends Array { constructor(n) { super(n); ... } }`
+            // patterns (lru-cache's ZeroArray, glob's bundled copy).
+            // Op::New for the derived class synthesizes `this` with proto
+            // wired to the derived class's prototype (whose own proto is
+            // Array.prototype). When super(...) calls into here, the
+            // existing receiver is the right object to mutate — allocating
+            // a sibling array discards the derived-class proto wiring,
+            // leaving the resulting instance with `this.fill` undefined.
+            // Mirrors the Ω.5.ffff fix for Error.
+            let receiver_id = match rt.current_this() {
+                Value::Object(id) if matches!(rt.obj(id).internal_kind, InternalKind::Array) => Some(id),
+                _ => None,
+            };
+            let id = match receiver_id {
+                Some(id) => id,
+                None => rt.alloc_object(Object::new_array()),
+            };
             if args.len() == 1 {
                 if let Value::Number(n) = &args[0] {
                     let len = *n as usize;
-                    o.set_own("length".into(), Value::Number(len as f64));
-                    let id = rt.alloc_object(o);
+                    rt.object_set(id, "length".into(), Value::Number(len as f64));
+                    let _ = arr_proto_ref;
                     return Ok(Value::Object(id));
                 }
             }
             // Variadic form: each arg becomes an element.
             for (i, v) in args.iter().enumerate() {
-                o.set_own(i.to_string(), v.clone());
+                rt.object_set(id, i.to_string(), v.clone());
             }
-            o.set_own("length".into(), Value::Number(args.len() as f64));
-            let id = rt.alloc_object(o);
+            rt.object_set(id, "length".into(), Value::Number(args.len() as f64));
             let _ = arr_proto_ref;
             Ok(Value::Object(id))
         });

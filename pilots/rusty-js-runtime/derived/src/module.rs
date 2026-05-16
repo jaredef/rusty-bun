@@ -412,6 +412,21 @@ impl Runtime {
                 if is_node_builtin(&pkg_name) && subpath.is_empty() {
                     return Ok(format!("node:{}", pkg_name));
                 }
+                // Tier-Ω.5.DDDDDDD: builtin with subpath. `fs/promises`,
+                // `stream/web`, `stream/consumers`, `stream/promises`,
+                // `dns/promises`, `timers/promises` — Node treats these as
+                // sub-namespaces of the corresponding builtin. We route the
+                // full `node:fs/promises` form to the builtin host-hook,
+                // which maps it back to the `fs` namespace (lib.rs alias
+                // table). Rimraf's `import { rm } from 'fs/promises'`
+                // and similar consumer-side patterns hit this branch.
+                if is_node_builtin(&pkg_name) && !subpath.is_empty() {
+                    // subpath is in `./X` form per split_bare_specifier; strip
+                    // the leading `./` to produce `node:fs/promises`-style
+                    // specifiers that the host-hook alias table recognizes.
+                    let tail = subpath.strip_prefix("./").unwrap_or(&subpath);
+                    return Ok(format!("node:{}/{}", pkg_name, tail));
+                }
                 return Err(RuntimeError::TypeError(format!(
                     "bare specifier '{}' not found: walked up from '{}' looking for node_modules/{}",
                     specifier,

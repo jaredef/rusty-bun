@@ -1785,6 +1785,64 @@ impl Runtime {
                 }
                 Ok(Value::Undefined)
             });
+            // Tier-Ω.5.KKKKKKK: Map.prototype.values / keys / entries per ECMA
+            // §24.1.3.3 / .4 / .5. Returns an array (eager-collect — full
+            // iterator-protocol support is queued downstream). wrap-ansi /
+            // log-update / mime / many spread the map's values into a Set
+            // via `new Set(m.values())` which exercises Symbol.iterator on
+            // the returned object; an Array satisfies both the iterator
+            // (via @@iterator on Array.prototype) and the spread protocol.
+            register_method(self, proto, "values", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+                };
+                let vs: Vec<Value> = rt.obj(storage).properties.iter()
+                    .map(|(_k, d)| d.value.clone()).collect();
+                let arr = rt.alloc_object(Object::new_array());
+                for (i, v) in vs.into_iter().enumerate() {
+                    rt.object_set(arr, i.to_string(), v);
+                }
+                let len = rt.array_length(arr);
+                rt.object_set(arr, "length".into(), Value::Number(len as f64));
+                Ok(Value::Object(arr))
+            });
+            register_method(self, proto, "keys", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+                };
+                let ks: Vec<String> = rt.obj(storage).properties.keys().cloned().collect();
+                let arr = rt.alloc_object(Object::new_array());
+                for (i, k) in ks.into_iter().enumerate() {
+                    rt.object_set(arr, i.to_string(), Value::String(Rc::new(k)));
+                }
+                let len = rt.array_length(arr);
+                rt.object_set(arr, "length".into(), Value::Number(len as f64));
+                Ok(Value::Object(arr))
+            });
+            register_method(self, proto, "entries", |rt, _args| {
+                let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+                let storage = match rt.object_get(this, "__map_data") {
+                    Value::Object(id) => id,
+                    _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+                };
+                let pairs: Vec<(String, Value)> = rt.obj(storage).properties.iter()
+                    .map(|(k, d)| (k.clone(), d.value.clone())).collect();
+                let arr = rt.alloc_object(Object::new_array());
+                for (i, (k, v)) in pairs.into_iter().enumerate() {
+                    let pair = rt.alloc_object(Object::new_array());
+                    rt.object_set(pair, "0".into(), Value::String(Rc::new(k)));
+                    rt.object_set(pair, "1".into(), v);
+                    rt.object_set(pair, "length".into(), Value::Number(2.0));
+                    rt.object_set(arr, i.to_string(), Value::Object(pair));
+                }
+                let len = rt.array_length(arr);
+                rt.object_set(arr, "length".into(), Value::Number(len as f64));
+                Ok(Value::Object(arr))
+            });
             let proto_for_ctor = proto;
             let name = (*collection).to_string();
             let ctor_obj = make_native(&name, move |rt, args| {

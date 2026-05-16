@@ -1015,6 +1015,20 @@ impl Compiler {
                 if per_iter_fresh {
                     encode_op(&mut self.bytecode, Op::ResetLocalCell);
                     encode_u16(&mut self.bytecode, bind_slot);
+                    // Tier-Ω.5.ffffff: also reset cells for destructured
+                    // names. Without this, `for (const [k,v] of ...) {
+                    // arr.push(() => v); }` would have every closure
+                    // capture the SAME upvalue cell across iterations,
+                    // collapsing to the last value (upath's `propValue`
+                    // capture pattern).
+                    if let Some(pat) = &destr_pat {
+                        for id in pat.collect_names() {
+                            if let Some(s) = self.resolve_local(&id.name) {
+                                encode_op(&mut self.bytecode, Op::ResetLocalCell);
+                                encode_u16(&mut self.bytecode, s);
+                            }
+                        }
+                    }
                 }
                 encode_op(&mut self.bytecode, Op::StoreLocal);
                 encode_u16(&mut self.bytecode, bind_slot);

@@ -117,6 +117,62 @@ pub fn install(rt: &mut Runtime) {
     set_constant(rt, path, "sep", Value::String(Rc::new("/".into())));
     set_constant(rt, path, "delimiter", Value::String(Rc::new(":".into())));
 
+    // Tier-Ω.5.LLLLLLLL: path.parse / path.format per Node:path. signale's
+    // option-load chain reaches path.parse for cwd resolution.
+    register_method(rt, path, "parse", |rt, args| {
+        let p = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => String::new(),
+        };
+        let root = if p.starts_with('/') { "/".to_string() } else { String::new() };
+        let dir = match p.rfind('/') {
+            Some(i) => p[..i].to_string(),
+            None => String::new(),
+        };
+        let base = match p.rfind('/') {
+            Some(i) => p[i+1..].to_string(),
+            None => p.clone(),
+        };
+        let (name, ext) = match base.rfind('.') {
+            Some(i) if i > 0 => (base[..i].to_string(), base[i..].to_string()),
+            _ => (base.clone(), String::new()),
+        };
+        let out = rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary());
+        rt.object_set(out, "root".into(), Value::String(Rc::new(root)));
+        rt.object_set(out, "dir".into(), Value::String(Rc::new(dir)));
+        rt.object_set(out, "base".into(), Value::String(Rc::new(base)));
+        rt.object_set(out, "name".into(), Value::String(Rc::new(name)));
+        rt.object_set(out, "ext".into(), Value::String(Rc::new(ext)));
+        Ok(Value::Object(out))
+    });
+    register_method(rt, path, "format", |_rt, args| {
+        let o = match args.first() {
+            Some(Value::Object(id)) => *id,
+            _ => return Ok(Value::String(Rc::new(String::new()))),
+        };
+        // Stub — not load-bearing; consumers usually only read parse output.
+        let _ = o;
+        Ok(Value::String(Rc::new(String::new())))
+    });
+    register_method(rt, path, "relative", |_rt, args| {
+        // Very simple: if `to` starts with `from`, strip; else return `to` raw.
+        let from = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => String::new(),
+        };
+        let to = match args.get(1) {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => String::new(),
+        };
+        let out = if to.starts_with(&from) {
+            to[from.len()..].trim_start_matches('/').to_string()
+        } else { to };
+        Ok(Value::String(Rc::new(out)))
+    });
+    register_method(rt, path, "toNamespacedPath", |_rt, args| {
+        Ok(args.first().cloned().unwrap_or(Value::Undefined))
+    });
+
     // Tier-Ω.5.oooo: path.posix + path.win32 namespaces. fast-glob and many
     // cross-platform libs reach for `path.posix.dirname` directly. v1
     // exposes both as references to the same set of POSIX implementations

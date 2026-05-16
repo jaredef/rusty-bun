@@ -1151,6 +1151,38 @@ impl Runtime {
             rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
             Ok(Value::Object(arr))
         });
+        // Tier-Ω.5.LLLLLLLL: Object.getOwnPropertySymbols per ECMA-262 §20.1.2.11.
+        // V1 representation: symbols are strings prefixed '@@'; return only the
+        // own '@@' keys as String values (consumers that compare via Symbol.X
+        // get the same string). Sufficient for define-properties-checks
+        // (es-define-property / set-function-length / onetime) which probe
+        // for Symbol.toStringTag / iterator placement.
+        register_method(self, obj_ctor, "getOwnPropertySymbols", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+            };
+            let keys: Vec<String> = rt.obj(id).properties.keys()
+                .filter(|k| k.starts_with("@@"))
+                .cloned().collect();
+            let arr = rt.alloc_object(Object::new_array());
+            for (i, k) in keys.iter().enumerate() {
+                rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+            }
+            rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
+            Ok(Value::Object(arr))
+        });
+        // Object.hasOwn per ECMA 2022 §20.1.2.13 — static convenience for
+        // Object.prototype.hasOwnProperty.call. Many modern packages prefer it.
+        register_method(self, obj_ctor, "hasOwn", |rt, args| {
+            let id = match args.first() {
+                Some(Value::Object(id)) => *id,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined))
+                .as_str().to_string();
+            Ok(Value::Boolean(rt.obj(id).properties.contains_key(&key)))
+        });
         // Tier-Ω.5.v: Object.create(proto, propertiesObject?). Per
         // ECMA-262 §20.1.2.2: proto must be Object or null; otherwise
         // throw TypeError. Subset: properties handled via the `value`

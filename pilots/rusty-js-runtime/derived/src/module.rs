@@ -875,6 +875,21 @@ impl Runtime {
         }));
         self.modules.insert(url.to_string(), record.clone());
 
+        // Tier-Ω.5.UUUUUUU: strip a leading hashbang line (`#!/usr/bin/env node`)
+        // before synthesizing the CJS wrapper. The hashbang is valid only as
+        // the very first characters of a source per ECMA §12.5 HashbangComment;
+        // once we prepend the wrapper, the `#!` is no longer at offset 0 and
+        // the lexer errors on `#` (invalid identifier). clack / nx / many CLI
+        // packages have shebangs at the top of their entry .js files.
+        let source_no_shebang = if source.starts_with("#!") {
+            match source.find('\n') {
+                Some(nl) => &source[nl + 1..],
+                None => "",
+            }
+        } else {
+            source
+        };
+
         // Synthesize the wrapper. The CJS source goes inside a function
         // body whose `default` export is the function. We can then call
         // the function with the synthesized arguments.
@@ -883,7 +898,7 @@ impl Runtime {
         // numbers to off-by-one regardless of source content.
         let wrapped = format!(
             "export default (function (exports, module, require, __filename, __dirname) {{\n{}\n}});\n",
-            source
+            source_no_shebang
         );
 
         // Parse + compile the wrapper. Reuse the existing ESM pipeline.

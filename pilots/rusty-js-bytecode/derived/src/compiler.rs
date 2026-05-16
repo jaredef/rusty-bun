@@ -2489,6 +2489,17 @@ impl Compiler {
                 Stmt::FunctionDecl { name: Some(n), .. } => {
                     out.push((n.name.clone(), VariableKind::Var));
                 }
+                // Tier-Ω.5.qqqqqq: pre-allocate class-decl names within
+                // function bodies. Without this, function-decls compiled
+                // in Phase H2 that reference module-scope classes via
+                // upvalue can't find the slot — class slots get allocated
+                // in Phase H3 when the class is executed, but H2's MakeClosure
+                // captures freezed at compile time. ajv's CJS wrapper had
+                // `class _Code` + `function _(){ return new _Code(...) }`
+                // both at body scope; `_` lost its `_Code` upvalue.
+                Stmt::ClassDecl { name: Some(n), .. } => {
+                    out.push((n.name.clone(), VariableKind::Let));
+                }
                 _ => {}
             }
             out

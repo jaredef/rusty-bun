@@ -1048,7 +1048,17 @@ impl Runtime {
 
         // After the call, the canonical exports value is
         // `module.exports` (which may have been rebound).
-        let final_exports = self.object_get(module_id, "exports");
+        // Tier-Ω.5.KKKKKKKK: dispatch getter for `module.exports` per
+        // ECMA §10.1.8. ansi-styles uses
+        //     Object.defineProperty(module, 'exports', { get: assembleStyles });
+        // to make the export immutable; chalk/signale/npm-run-all/parcel-
+        // bundler all reach for module.exports through this getter. The
+        // bare object_get path reads d.value (Undefined for accessors),
+        // not the getter.
+        let final_exports = match self.find_getter(module_id, "exports") {
+            Some(getter) => self.call_function(getter, Value::Object(module_id), Vec::new())?,
+            None => self.object_get(module_id, "exports"),
+        };
 
         // Update the record + refresh the placeholder namespace view.
         {

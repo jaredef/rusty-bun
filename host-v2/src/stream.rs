@@ -63,7 +63,7 @@ fn make_stream_instance(rt: &mut Runtime, opts: Option<rusty_js_runtime::ObjectR
 pub fn install(rt: &mut Runtime) {
     let stream = new_object(rt);
 
-    for name in &["Readable", "Writable", "Transform", "Duplex", "PassThrough"] {
+    for name in &["Readable", "Writable", "Transform", "Duplex", "PassThrough", "Stream"] {
         let ctor = new_object(rt);
         // The constructor's prototype is a placeholder so
         // `class X extends Transform { }` finds something callable to read
@@ -87,7 +87,7 @@ pub fn install(rt: &mut Runtime) {
     // produces a stream instance. The register_method trick above only
     // wires methods — for `new Transform()` to construct, the global
     // needs to itself be callable. We re-register each as a native.
-    for name in &["Readable", "Writable", "Transform", "Duplex", "PassThrough"] {
+    for name in &["Readable", "Writable", "Transform", "Duplex", "PassThrough", "Stream"] {
         let nm = name.to_string();
         register_method(rt, stream, name, move |rt, args| {
             let opts = match args.first() {

@@ -75,7 +75,7 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
         // `require("fs")` works alongside `require("node:fs")` /
         // `import ... from "node:fs"`.
         let global_name = match specifier {
-            "node:fs" | "fs" => "fs",
+            "node:fs" | "fs" | "node:fs/promises" | "fs/promises" => "fs",
             "node:path" | "path" => "path",
             "node:os" | "os" => "os",
             "node:process" | "process" => "process",

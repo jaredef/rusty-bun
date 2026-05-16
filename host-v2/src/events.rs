@@ -297,18 +297,16 @@ pub fn install(rt: &mut Runtime) {
     rt.object_set(ctor, "prototype".into(), Value::Object(proto));
     rt.object_set(proto, "constructor".into(), Value::Object(ctor));
 
-    // node:events namespace exposes EventEmitter as default + named.
-    let ns = new_object(rt);
-    rt.object_set(ns, "EventEmitter".into(), Value::Object(ctor));
-    rt.object_set(ns, "default".into(), Value::Object(ctor));
-    // Tier-Ω.5.gggg: events.on / events.once static helpers. Real spec
-    // returns async iterator / Promise; v1 stubs return undefined so
-    // the import-time presence-check passes and downstream
-    // Object.assign(nodeImports, {on, finished}) doesn't bind
-    // undefined.
-    register_method(rt, ns, "on", |_rt, _args| Ok(Value::Undefined));
-    register_method(rt, ns, "once", |_rt, _args| Ok(Value::Undefined));
-    register_method(rt, ns, "setMaxListeners", |_rt, _args| Ok(Value::Undefined));
-    register_method(rt, ns, "listenerCount", |_rt, _args| Ok(Value::Number(0.0)));
-    rt.globals.insert("events".into(), Value::Object(ns));
+    // Tier-Ω.5.llllll: node:events module-exports IS the EventEmitter
+    // constructor itself (per Node convention `module.exports = EE`).
+    // Attach the named exports + static helpers AS PROPERTIES on the
+    // ctor so `const EE = require('events'); new EE()` works and
+    // `events.on / events.once / events.EventEmitter` also resolve.
+    rt.object_set(ctor, "EventEmitter".into(), Value::Object(ctor));
+    rt.object_set(ctor, "default".into(), Value::Object(ctor));
+    register_method(rt, ctor, "on", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ctor, "once", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ctor, "setMaxListeners", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, ctor, "listenerCount", |_rt, _args| Ok(Value::Number(0.0)));
+    rt.globals.insert("events".into(), Value::Object(ctor));
 }

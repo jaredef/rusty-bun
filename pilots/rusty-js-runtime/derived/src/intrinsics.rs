@@ -1722,13 +1722,17 @@ impl Runtime {
                     _ => 0.0,
                 }
             } else if args.len() >= 2 {
-                let y = match &args[0] { Value::Number(n) => *n as i64, _ => 0 };
-                let mo = match &args[1] { Value::Number(n) => *n as i64, _ => 0 };
-                let d = args.get(2).map(|v| match v { Value::Number(n) => *n as i64, _ => 1 }).unwrap_or(1);
-                let h = args.get(3).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                let mi = args.get(4).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                let se = args.get(5).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
-                let mss = args.get(6).map(|v| match v { Value::Number(n) => *n as i64, _ => 0 }).unwrap_or(0);
+                // Tier-Ω.5.dddddd: ToNumber coercion on each component per
+                // ECMA-262 §21.4.2.1 step 3. dayjs passes regex-match strings
+                // like new Date("2026", 4, 15); previously we treated string
+                // args as 0, yielding year 0000.
+                let y = crate::abstract_ops::to_number(&args[0]) as i64;
+                let mo = crate::abstract_ops::to_number(&args[1]) as i64;
+                let d = args.get(2).map(crate::abstract_ops::to_number).unwrap_or(1.0) as i64;
+                let h = args.get(3).map(crate::abstract_ops::to_number).unwrap_or(0.0) as i64;
+                let mi = args.get(4).map(crate::abstract_ops::to_number).unwrap_or(0.0) as i64;
+                let se = args.get(5).map(crate::abstract_ops::to_number).unwrap_or(0.0) as i64;
+                let mss = args.get(6).map(crate::abstract_ops::to_number).unwrap_or(0.0) as i64;
                 (ymd_to_ms(y, mo, d) + h * 3_600_000 + mi * 60_000 + se * 1000 + mss) as f64
             } else {
                 use std::time::{SystemTime, UNIX_EPOCH};

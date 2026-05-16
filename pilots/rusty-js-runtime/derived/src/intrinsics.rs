@@ -871,8 +871,27 @@ impl Runtime {
                     setter: if has_setter { Some(setter) } else { None },
                 });
             } else {
-                let value = rt.object_get(desc_id, "value");
-                rt.object_set(target, key, value);
+                // Tier-Ω.5.yyyyyy: per ECMA-262 §9.1.6.3 (ValidateAndApply
+                // PropertyDescriptor), a *generic* data descriptor (no `value`
+                // key on the descriptor object) does NOT erase the existing
+                // property's [[Value]] — only writable/enumerable/configurable
+                // attributes are updated. Without this preservation, Babel's
+                // _createClass emits
+                //   Object.defineProperty(e, "prototype", { writable: !1 })
+                // and Foo.prototype gets clobbered to undefined; downstream
+                // `Object.create(e && e.prototype, ...)` throws.
+                // abortcontroller-polyfill / postcss-selector-parser /
+                // protobufjs all hit this exact transpile pattern.
+                let has_value = rt.obj(desc_id).properties.contains_key("value");
+                if has_value {
+                    let value = rt.object_get(desc_id, "value");
+                    rt.object_set(target, key, value);
+                }
+                // Otherwise: leave existing value intact. Attribute updates
+                // (writable/enumerable/configurable) on the existing descriptor
+                // are queued for a downstream substrate move; v1 of this fix
+                // only ensures value-preservation, which is the load-bearing
+                // half for the Babel transpile pattern.
             }
             Ok(Value::Object(target))
         });

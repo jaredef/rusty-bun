@@ -204,6 +204,24 @@ impl Runtime {
         // `__yield_delegate__(iter)`. The runtime maintains a stack of
         // yields-arrays — generator calls push on entry, pop on exit;
         // these helpers append to the top.
+        // Tier-Ω.5.kkkkkk: __install_accessor__(target, key, "get"|"set", fn).
+        // Installs an accessor property descriptor on target. Class
+        // getters / setters lower to this call.
+        register_global_fn(self, "__install_accessor__", |rt, args| {
+            let target = match args.first() { Some(Value::Object(id)) => *id, _ => return Ok(Value::Undefined) };
+            let key: String = match args.get(1) { Some(Value::String(s)) => (**s).clone(), _ => return Ok(Value::Undefined) };
+            let kind: String = match args.get(2) { Some(Value::String(s)) => (**s).clone(), _ => return Ok(Value::Undefined) };
+            let fn_v = args.get(3).cloned().unwrap_or(Value::Undefined);
+            let o = rt.obj_mut(target);
+            let desc = o.properties.entry(key).or_insert_with(|| crate::value::PropertyDescriptor {
+                value: Value::Undefined,
+                writable: true, enumerable: true, configurable: true,
+                getter: None, setter: None,
+            });
+            if kind == "get" { desc.getter = Some(fn_v); }
+            else if kind == "set" { desc.setter = Some(fn_v); }
+            Ok(Value::Undefined)
+        });
         register_global_fn(self, "__yield_push__", |rt, args| {
             if let Some(&arr) = rt.gen_yields_stack.last() {
                 let v = args.first().cloned().unwrap_or(Value::Undefined);

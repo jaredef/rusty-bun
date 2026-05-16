@@ -3668,6 +3668,35 @@ impl Compiler {
                     // Push the target object on the stack first, then the
                     // method closure, then SetProp / SetIndex.
                     let target_slot = if *is_static { ctor_slot } else { proto_slot };
+                    // Tier-Ω.5.kkkkkk: getter / setter class members install
+                    // as real accessor descriptors via __install_accessor__.
+                    // Previously they were SetProp'd as data values; reading
+                    // `c.value` returned the function instead of calling it.
+                    let is_accessor = matches!(kind, MethodKind::Getter | MethodKind::Setter);
+                    if is_accessor {
+                        if let Some(key) = method_key.as_ref() {
+                            // __install_accessor__(target, key, "get"|"set", fn)
+                            let helper = self.constants.intern(Constant::String("__install_accessor__".into()));
+                            encode_op(&mut self.bytecode, Op::LoadGlobal);
+                            encode_u16(&mut self.bytecode, helper);
+                            encode_op(&mut self.bytecode, Op::LoadLocal);
+                            encode_u16(&mut self.bytecode, target_slot);
+                            let key_idx = self.constants.intern(Constant::String(key.clone()));
+                            encode_op(&mut self.bytecode, Op::PushConst);
+                            encode_u16(&mut self.bytecode, key_idx);
+                            let kind_str = if matches!(kind, MethodKind::Getter) { "get" } else { "set" };
+                            let kind_idx = self.constants.intern(Constant::String(kind_str.into()));
+                            encode_op(&mut self.bytecode, Op::PushConst);
+                            encode_u16(&mut self.bytecode, kind_idx);
+                            encode_op(&mut self.bytecode, Op::MakeClosure);
+                            encode_u16(&mut self.bytecode, m_idx);
+                            emit_captures(&mut self.bytecode, &captures);
+                            encode_op(&mut self.bytecode, Op::Call);
+                            encode_u8(&mut self.bytecode, 4);
+                            encode_op(&mut self.bytecode, Op::Pop);
+                            continue;
+                        }
+                    }
                     encode_op(&mut self.bytecode, Op::LoadLocal);
                     encode_u16(&mut self.bytecode, target_slot);
                     match method_key {

@@ -644,7 +644,21 @@ impl Runtime {
                 }
                 (ImportBindingKind::Named(n), Some(raw)) => {
                     match raw {
-                        Value::Object(oid) => self.object_get(*oid, n),
+                        // Tier-Ω.5.aaaaa: dispatch accessor getters when
+                        // reading named imports from CJS modules. rxjs
+                        // (and any module using __exportStar /
+                        // __createBinding) installs its named exports as
+                        // Object.defineProperty getters that proxy through
+                        // an internal namespace. Without dispatch here,
+                        // every such named import resolved to undefined
+                        // despite Object.keys listing the name.
+                        Value::Object(oid) => {
+                            if let Some(getter) = self.find_getter(*oid, n) {
+                                self.call_function(getter, Value::Object(*oid), Vec::new())?
+                            } else {
+                                self.object_get(*oid, n)
+                            }
+                        }
                         _ => return Err(RuntimeError::TypeError(format!(
                             "named import '{}' from CJS module '{}': module.exports is not an object",
                             n, resolved))),
@@ -661,7 +675,13 @@ impl Runtime {
                     } else { d }
                 }
                 (ImportBindingKind::Namespace, None) => Value::Object(ns),
-                (ImportBindingKind::Named(n), None) => self.object_get(ns, n),
+                (ImportBindingKind::Named(n), None) => {
+                    if let Some(getter) = self.find_getter(ns, n) {
+                        self.call_function(getter, Value::Object(ns), Vec::new())?
+                    } else {
+                        self.object_get(ns, n)
+                    }
+                }
             };
             import_values.push((ib.slot, v));
         }

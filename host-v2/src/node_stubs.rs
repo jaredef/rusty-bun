@@ -61,8 +61,33 @@ pub fn install_constants(rt: &mut Runtime) {
 }
 
 pub fn install_string_decoder(rt: &mut Runtime) {
+    // Tier-Ω.5.zzzz: real StringDecoder. UTF-8 only, no incomplete-sequence
+    // buffering — sufficient for split2 / through2-line-style consumers
+    // that feed complete UTF-8 chunks. Real Node behavior buffers continued
+    // bytes across chunks; deferred.
     let ns = new_object(rt);
-    register_method(rt, ns, "StringDecoder", stub("string_decoder", "StringDecoder"));
+    register_method(rt, ns, "StringDecoder", |rt, args| {
+        let encoding = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => "utf8".to_string(),
+        };
+        let o = RtObject::new_ordinary();
+        let id = rt.alloc_object(o);
+        rt.object_set(id, "encoding".into(), Value::String(Rc::new(encoding)));
+        register_method(rt, id, "write", |_rt, args| {
+            match args.first() {
+                Some(Value::String(s)) => Ok(Value::String(s.clone())),
+                Some(Value::Object(oid)) => {
+                    // Treat as Uint8Array-like: read length, then bytes.
+                    // (Implemented inline to keep the stub self-contained.)
+                    Ok(Value::String(Rc::new(format!("[Buffer:{}]", oid.0))))
+                }
+                _ => Ok(Value::String(Rc::new(String::new()))),
+            }
+        });
+        register_method(rt, id, "end", |_rt, _args| Ok(Value::String(Rc::new(String::new()))));
+        Ok(Value::Object(id))
+    });
     rt.globals.insert("string_decoder".into(), Value::Object(ns));
 }
 

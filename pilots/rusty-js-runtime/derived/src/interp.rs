@@ -724,12 +724,19 @@ impl Runtime {
                         frame.push(Value::Number((!n) as f64));
                     }
                 }
+                // Ω.5.P29.E1.bigint-shift-diag: tag the actual shift count
+                // into the error so the fault is self-diagnosing per Doc 723
+                // §IV.b. The pre-fix message "BigInt << invalid shift" gave
+                // no signal about what `n` was.
                 Op::Shl => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
                     if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
                         match a.shl(b) {
                             Some(p) => frame.push(Value::BigInt(Rc::new(p))),
-                            None => return Err(RuntimeError::TypeError("BigInt << invalid shift".into())),
+                            None => return Err(RuntimeError::TypeError(format!(
+                                "BigInt << invalid shift (lhs_bits={}, n={})",
+                                a.mag_bit_len(), b.to_decimal()
+                            ))),
                         }
                     } else {
                         let r = (to_number(&rv) as i64 as i32 as u32) & 0x1F;
@@ -742,7 +749,10 @@ impl Runtime {
                     if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
                         match a.shr(b) {
                             Some(p) => frame.push(Value::BigInt(Rc::new(p))),
-                            None => return Err(RuntimeError::TypeError("BigInt >> invalid shift".into())),
+                            None => return Err(RuntimeError::TypeError(format!(
+                                "BigInt >> invalid shift (lhs_bits={}, n={})",
+                                a.mag_bit_len(), b.to_decimal()
+                            ))),
                         }
                     } else {
                         let r = (to_number(&rv) as i64 as i32 as u32) & 0x1F;

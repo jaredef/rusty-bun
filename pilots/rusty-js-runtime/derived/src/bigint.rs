@@ -40,6 +40,16 @@ impl JsBigInt {
 
     pub fn is_zero(&self) -> bool { self.sign == 0 }
     pub fn is_negative(&self) -> bool { self.sign < 0 }
+    /// Ω.5.P29.E1: bit-length of the magnitude (sign ignored). Used by
+    /// shift-error diagnostics to surface the operand size when a shift
+    /// exceeds the engine's per-op cap.
+    pub fn mag_bit_len(&self) -> u32 {
+        let n = self.mag.len();
+        if n == 0 { return 0; }
+        let top = self.mag[n - 1];
+        if top == 0 { return ((n - 1) as u32) * 32; }
+        (n as u32) * 32 - top.leading_zeros()
+    }
 
     pub fn from_i64(v: i64) -> Self {
         if v == 0 { return Self::zero(); }
@@ -261,13 +271,20 @@ impl JsBigInt {
         Some((q, r))
     }
 
-    /// Left-shift by n bits. n must be non-negative and fit u32.
-    /// Returns None otherwise (caller throws RangeError).
+    /// Left-shift by n bits. Per ECMA-262 §6.1.6.2.21 BigInt::leftShift,
+    /// a negative `n` is equivalent to a right-shift by `-n` (Ω.5.P29.E1
+    /// closure of an arithmetic gap surfaced by @dotenvx/dotenvx, whose
+    /// CJS wrappers shift by intermediate values that go negative).
     pub fn shl(&self, n: &JsBigInt) -> Option<JsBigInt> {
-        if n.is_negative() { return None; }
+        if n.is_negative() { return self.shr(&n.neg()); }
         if self.is_zero() { return Some(JsBigInt::zero()); }
         let nf = n.to_f64();
-        if !nf.is_finite() || nf > (1u64 << 20) as f64 { return None; }
+        // Ω.5.P29.E1: cap at 2^24 bits (~2 MB per limb result). Earlier
+        // 2^20 cap was tight enough to bite real packages that build
+        // BigInt bitmasks (`(1n << 256n) - 1n` * N etc.). 2^24 covers
+        // every cryptographic constant in practice while still bounding
+        // worst-case allocation to a few MB.
+        if !nf.is_finite() || nf > (1u64 << 24) as f64 { return None; }
         let bits = nf as u32;
         let limb_shift = (bits / 32) as usize;
         let bit_shift = bits % 32;
@@ -283,9 +300,10 @@ impl JsBigInt {
 
     /// Arithmetic right-shift by n bits. For positive BigInts this is
     /// divmod-by-2^n quotient; for negative it floors toward -infinity
-    /// per JS semantics. n must be non-negative and reasonable.
+    /// per JS semantics. Per ECMA-262 §6.1.6.2.22 BigInt::signedRightShift,
+    /// a negative `n` is equivalent to a left-shift by `-n`.
     pub fn shr(&self, n: &JsBigInt) -> Option<JsBigInt> {
-        if n.is_negative() { return None; }
+        if n.is_negative() { return self.shl(&n.neg()); }
         if self.is_zero() { return Some(JsBigInt::zero()); }
         let nf = n.to_f64();
         if !nf.is_finite() { return None; }

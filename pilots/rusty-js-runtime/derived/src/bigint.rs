@@ -59,8 +59,9 @@ impl JsBigInt {
         JsBigInt { sign: 1, mag }
     }
 
-    /// Parse a decimal string (optional leading '-' or '+'). Returns
-    /// None on parse error (caller throws SyntaxError).
+    /// Parse a numeric string per ECMA-262 §7.1.13 StringToBigInt:
+    /// accepts decimal, plus 0x/0o/0b prefixes with optional sign.
+    /// Returns None on parse error.
     pub fn from_decimal(s: &str) -> Option<Self> {
         let s = s.trim();
         if s.is_empty() { return None; }
@@ -70,17 +71,41 @@ impl JsBigInt {
             _ => (1i8, s),
         };
         if rest.is_empty() { return None; }
-        if !rest.bytes().all(|b| b.is_ascii_digit()) { return None; }
+        // Detect non-decimal prefix.
+        let (radix, digits): (u32, &str) = if rest.len() >= 2 && rest.as_bytes()[0] == b'0' {
+            match rest.as_bytes()[1] {
+                b'x' | b'X' => (16, &rest[2..]),
+                b'o' | b'O' => (8, &rest[2..]),
+                b'b' | b'B' => (2, &rest[2..]),
+                _ => (10, rest),
+            }
+        } else { (10, rest) };
+        if digits.is_empty() { return None; }
         let mut mag = vec![0u32];
-        let bytes = rest.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            let take = (bytes.len() - i).min(9);
-            let chunk: u32 = std::str::from_utf8(&bytes[i..i + take]).ok()?.parse().ok()?;
-            let mul: u32 = 10u32.pow(take as u32);
-            mag_mul_small(&mut mag, mul);
-            mag_add_small(&mut mag, chunk);
-            i += take;
+        if radix == 10 {
+            let bytes = digits.as_bytes();
+            if !bytes.iter().all(|b| b.is_ascii_digit()) { return None; }
+            let mut i = 0;
+            while i < bytes.len() {
+                let take = (bytes.len() - i).min(9);
+                let chunk: u32 = std::str::from_utf8(&bytes[i..i + take]).ok()?.parse().ok()?;
+                let mul: u32 = 10u32.pow(take as u32);
+                mag_mul_small(&mut mag, mul);
+                mag_add_small(&mut mag, chunk);
+                i += take;
+            }
+        } else {
+            for c in digits.bytes() {
+                let d = match (c, radix) {
+                    (b'0'..=b'9', _) => (c - b'0') as u32,
+                    (b'a'..=b'f', 16) => (c - b'a' + 10) as u32,
+                    (b'A'..=b'F', 16) => (c - b'A' + 10) as u32,
+                    _ => return None,
+                };
+                if d >= radix { return None; }
+                mag_mul_small(&mut mag, radix);
+                mag_add_small(&mut mag, d);
+            }
         }
         mag_trim(&mut mag);
         let sign = if mag_is_zero(&mag) { 0 } else { sign_byte };

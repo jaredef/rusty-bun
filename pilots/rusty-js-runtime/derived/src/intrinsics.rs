@@ -595,6 +595,23 @@ impl Runtime {
     }
 
     fn install_globals(&mut self) {
+        // Tier-Ω.5.P27.E1.global-hasOwnProperty: webpack-bundled CJS
+        // packages reach for `hasOwnProperty` as a global identifier
+        // (`hasOwnProperty.call(obj, key)`) rather than going through
+        // `Object.prototype.hasOwnProperty.call`. Per ECMA-262 this
+        // resolution falls through globalThis → Object.prototype, which
+        // works in a real sloppy-mode global env but not in our snapshot-
+        // shaped globals map. Install a direct global wrapper that
+        // forwards to the spec implementation. Surfaced via Ω.5.P24.E1
+        // proto-chain probe walking @jest/expect.
+        register_global_fn(self, "hasOwnProperty", |rt, args| {
+            let target = args.first().cloned().unwrap_or(Value::Undefined);
+            let key = abstract_ops::to_string(&args.get(1).cloned().unwrap_or(Value::Undefined));
+            match target {
+                Value::Object(id) => Ok(Value::Boolean(rt.obj(id).properties.contains_key(key.as_str()))),
+                _ => Ok(Value::Boolean(false)),
+            }
+        });
         // Tier-Ω.5.eee: atob / btoa base64 globals (HTML living standard,
         // also exposed by Node 16+). entities + parse5 depend on atob to
         // decode their packed trie data at module load.

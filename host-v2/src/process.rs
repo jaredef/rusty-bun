@@ -91,7 +91,7 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
             Ok(Value::BigInt(std::rc::Rc::new(rusty_js_runtime::bigint::JsBigInt::from_i64(ns))))
         });
         let bigint_obj = rusty_js_runtime::value::Object {
-            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
             internal_kind: rusty_js_runtime::value::InternalKind::Function(
                 rusty_js_runtime::value::FunctionInternals { name: "bigint".into(), native: bigint_fn }
             ),

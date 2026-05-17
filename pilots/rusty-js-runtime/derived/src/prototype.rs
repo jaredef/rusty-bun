@@ -202,7 +202,7 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         if len == 0 { return Ok(Value::Undefined); }
         let last_key = (len - 1).to_string();
         let v = rt.object_get(id, &last_key);
-        rt.obj_mut(id).properties.remove(&last_key);
+        rt.obj_mut(id).properties.shift_remove(&last_key);
         rt.object_set(id, "length".into(), Value::Number((len - 1) as f64));
         Ok(v)
     });
@@ -218,7 +218,7 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
             let v = rt.object_get(id, &i.to_string());
             rt.object_set(id, (i - 1).to_string(), v);
         }
-        rt.obj_mut(id).properties.remove(&(len - 1).to_string());
+        rt.obj_mut(id).properties.shift_remove(&(len - 1).to_string());
         rt.object_set(id, "length".into(), Value::Number((len - 1) as f64));
         Ok(first)
     });
@@ -357,7 +357,7 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
             }
             // Remove trailing slots.
             for i in new_len..len {
-                rt.obj_mut(id).properties.remove(&i.to_string());
+                rt.obj_mut(id).properties.shift_remove(&i.to_string());
             }
         }
         // Insert items.
@@ -1055,7 +1055,7 @@ fn install_function_proto(rt: &mut Runtime, host: ObjectRef) {
         let bf = Object {
             proto: None,
             extensible: true,
-            properties: HashMap::new(),
+            properties: indexmap::IndexMap::new(),
             internal_kind: InternalKind::BoundFunction(BoundFunctionInternals {
                 target,
                 this: bound_this,
@@ -1201,7 +1201,7 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let fn_obj = Object {
         proto: None, // function_prototype not yet installed when called from install_prototypes
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
             native,

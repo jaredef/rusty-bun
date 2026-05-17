@@ -1932,7 +1932,7 @@ impl Runtime {
                     Value::Object(id) => id,
                     _ => return Ok(Value::Boolean(false)),
                 };
-                let existed = rt.obj_mut(storage).properties.remove(&key_s).is_some();
+                let existed = rt.obj_mut(storage).properties.shift_remove(&key_s).is_some();
                 if existed {
                     let prev = match rt.object_get(this, "size") {
                         Value::Number(n) => n,
@@ -2133,7 +2133,7 @@ impl Runtime {
                     Value::Object(id) => id,
                     _ => return Ok(Value::Boolean(false)),
                 };
-                let existed = rt.obj_mut(storage).properties.remove(&key_s).is_some();
+                let existed = rt.obj_mut(storage).properties.shift_remove(&key_s).is_some();
                 if existed {
                     let prev = match rt.object_get(this, "size") {
                         Value::Number(n) => n,
@@ -2672,7 +2672,7 @@ impl Runtime {
             let key_s = abstract_ops::to_string(&key).as_str().to_string();
             match obj {
                 Value::Object(id) => {
-                    rt.obj_mut(id).properties.remove(&key_s);
+                    rt.obj_mut(id).properties.shift_remove(&key_s);
                     Ok(Value::Boolean(true))
                 }
                 _ => Err(RuntimeError::TypeError("Reflect.deleteProperty: target must be object".into())),
@@ -3118,7 +3118,7 @@ pub(crate) fn make_native(name: &str, f: impl Fn(&mut Runtime, &[Value]) -> Resu
     Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
             native,

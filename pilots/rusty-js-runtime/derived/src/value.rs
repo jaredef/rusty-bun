@@ -10,8 +10,8 @@
 //!   ObjectId (Copy + Eq). Cycles are now reclaimable via rt.collect().
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
+use indexmap::IndexMap;
 
 /// A captured-binding cell. Tier-Ω.5.e migrated upvalues from
 /// value-snapshot (Vec<Value>) to binding-shared (Vec<UpvalueCell>) per
@@ -145,7 +145,11 @@ impl PartialEq for Value {
 pub struct Object {
     pub proto: Option<ObjectRef>,
     pub extensible: bool,
-    pub properties: HashMap<String, PropertyDescriptor>,
+    // ECMA §10.1.11 OrdinaryOwnPropertyKeys requires integer-indexed keys
+    // in ascending order, then string keys in insertion order. IndexMap
+    // preserves insertion order; the integer-index branch is sorted at
+    // enumeration sites.
+    pub properties: IndexMap<String, PropertyDescriptor>,
     pub internal_kind: InternalKind,
 }
 
@@ -154,7 +158,7 @@ impl Object {
         Self {
             proto: None,
             extensible: true,
-            properties: HashMap::new(),
+            properties: IndexMap::new(),
             internal_kind: InternalKind::Ordinary,
         }
     }
@@ -163,7 +167,7 @@ impl Object {
         Self {
             proto: None,
             extensible: true,
-            properties: HashMap::new(),
+            properties: IndexMap::new(),
             internal_kind: InternalKind::Array,
         }
     }

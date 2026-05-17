@@ -145,7 +145,7 @@ pub fn new_promise(rt: &mut Runtime) -> ObjectRef {
     rt.alloc_object(Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Promise(PromiseState {
             status: PromiseStatus::Pending,
             value: Value::Undefined,
@@ -240,7 +240,7 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
             native,

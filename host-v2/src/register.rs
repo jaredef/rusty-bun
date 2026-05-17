@@ -16,7 +16,7 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
             native,
@@ -39,7 +39,7 @@ where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
             native,

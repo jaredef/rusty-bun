@@ -1077,7 +1077,7 @@ impl Runtime {
                             // Per §10.1.10 [[Delete]] returns false for
                             // non-configurable own properties. v1: always
                             // remove and return true.
-                            self.obj_mut(id).properties.remove(&key).is_some()
+                            self.obj_mut(id).properties.shift_remove(&key).is_some()
                         }
                         _ => false,
                     };
@@ -1089,7 +1089,7 @@ impl Runtime {
                     let key = crate::abstract_ops::to_string(&key_v).as_str().to_string();
                     let removed = match obj_v {
                         Value::Object(id) => {
-                            self.obj_mut(id).properties.remove(&key).is_some()
+                            self.obj_mut(id).properties.shift_remove(&key).is_some()
                         }
                         _ => false,
                     };
@@ -1237,7 +1237,7 @@ impl Runtime {
                     let closure = Object {
                         proto: None,
                         extensible: true,
-                        properties: std::collections::HashMap::new(),
+                        properties: indexmap::IndexMap::new(),
                         internal_kind: crate::value::InternalKind::Closure(crate::value::ClosureInternals {
                             proto: proto_rc,
                             upvalues: Vec::new(),

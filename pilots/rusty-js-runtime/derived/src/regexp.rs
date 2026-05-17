@@ -109,7 +109,7 @@ pub fn new_regexp(rt: &mut Runtime, pattern: &str, flags: &str) -> Result<Object
     let obj = Object {
         proto: None,
         extensible: true,
-        properties: HashMap::new(),
+        properties: indexmap::IndexMap::new(),
         internal_kind: InternalKind::RegExp(internals),
     };
     let id = rt.alloc_object(obj);

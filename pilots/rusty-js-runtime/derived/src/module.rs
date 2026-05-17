@@ -965,7 +965,7 @@ impl Runtime {
         let require_obj = Object {
             proto: None,
             extensible: true,
-            properties: std::collections::HashMap::new(),
+            properties: indexmap::IndexMap::new(),
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
                     name: "require".to_string(),
@@ -995,7 +995,7 @@ impl Runtime {
             Ok(Value::String(std::rc::Rc::new(path)))
         });
         let require_resolve_obj = Object {
-            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
                     name: "resolve".to_string(), native: require_resolve_fn,
@@ -1010,7 +1010,7 @@ impl Runtime {
             Ok(Value::Object(arr))
         });
         let require_paths_obj = Object {
-            proto: None, extensible: true, properties: std::collections::HashMap::new(),
+            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
                     name: "paths".to_string(), native: require_paths_fn,
@@ -1266,7 +1266,7 @@ impl Object {
         Self {
             proto: None,
             extensible: false,
-            properties: HashMap::new(),
+            properties: indexmap::IndexMap::new(),
             internal_kind: crate::value::InternalKind::ModuleNamespace,
         }
     }

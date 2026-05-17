@@ -168,12 +168,7 @@ fn source_has_esm_markers(text: &str) -> bool {
             let rest = &trimmed[6..];
             if rest.is_empty() { return true; }
             let c = rest.chars().next().unwrap();
-            // `import` keyword: next char is space, '{', '*', '"', '\''.
             if c.is_whitespace() || c == '{' || c == '*' || c == '"' || c == '\'' || c == '(' {
-                // Reject `import(` only if it's specifically dynamic
-                // import at expression position. At line-start that's
-                // less common; for the kind-sniff we'd accept it but
-                // be conservative — `import(` alone doesn't imply ESM.
                 if c != '(' { return true; }
             }
         }
@@ -185,6 +180,18 @@ fn source_has_esm_markers(text: &str) -> bool {
                 return true;
             }
         }
+    }
+    // Ω.5.P42.E1.esm-sniff-minified: also accept `export`/`import` that
+    // appears mid-line at a JS-statement boundary. Minified TypeScript
+    // outputs commonly put the whole body on one line ending with
+    // `;export{a,b,c}` (xstate/fsm es/index.js is the canonical case;
+    // many other npm packages with rollup/terser minified ESM builds
+    // exhibit the same shape). Without this the per-line scan misses
+    // them and we mis-classify the file as CJS.
+    for pat in [";export{", ";export ", ";export*", "}export{", "}export ", "}export*",
+                ";import{", ";import ", ";import*", ";import\"", ";import'",
+                "}import{", "}import ", "}import*", "}import\"", "}import'"] {
+        if t.contains(pat) { return true; }
     }
     false
 }

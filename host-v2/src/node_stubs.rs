@@ -86,6 +86,49 @@ pub fn install_constants(rt: &mut Runtime) {
     rt.object_set(ns, "S_IFMT".into(), Value::Number(61440.0));
     rt.object_set(ns, "S_IFREG".into(), Value::Number(32768.0));
     rt.object_set(ns, "S_IFDIR".into(), Value::Number(16384.0));
+    // Ω.5.P49.E1.errno-constants: errno codes at top level + nested under
+    // .os.errno (the older nesting some legacy packages probe). The tmp
+    // package reads `_c.EBADF || _c.os.errno.EBADF`; if neither resolves
+    // the first time, `_c.os` is undefined and `.errno.EBADF` throws.
+    // Linux errno values per <asm-generic/errno-base.h> / <asm-generic/errno.h>.
+    let errno_vals: &[(&str, f64)] = &[
+        ("E2BIG", 7.0), ("EACCES", 13.0), ("EADDRINUSE", 98.0),
+        ("EADDRNOTAVAIL", 99.0), ("EAFNOSUPPORT", 97.0), ("EAGAIN", 11.0),
+        ("EALREADY", 114.0), ("EBADF", 9.0), ("EBADMSG", 74.0), ("EBUSY", 16.0),
+        ("ECANCELED", 125.0), ("ECHILD", 10.0), ("ECONNABORTED", 103.0),
+        ("ECONNREFUSED", 111.0), ("ECONNRESET", 104.0), ("EDEADLK", 35.0),
+        ("EDESTADDRREQ", 89.0), ("EDOM", 33.0), ("EEXIST", 17.0),
+        ("EFAULT", 14.0), ("EFBIG", 27.0), ("EHOSTUNREACH", 113.0),
+        ("EIDRM", 43.0), ("EILSEQ", 84.0), ("EINPROGRESS", 115.0),
+        ("EINTR", 4.0), ("EINVAL", 22.0), ("EIO", 5.0), ("EISCONN", 106.0),
+        ("EISDIR", 21.0), ("ELOOP", 40.0), ("EMFILE", 24.0), ("EMLINK", 31.0),
+        ("EMSGSIZE", 90.0), ("ENAMETOOLONG", 36.0), ("ENETDOWN", 100.0),
+        ("ENETRESET", 102.0), ("ENETUNREACH", 101.0), ("ENFILE", 23.0),
+        ("ENOBUFS", 105.0), ("ENODATA", 61.0), ("ENODEV", 19.0),
+        ("ENOENT", 2.0), ("ENOEXEC", 8.0), ("ENOLCK", 37.0), ("ENOLINK", 67.0),
+        ("ENOMEM", 12.0), ("ENOMSG", 42.0), ("ENOPROTOOPT", 92.0),
+        ("ENOSPC", 28.0), ("ENOSR", 63.0), ("ENOSTR", 60.0), ("ENOSYS", 38.0),
+        ("ENOTCONN", 107.0), ("ENOTDIR", 20.0), ("ENOTEMPTY", 39.0),
+        ("ENOTSOCK", 88.0), ("ENOTSUP", 95.0), ("ENOTTY", 25.0),
+        ("ENXIO", 6.0), ("EOPNOTSUPP", 95.0), ("EOVERFLOW", 75.0),
+        ("EPERM", 1.0), ("EPIPE", 32.0), ("EPROTO", 71.0),
+        ("EPROTONOSUPPORT", 93.0), ("EPROTOTYPE", 91.0), ("ERANGE", 34.0),
+        ("EROFS", 30.0), ("ESPIPE", 29.0), ("ESRCH", 3.0), ("ETIME", 62.0),
+        ("ETIMEDOUT", 110.0), ("ETXTBSY", 26.0), ("EWOULDBLOCK", 11.0),
+        ("EXDEV", 18.0),
+    ];
+    for (name, val) in errno_vals {
+        rt.object_set(ns, (*name).into(), Value::Number(*val));
+    }
+    // Nested: constants.os.errno.X (some packages probe this path).
+    let os_ns = new_object(rt);
+    let errno_ns = new_object(rt);
+    for (name, val) in errno_vals {
+        rt.object_set(errno_ns, (*name).into(), Value::Number(*val));
+    }
+    rt.object_set(os_ns, "errno".into(), Value::Object(errno_ns));
+    rt.object_set(ns, "os".into(), Value::Object(os_ns));
+
     rt.globals.insert("constants".into(), Value::Object(ns));
 }
 

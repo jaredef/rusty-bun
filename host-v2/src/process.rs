@@ -146,6 +146,23 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
     register_method(rt, process, "off", |rt, _args| Ok(rt.current_this()));
     register_method(rt, process, "once", |rt, _args| Ok(rt.current_this()));
     register_method(rt, process, "removeListener", |rt, _args| Ok(rt.current_this()));
+    // EventEmitter alias surface — nx daemon client calls process.addListener.
+    register_method(rt, process, "addListener", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "removeAllListeners", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "prependListener", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "prependOnceListener", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "listeners", |rt, _args| {
+        Ok(Value::Object(rt.alloc_object(rusty_js_runtime::value::Object::new_array())))
+    });
+    register_method(rt, process, "rawListeners", |rt, _args| {
+        Ok(Value::Object(rt.alloc_object(rusty_js_runtime::value::Object::new_array())))
+    });
+    register_method(rt, process, "listenerCount", |_rt, _args| Ok(Value::Number(0.0)));
+    register_method(rt, process, "eventNames", |rt, _args| {
+        Ok(Value::Object(rt.alloc_object(rusty_js_runtime::value::Object::new_array())))
+    });
+    register_method(rt, process, "setMaxListeners", |rt, _args| Ok(rt.current_this()));
+    register_method(rt, process, "getMaxListeners", |_rt, _args| Ok(Value::Number(10.0)));
 
     // Tier-Ω.5.mmmm: process.getBuiltinModule(name) — Node 22+ API. ohash
     // calls it at module init to fetch node:crypto without going through

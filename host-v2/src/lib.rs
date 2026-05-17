@@ -141,6 +141,23 @@ pub fn install_builtin_module_resolver(rt: &mut Runtime) {
             "node:querystring" | "querystring" => "url",
             "node:timers" | "timers" | "node:timers/promises" | "timers/promises" => "events",
             "node:string_decoder" => "string_decoder",
+            // node:path/posix and node:path/win32 — resolve to subproperty of path module.
+            "node:path/posix" | "path/posix" => {
+                if let Some(Value::Object(path_id)) = rt.globals.get("path").cloned() {
+                    if let Value::Object(sub) = rt.object_get(path_id, "posix") {
+                        return Ok(Some(sub));
+                    }
+                }
+                return Ok(None);
+            }
+            "node:path/win32" | "path/win32" => {
+                if let Some(Value::Object(path_id)) = rt.globals.get("path").cloned() {
+                    if let Value::Object(sub) = rt.object_get(path_id, "win32") {
+                        return Ok(Some(sub));
+                    }
+                }
+                return Ok(None);
+            }
             _ => return Ok(None),
         };
         match rt.globals.get(global_name) {

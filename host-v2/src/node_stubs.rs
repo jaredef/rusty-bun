@@ -324,6 +324,22 @@ pub fn install_buffer(rt: &mut Runtime) {
         install_buffer_methods(rt, id);
         Ok(Value::Object(id))
     });
+    // Tier-Ω.5.FFFFFFFF: Buffer.allocUnsafeSlow alias (msgpackr).
+    // Per Node docs allocUnsafeSlow returns a non-pooled Buffer of the
+    // given size; semantically identical to allocUnsafe for our model.
+    register_method(rt, buf_ctor, "allocUnsafeSlow", |rt, args| {
+        let n = match args.first() {
+            Some(Value::Number(n)) => *n as usize,
+            _ => 0,
+        };
+        let mut o = RtObject::new_ordinary();
+        o.set_own("length".into(), Value::Number(n as f64));
+        o.set_own("__is_buffer__".into(), Value::Boolean(true));
+        for i in 0..n.min(65536) {
+            o.set_own(i.to_string(), Value::Number(0.0));
+        }
+        Ok(Value::Object(rt.alloc_object(o)))
+    });
     // Tier-Ω.5.iii: Buffer.allocUnsafe + subarray for nanoid. nanoid
     // calls Buffer.allocUnsafe(bytes * POOL_SIZE_MULTIPLIER), fills via
     // crypto.getRandomValues, then slices with subarray.

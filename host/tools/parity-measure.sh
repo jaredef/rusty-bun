@@ -25,10 +25,14 @@ OUT="${2:-$TOOLS/parity-results.json}"
 SANDBOX="${PARITY_SANDBOX:-/tmp/parity-sandbox}"
 mkdir -p "$SANDBOX"
 
-# rusty-bun-host binary
-RB="$ROOT/target/release/rusty-bun-host"
+# rusty-bun-host binary. Override via RB_BIN= to point at an alternate
+# host (e.g. host-v2's rusty-bun-host-v2) per seed §A8.20 + the Ω.4.f
+# Tuple A/B-close falsifier loop. The output file path can also be
+# overridden via the second positional arg or OUT= for parallel runs.
+RB="${RB_BIN:-$ROOT/target/release/rusty-bun-host}"
 if [ ! -x "$RB" ]; then
-  echo "Build rusty-bun-host first: cargo build --release --bin rusty-bun-host"
+  echo "Binary not found: $RB"
+  echo "Build first: cargo build --release --bin $(basename "$RB")"
   exit 1
 fi
 
@@ -55,8 +59,9 @@ for pkg in $PKGS; do
     (
       cd "$d"
       [ -f package.json ] || echo '{"name":"sb","version":"0.0.0"}' > package.json
-      bun add "$pkg" > /dev/null 2>&1
+      nice -n 19 ionice -c3 bun add "$pkg" > /dev/null 2>&1
     )
+    sleep 0.5
   fi
 
   if [ ! -d "$d/node_modules/$pkg" ]; then
@@ -74,8 +79,8 @@ for pkg in $PKGS; do
   # package by bare specifier; resolution walks up from the probe's
   # directory.
   cp "$TOOLS/parity-probe.mjs" "$d/parity-probe.mjs"
-  bun_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" bun parity-probe.mjs 2>/dev/null)
-  rb_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" "$RB" parity-probe.mjs 2>/dev/null)
+  bun_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" nice -n 19 ionice -c3 bun parity-probe.mjs 2>/dev/null)
+  rb_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" nice -n 19 ionice -c3 "$RB" parity-probe.mjs 2>/dev/null)
 
   # Compare
   if [ "$bun_out" = "$rb_out" ] && [ -n "$bun_out" ]; then

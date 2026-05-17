@@ -26,7 +26,8 @@ for pkg in $candidates; do
   count=$((count + 1))
   d="$SANDBOX/$pkg"
   mkdir -p "$d"
-  ( cd "$d" && echo '{"name":"sb","dependencies":{"'"$pkg"'":"*"}}' > package.json && bun install --silent 2>/dev/null >/dev/null )
+  ( cd "$d" && echo '{"name":"sb","dependencies":{"'"$pkg"'":"*"}}' > package.json && nice -n 19 ionice -c3 bun install --silent 2>/dev/null >/dev/null )
+  sleep 0.5
   if [ -d "$d/node_modules/$pkg" ]; then
     ok=$((ok + 1))
     printf "."

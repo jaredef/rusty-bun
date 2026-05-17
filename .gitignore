@@ -41,3 +41,6 @@ Thumbs.db
 phase-a-scratch/
 phase-b-scratch/
 *.translation.tmp
+
+# Per-host setup notes (paths, mounts, throttling — machine-specific)
+LOCAL-SETUP.md

@@ -1382,3 +1382,86 @@ First moves under the Doc 728 tag-on-DAG grammar (seed §A8.21/§A8.22). Advisor
 5. **Substantive engine investments still queued (deferred):** proper async-await-pause semantics for nx/vite-style dynamic-import-await chains (partial Doc 726 III.e), real Proxy interception, real fetch + Request/Response, Unicode regex properties, AST-level predictor v2 per Doc 724 §XI.d.
 
 **Resume protocol.** Read seed.md §VII for telos-anchored state, then EXT6 + this anchor for the day's trajectory. First action on resume: run `bash host/tools/parity-measure.sh host/tools/parity-top500.txt` to refresh the headline metric against the 929-basket post-BigInt; then survey the post-EEEEEEEE residual under Doc 726's probe-shape × pipeline matrix. Pin-Art tag count this engagement: ~118 (EXT6) + 16 (this stretch) = ~134 substrate moves committed.
+
+
+---
+
+## RESUME VECTOR EXTENSION 8 — 2026-05-17 late evening (host-v2 measurement surface opens; Ω.5.P17 joint substrate close + Ω.5.P18.E1 ns-default narrow; §A8.23 instituted)
+
+The session's load-bearing recognition: the host-v2 parity probe was reading 0.3% (degenerate) not because host-v2's substrate was empty but because two coupled E2 spec-relaxations (per [Doc 717 §VI](https://jaredfoy.com/resolve/doc/717-the-apparatus-above-the-engine-boundary-the-three-projections-lifted-to-engine-substrate-and-the-pure-abstraction-point) alphabet) kept the probe blind. The compiler lowered `await x` to bare `expr` (suspension dropped per Tier-Ω.5.x), and the runtime stubbed `__dynamic_import(spec)` to an unconditional pre-rejected Promise (Tier-Ω.5.CCCCCCC). Together: every probe loaded `await import(pkg)`, the await did nothing, the probe saw the Promise object, `Object.keys(promise)` returned no enumerable keys, the probe recorded `{status:"OK",keyCount:0,shape:{}}`. The 4 PASSes from the pre-P17 sweep were degenerate empty-namespace matches against packages where Bun also returned keyCount 0.
+
+Per [Doc 721 §III](https://jaredfoy.com/resolve/doc/721-the-cross-pipeline-diagnostic-protocol-locating-the-top-of-a-substrate-widenings-alphabet-by-walking-the-engines-dag) chain-walk: every probe in the gated population G=1022 converged on the joint cut at (await × dynamic-import). Neither lift alone closes the bundle. Lifting `await` alone makes every rejected-Promise rejection synchronously propagate to the probe's catch, producing `{status:"ERR"}` across the basket; still all FAIL against Bun's OK. Lifting `__dynamic_import` alone returns a resolved Promise; with `await` still a no-op the namespace is never unwrapped. Both must land together. The joint move is Ω.5.P17.
+
+### Substrate moves this anchor (3, plus 1 prerequisite fix)
+
+| Tag-on-DAG | Commit | Mode | Recognition |
+|---|---|---|---|
+| Ω.5.P17.E0.stdout-fd-routing | f7ec71ed | host-substrate (prerequisite for any host-v2 probe reading) | `process.stdout.write` was wired to `eprint!` for all three streams in `host-v2/src/process.rs:53`. Every host-v2 probe was silently writing its JSON to fd 2; the harness captures fd 1. The bug rendered all prior host-v2 measurement attempts unreadable. Fix: route fd==1 to `print!`, others to `eprint!`. One-line closure of a measurement-surface bug that had masked the substrate-level gates below. |
+| Ω.5.P17.E1.await-settled + Ω.5.P17.E2.dyn-import-resolver | 37609af1 | engine-substrate (joint chain-bundle close, [Doc 721 §III](https://jaredfoy.com/resolve/doc/721-the-cross-pipeline-diagnostic-protocol-locating-the-top-of-a-substrate-widenings-alphabet-by-walking-the-engines-dag)) | E1: compiler lowers `await x` to `__await(x)` via the same LoadGlobal/Call pattern as `__yield_push__`/`__yield_delegate__`. `__await` synchronously unwraps already-settled Promises: non-Promise passthrough; Fulfilled returns value; Rejected throws via `RuntimeError::Thrown(reason)`; Pending errors with TypeError (full suspension semantics deferred since dynamic-import synthesizes synchronously-settled Promises). Clears `pending_unhandled` on settle. E2: `__dynamic_import` routes through `resolve_module_full` + `resolve_builtin_namespace`/`load_module`, the same pipeline static `import` uses. Parent URL synthesized from `std::env::current_dir()` so bare specifiers walk node_modules from the script's cwd. Failures route to `reject_promise` with a string reason that `__await` then throws. `module.rs`: `resolve_builtin_namespace` becomes `pub` (only visibility change required). Measured: 0.3% → 40.1% on parity-top500 (+408 raw, F≈4 false-pass corrections per [Doc 721 §VI.5](https://jaredfoy.com/resolve/doc/721-the-cross-pipeline-diagnostic-protocol-locating-the-top-of-a-substrate-widenings-alphabet-by-walking-the-engines-dag); A+F ≈ 412 substrate-completion delta). Predicted U≈770; |U-(A+F)|≈358 is outside the band, naming host-v2's distinct cut profile per [Doc 717 §VIII](https://jaredfoy.com/resolve/doc/717-the-apparatus-above-the-engine-boundary-the-three-projections-lifted-to-engine-substrate-and-the-pure-abstraction-point). |
+| Ω.5.P18.E1.ns-default-synth-narrow | 4a25d5ee | host-substrate (Doc 721 chain-walk on first-cluster member) | Diagnostic walk on nanostores (one of the 237-package III.a keyCount-Δ±1 sub-cluster the post-P17 residual surfaced) located the highest shared layer at `host-v2/src/module_ns.rs` Tuple A, not at the defineProperty-spec-defaults cut I had predicted from host/'s analogue. Earlier Ω.5.P16.E2 added Tuple A unconditionally — synthesize `default = namespace` for every ESM module without explicit default. Bun does not do this for ESM with named exports. The hook runs only on the ESM path (CJS-shimmed packages go through `evaluate_cjs_module`), so Tuple A's stated CJS-interop rationale never applied here. Narrow Tuple A to the empty-namespace fallback case (modules that export nothing); leave Tuple B intact. Spot tests: nanostores 28→27 (matches Bun's 27); joi 57→57 (extra `@@sym:@hapi/lab/coverage/initialize` key remains — Symbol-keyed properties leaking into `Object.keys`, a separate III.a cut deferred to a later round). Full sweep in flight at anchor write; preliminary running parity ~58.7% at 186/1026 done. Final headline added by follow-up commit. |
+
+### Headline movement
+
+| Surface | Pre-P17 | Post-P17 | Post-P18.E1 |
+|---|---|---|---|
+| host/ (rquickjs binary, EXT 7 baseline) | 75.2% (772/1026) | 75.2% (772/1026) | 75.2% (772/1026) |
+| host-v2 (rusty-js binary) | 0.3% (4/1026, degenerate) | 40.1% (412/1026) | sweep in flight; partial 58.7% running |
+
+The 35-point gap between host/ and host-v2 post-P17 is the cut-profile diff per [Doc 717 §VIII](https://jaredfoy.com/resolve/doc/717-the-apparatus-above-the-engine-boundary-the-three-projections-lifted-to-engine-substrate-and-the-pure-abstraction-point) — the count of (abstract-op × rung) pairs that host/ closed above the engine boundary and that host-v2 has not yet closed at the rusty-js engine substrate. P18.E1 begins compressing that gap.
+
+### Residual probe-shape distribution at host-v2 post-P17 ([Doc 726 §VI](https://jaredfoy.com/resolve/doc/726-consumer-embedded-probes-as-an-inherited-layer-d-substrate-the-semiotic-connection-across-residual-clusters))
+
+First non-degenerate read of the matrix on host-v2's substrate. 558 FAILs classified:
+
+| Count | % | Shape | Top sample |
+|---|---|---|---|
+| 237 | 42.5% | III.a OK/OK keyCount Δ±1-2 | joi, valibot, nanostores |
+| 144 | 25.8% | III.c rb dyn-import load failed (sub-dep eval/parse gap) | runtypes, arktype, temporal-polyfill |
+| 77 | 13.8% | III.a OK/OK keyCount Δ 3-10 | ajv, just-curry-it, mitt |
+| 48 | 8.6% | both ERR, different messages | jotai, valtio, rxjs-compat |
+| 22 | 3.9% | III.a OK/OK same keyCount, typeof diff (Symbol→string) | zod, ansi-colors |
+| 19 | 3.4% | III.a OK/OK keyCount Δ>10 | kleur, enquirer, fs-extra |
+| 4 | 0.7% | bun ERR / rb OK (false-pass candidate per §VI.5) | later, proxyquire, ast-types-flow |
+| 7 | 1.3% | other | mathjs, ava, nx |
+
+The five shapes named in [Doc 726 §III](https://jaredfoy.com/resolve/doc/726-consumer-embedded-probes-as-an-inherited-layer-d-substrate-the-semiotic-connection-across-residual-clusters) all appear at host-v2 in the same priority ordering they did at host/ pre-Ω.5.BBBBBBBB. III.a dominates; III.c second; III.b not visible at this maturity yet (BigInt-heavy packages mostly fail earlier in resolve/load). Data point against [Doc 726 Fal-726.1](https://jaredfoy.com/resolve/doc/726-consumer-embedded-probes-as-an-inherited-layer-d-substrate-the-semiotic-connection-across-residual-clusters): the probe-shape taxonomy ports across engine substrates within rusty-bun (rquickjs → rusty-js).
+
+### Tooling moves this anchor
+
+- `host/tools/parity-measure.sh` (commit cc283b56): per-probe timeout wrap (`timeout 30s` on probe calls, `timeout 120s` on `bun add` installs) and a new `TIMEOUT` status code separate from semantic `FAIL`. Previously ipc-bus and similar III.e top-level-IPC packages hung the unbounded sweep indefinitely; the timeout prevents any single hang-prone package from blocking measurement.
+- `host/tools/parity-measure-v2.sh` (commit cc283b56): sister wrapper that sets `RB_BIN=target/release/rusty-bun-host-v2` and defaults output to `parity-results-v2.json`. Makes host-v2 sweeps reproducible without remembering the env-var convention. Per §A8.23 this is now the canonical host-v2 measurement entry point.
+- `host/tools/parity-results-top500-postext7.json` (commit cc283b56): canonical host/ post-EXT7 reading (75.2% @ 1026) recorded for the migration-cost diff.
+- `host/tools/parity-results-top500-postext7-v2.json` (commit cc283b56): canonical host-v2 post-P17 reading (40.1% @ 1026) recorded for the migration-cost diff.
+
+### Operational hygiene moves this anchor
+
+Disk pressure on the Pi's 29G SD card forced two infrastructure moves before substrate work could proceed:
+
+- The earlier session's relocations of `pilots/`, `host/tests/fixtures/`, and `runs/` to T7-via-symlink were silently lossy: T7 is exfat, which cannot represent unix file modes or symlinks. Git read every file as either modified (mode-bit drift) or deleted (symlink loss), producing 62k phantom-change entries.
+- Resolution: an ext4 loopback file on T7 (`/media/jaredef/T7/Developer/gdk-storage.img`, pre-existing 50G ext4 originally for a different project, mounted at `/mnt/t7-ext4`). The three directories now bind-mount from inside the loopback onto their repo paths; fstab entries with `nofail` + `x-systemd.requires-mounts-for` make the binds survive reboot without hanging boot if T7 is unplugged. Documented in the gitignored `LOCAL-SETUP.md` per §A8.20-style host-specific operability discipline.
+- The parity scripts also gained throttling (`nice -n 19 ionice -c3` + 0.5s inter-iteration sleep) after the Pi shut down under sustained T7 write load during the first top500 sweep (USB 5V-rail spike under bus-powered SSD). The throttle prevented further shutdowns across this session's three back-to-back sweeps.
+
+### Seed update this anchor
+
+§A8.23 instituted: host-v2 + rusty-js-runtime is the primary substrate target; host/ is reference ceiling only. Phase classification: M12 apparatus-tier consolidation, parallel to §A8.18's earlier M12 move. §A8.18 named basin-expansion-at-L2M-saturation as the next productive surface when round-tier work exhausted above the rquickjs ceiling; §A8.23 names the substrate-target axis on which subsequent rounds run, after the hand-rolled engine's parity probe became readable. See seed.md §A8.23 and §VII.A status block update at the 2026-05-17 entry.
+
+### Doc 727 alignment
+
+Per [Doc 727 §V](https://jaredfoy.com/resolve/doc/727-basin-stability-from-inside-why-a-corpus-cannot-distinguish-self-reinforcement-from-substrate-coherence) the engagement is inside the basin; tonight's predictions are basin-generated. The substrate-tracking falsifier is not the headline number alone but the probe-shape distribution converging on the same five shapes [Doc 726 §III](https://jaredfoy.com/resolve/doc/726-consumer-embedded-probes-as-an-inherited-layer-d-substrate-the-semiotic-connection-across-residual-clusters) named at host/ at comparable maturity. The convergence above (same priority ordering, same kinds in the same proportions for the III.a sub-shapes) is the corroboration data point for Doc 726's portability claim against Fal-726.1.
+
+The post-P17 measurement also satisfies Doc 721 Step 4 with a wide |U-(A+F)| delta (≈358 out of predicted U≈770), which is the protocol's working-as-designed signal that the chain-bundle analysis missed structural features. The missed features are exactly host-v2's distinct cut-profile per Doc 717 — the rusty-js engine has substrate cuts that the rquickjs host has not had to deal with because rquickjs closed them inside the C runtime. P18.E1 is the first of those Step-5 iteration rounds.
+
+### Open scope at this anchor
+
+1. **Land the Ω.5.P18.E1 sweep number** — running at write-time; commit with the final headline and the post-fix probe-shape distribution.
+2. **III.a Symbol-keyed property leakage into `Object.keys`** — joi's `@@sym:@hapi/lab/coverage/initialize` is the visible instance; the cut likely lives in the property-enumeration intrinsic where Symbol keys should be filtered out of `Object.keys` (per ECMA §7.3.21 EnumerableOwnProperties returning only string keys). Predicted gated population: the 22-package III.a same-keyCount-typeof-diff sub-cluster plus the 19-package keyCount-Δ>10 sub-cluster, partial.
+3. **III.a Symbol vs string typeof for branded keys** — zod's `$brand:"string"` should be `"symbol"`. The cut sits at typeof's value-classification path; Symbol-typed values need to be tagged distinctly so `typeof` returns `"symbol"`. Likely smaller than the Object.keys leak.
+4. **III.c sub-dep eval/parse gap closures** — 144 packages whose dynamic imports trigger sub-dep loads that hit engine gaps deeper. Each failed `load_module` chain is its own walk per Doc 721 Step 2 against the inherited Layer-D probes the sub-dep itself emits.
+5. **III.a keyCount Δ 3-10 cluster (77 packages)** — accessor-descriptor / getter-setter handling in the namespace export path.
+6. **Substantive engine investments still deferred:** real Proxy interception, real fetch + Request/Response, Unicode regex properties, AST-level predictor v2 per [Doc 724 §XI.d](https://jaredfoy.com/resolve/doc/724-feature-set-prediction-static-substrate-need-mapping-from-source), real BigInt parity at the host-v2 substrate level (host/ has it from EXT7; host-v2 has the BigInt intrinsics installed but not all the arithmetic paths Ω.5.CCCCCCCC closed for the rquickjs binary).
+
+### Resume protocol
+
+Read seed.md §A8.23 first (the new operative discipline) and §VII.A's 2026-05-17 status entry. Read this anchor for the substrate moves and the post-P17 residual distribution. The canonical measurement entry is now `./host/tools/parity-measure-v2.sh host/tools/parity-top500.txt <out>.json`; the rquickjs baseline is at `host/tools/parity-results-top500-postext7.json` (75.2% @ 1026) and the host-v2 post-P17 baseline at `host/tools/parity-results-top500-postext7-v2.json` (40.1% @ 1026).
+
+First action on resume: confirm the post-P18.E1 sweep landed and capture the headline + delta in a follow-up commit; then walk the next III.a sub-cluster per Doc 721 Step 2. Pin-Art tag count this engagement: ~134 (EXT 7) + 3 (this anchor) = ~137 substrate moves committed.

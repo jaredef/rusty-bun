@@ -46,6 +46,63 @@ struct PendingFsOp {
 
 thread_local! {
     static PENDING: RefCell<Vec<PendingFsOp>> = RefCell::new(Vec::new());
+    // Ω.5.P36.E1.fs-watch-polling registry. Each WatchEntry survives
+    // until close() / unwatchFile / id-removal. PollIo polls the list.
+    static WATCHERS: RefCell<Vec<WatchEntry>> = RefCell::new(Vec::new());
+    static NEXT_WATCH_ID: RefCell<u64> = RefCell::new(1);
+}
+
+/// Ω.5.P36.E1: single registered watcher entry.
+struct WatchEntry {
+    id: u64,
+    path: String,
+    listener: Option<Value>,
+    /// Last observed mtime (seconds since epoch) on this entry's path.
+    /// None when the path didn't exist on last poll.
+    last_mtime: Option<f64>,
+    /// Last observed file size; helps detect changes when mtime
+    /// resolution is coarser than the change interval (some filesystems
+    /// round to whole seconds).
+    last_size: Option<u64>,
+    /// FSWatcher / StatWatcher object that returned the watcher to JS.
+    watcher_obj: ObjectRef,
+    /// Poll interval in ms. PollIo only fires this entry once at least
+    /// this many ms have passed since `last_polled`.
+    interval_ms: u64,
+    last_polled: std::time::Instant,
+}
+
+fn register_watcher(path: String, listener: Option<Value>, watcher_obj: ObjectRef, interval_ms: u64) -> u64 {
+    let id = NEXT_WATCH_ID.with(|c| { let mut c = c.borrow_mut(); let id = *c; *c += 1; id });
+    let (last_mtime, last_size) = mtime_size(&path);
+    WATCHERS.with(|w| {
+        w.borrow_mut().push(WatchEntry {
+            id, path, listener, last_mtime, last_size, watcher_obj,
+            interval_ms,
+            last_polled: std::time::Instant::now(),
+        });
+    });
+    id
+}
+
+fn unregister_watcher(id: u64) {
+    WATCHERS.with(|w| w.borrow_mut().retain(|e| e.id != id));
+}
+
+fn unregister_watchers_by_path(path: &str) {
+    WATCHERS.with(|w| w.borrow_mut().retain(|e| e.path != path));
+}
+
+fn mtime_size(path: &str) -> (Option<f64>, Option<u64>) {
+    match std::fs::metadata(path) {
+        Ok(md) => {
+            let mt = md.modified().ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64());
+            (mt, Some(md.len()))
+        }
+        Err(_) => (None, None),
+    }
 }
 
 fn push_pending(promise: ObjectRef, op: FsOp) {
@@ -56,6 +113,80 @@ fn drain_pending() -> Vec<PendingFsOp> {
     PENDING.with(|q| std::mem::take(&mut *q.borrow_mut()))
 }
 
+/// Ω.5.P36.E1: poll-fire registered fs watchers. Walks WATCHERS, checks
+/// mtime/size for changes since last poll, enqueues a listener-invocation
+/// macrotask per fired watcher. Returns true if any fired (PollIo loops
+/// back to drain microtasks); false if none fired and no watchers carry
+/// a soon-due interval (PollIo can exit). Caller is expected to throttle.
+fn poll_fire_watchers(rt: &mut Runtime) -> bool {
+    let now = std::time::Instant::now();
+    // Snapshot the entries whose poll-interval has expired so we don't
+    // hold the thread_local borrow across rt mutations.
+    let due: Vec<(u64, String, Option<Value>, ObjectRef)> = WATCHERS.with(|w| {
+        let mut w = w.borrow_mut();
+        let mut out = Vec::new();
+        for e in w.iter_mut() {
+            if now.duration_since(e.last_polled).as_millis() as u64 >= e.interval_ms {
+                let (mt, sz) = mtime_size(&e.path);
+                let changed = mt != e.last_mtime || sz != e.last_size;
+                if changed {
+                    e.last_mtime = mt;
+                    e.last_size = sz;
+                    out.push((e.id, e.path.clone(), e.listener.clone(), e.watcher_obj));
+                }
+                e.last_polled = now;
+            }
+        }
+        out
+    });
+    if due.is_empty() {
+        return false;
+    }
+    for (_id, path, listener, _watcher_obj) in due {
+        if let Some(cb) = listener {
+            // Enqueue (eventType, filename) listener call as a macrotask
+            // so it runs after the current microtask phase per the spec
+            // event-loop model.
+            let path = path.clone();
+            rt.enqueue_macrotask("fs.watch listener", move |rt| {
+                let _ = rt.call_function(
+                    cb,
+                    Value::Undefined,
+                    vec![
+                        Value::String(Rc::new("change".into())),
+                        Value::String(Rc::new(path)),
+                    ],
+                );
+                Ok(())
+            });
+        }
+    }
+    true
+}
+
+/// True if any watcher is currently registered. Used by PollIo to know
+/// whether to keep the event loop alive while idle.
+fn has_watchers() -> bool {
+    WATCHERS.with(|w| !w.borrow().is_empty())
+}
+
+/// Sleep until the soonest-due watcher needs polling, bounded by an
+/// outer cap so the event loop never sleeps forever.
+fn sleep_until_next_poll() {
+    let now = std::time::Instant::now();
+    let next = WATCHERS.with(|w| {
+        let w = w.borrow();
+        let mut min_wait_ms: u64 = 1000;  // upper bound on sleep
+        for e in w.iter() {
+            let elapsed = now.duration_since(e.last_polled).as_millis() as u64;
+            let remaining = e.interval_ms.saturating_sub(elapsed);
+            if remaining < min_wait_ms { min_wait_ms = remaining; }
+        }
+        min_wait_ms.max(10)  // never sleep less than 10ms to avoid CPU burn
+    });
+    std::thread::sleep(std::time::Duration::from_millis(next));
+}
+
 /// Install the PollIo host hook that drains the PendingIo queue. Call
 /// once at startup. Idempotent in spirit but installing twice would
 /// replace the previous hook.
@@ -63,6 +194,20 @@ pub fn install_poll_io(rt: &mut Runtime) {
     rt.install_host_hook(HostHook::PollIo(Box::new(|rt: &mut Runtime| {
         let entries = drain_pending();
         if entries.is_empty() {
+            // Ω.5.P36.E1.fs-watch-polling: fall through to watcher poll
+            // when no fs ops are pending. Fires listeners for any
+            // watched path whose mtime/size changed since the last
+            // poll. Throttles via sleep_until_next_poll so the loop
+            // doesn't spin between polls.
+            if has_watchers() {
+                if poll_fire_watchers(rt) {
+                    return Ok(true);
+                }
+                sleep_until_next_poll();
+                // Sleep is bounded; even when no watcher fires we want
+                // to come back and poll again, so report progress.
+                return Ok(true);
+            }
             return Ok(false);
         }
         for entry in entries {
@@ -972,15 +1117,29 @@ pub fn install(rt: &mut Runtime) {
     // Runtime.fd_table-adjacent state but never fires (real inotify
     // integration deferred to a future substrate round). API surface
     // is complete so module-init probes pass.
+    // Ω.5.P36.E1.fs-watch-polling: real polling-based watch + watchFile
+    // integration. Registers entries in a thread_local WATCHERS list;
+    // the PollIo hook (host-v2 below) walks the list each tick, checks
+    // mtime via std::fs::metadata, and enqueues a macrotask calling the
+    // listener when a change is detected. Real inotify integration would
+    // be lower-latency but needs the `notify` crate; polling matches
+    // Node's watchFile default behavior with a configurable interval.
     register_method(rt, fs, "watch", |rt, args| {
-        let _path = arg_string(args, 0);
+        let path = arg_string(args, 0);
         let watcher = rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary());
-        // Store the listener if provided (positional listener or options.listener).
         let listener = args.iter().rev().find(|v| matches!(v, Value::Object(_))).cloned();
-        if let Some(v) = listener {
+        if let Some(v) = listener.clone() {
             rt.object_set(watcher, "__listener".into(), v);
         }
-        register_method(rt, watcher, "close", |_rt, _args| Ok(Value::Undefined));
+        let id = register_watcher(path, listener, watcher, /* default interval */ 200);
+        rt.object_set(watcher, "__watch_id".into(), Value::Number(id as f64));
+        register_method(rt, watcher, "close", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Undefined) };
+            if let Value::Number(wid) = rt.object_get(this, "__watch_id") {
+                unregister_watcher(wid as u64);
+            }
+            Ok(Value::Undefined)
+        });
         register_method(rt, watcher, "on", |rt, _args| Ok(rt.current_this()));
         register_method(rt, watcher, "off", |rt, _args| Ok(rt.current_this()));
         register_method(rt, watcher, "ref", |rt, _args| Ok(rt.current_this()));
@@ -988,19 +1147,34 @@ pub fn install(rt: &mut Runtime) {
         Ok(Value::Object(watcher))
     });
     register_method(rt, fs, "watchFile", |rt, args| {
-        let _path = arg_string(args, 0);
-        // Return a StatWatcher-shaped object. The listener (last arg)
-        // is stashed but never fires; real polling integration deferred.
+        let path = arg_string(args, 0);
+        // watchFile signature: (filename, [options], listener). Options
+        // may carry `interval`; default 5007ms per Node.
+        let mut interval_ms = 5007u64;
+        for a in args {
+            if let Value::Object(id) = a {
+                if let Value::Number(n) = rt.object_get(*id, "interval") {
+                    interval_ms = (n as u64).max(50);
+                    break;
+                }
+            }
+        }
         let watcher = rt.alloc_object(rusty_js_runtime::value::Object::new_ordinary());
         let listener = args.iter().rev().find(|v| matches!(v, Value::Object(_))).cloned();
-        if let Some(v) = listener {
+        if let Some(v) = listener.clone() {
             rt.object_set(watcher, "__listener".into(), v);
         }
+        let id = register_watcher(path, listener, watcher, interval_ms);
+        rt.object_set(watcher, "__watch_id".into(), Value::Number(id as f64));
         register_method(rt, watcher, "ref", |rt, _args| Ok(rt.current_this()));
         register_method(rt, watcher, "unref", |rt, _args| Ok(rt.current_this()));
         Ok(Value::Object(watcher))
     });
-    register_method(rt, fs, "unwatchFile", |_rt, _args| Ok(Value::Undefined));
+    register_method(rt, fs, "unwatchFile", |_rt, args| {
+        let path = arg_string(args, 0);
+        unregister_watchers_by_path(&path);
+        Ok(Value::Undefined)
+    });
     // Class stubs (Stats, Dirent, Dir) — constructor-throw shape.
     for cls in ["Stats", "Dirent", "Dir"] {
         let n = cls.to_string();

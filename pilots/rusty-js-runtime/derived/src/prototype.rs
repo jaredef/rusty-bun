@@ -708,6 +708,56 @@ fn install_array_proto(rt: &mut Runtime, host: ObjectRef) {
         }
         Ok(Value::Boolean(true))
     });
+    // Tier-Ω.5.P24.E2.array-proto-iter: Array.prototype.entries/keys/values
+    // per ECMA §23.1.3.4/§23.1.3.16/§23.1.3.32. Eager-materialize an array
+    // of [i, v] / i / v entries, matching the for-of-array-compatible shape
+    // used by Map.prototype.entries above. Surfaces from the Ω.5.P24.E1
+    // proto-chain probe: arktype's constraintKinds.entries() lands here.
+    register_method(rt, host, "entries", |rt, _args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+        };
+        let len = rt.array_length(id);
+        let out = rt.alloc_object(Object::new_array());
+        for i in 0..len {
+            let v = rt.object_get(id, &i.to_string());
+            let pair = rt.alloc_object(Object::new_array());
+            rt.object_set(pair, "0".into(), Value::Number(i as f64));
+            rt.object_set(pair, "1".into(), v);
+            rt.object_set(pair, "length".into(), Value::Number(2.0));
+            rt.object_set(out, i.to_string(), Value::Object(pair));
+        }
+        rt.object_set(out, "length".into(), Value::Number(len as f64));
+        Ok(Value::Object(out))
+    });
+    register_method(rt, host, "keys", |rt, _args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+        };
+        let len = rt.array_length(id);
+        let out = rt.alloc_object(Object::new_array());
+        for i in 0..len {
+            rt.object_set(out, i.to_string(), Value::Number(i as f64));
+        }
+        rt.object_set(out, "length".into(), Value::Number(len as f64));
+        Ok(Value::Object(out))
+    });
+    register_method(rt, host, "values", |rt, _args| {
+        let id = match rt.current_this() {
+            Value::Object(id) => id,
+            _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
+        };
+        let len = rt.array_length(id);
+        let out = rt.alloc_object(Object::new_array());
+        for i in 0..len {
+            let v = rt.object_get(id, &i.to_string());
+            rt.object_set(out, i.to_string(), v);
+        }
+        rt.object_set(out, "length".into(), Value::Number(len as f64));
+        Ok(Value::Object(out))
+    });
 }
 
 fn clamp_index(i: i64, len: i64) -> i64 {

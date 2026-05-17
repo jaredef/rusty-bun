@@ -78,6 +78,15 @@ pub struct FunctionProto {
     /// only generators with no value-passed-back (the dominant idiom in
     /// superstruct, p-map, ts-pattern's iteration helpers).
     pub is_generator: bool,
+    /// Ω.5.P51.E1: per-function source-line index. Same shape as
+    /// CompiledModule.line_starts. Populated for module-compiled
+    /// FunctionProtos; empty for synthesized hand-built ones.
+    pub line_starts: Vec<u32>,
+    /// Ω.5.P51.E1: per-function bytecode→span map. (bytecode_offset, Span)
+    /// pairs covering this function's body. Lets runtime error enrichment
+    /// derive the line:col for a fault inside any function frame, not just
+    /// the top-level module frame.
+    pub source_map: Vec<(usize, Span)>,
     /// Ω.5.P50.E1: async-function marker per ECMA-262 §15.7.5. AsyncFunction
     /// objects do not have a `prototype` own property (unlike base function
     /// declarations). MakeClosure consults this to skip the auto-prototype
@@ -115,6 +124,13 @@ pub struct CompiledModule {
     /// silently no-ops (autoprefixer / many node_modules use this for
     /// CSS / runtime-side-effect setup).
     pub side_effect_imports: Vec<String>,
+    /// Ω.5.P51.E1: byte offsets of the start of each line in the source
+    /// (line 0 starts at 0; line N starts at line_starts[N]). Computed
+    /// once at compile time. Lets the runtime convert a Span's byte offset
+    /// to (line, col) for error-message enrichment without re-scanning the
+    /// source. Empty for hand-built frames or modules compiled without a
+    /// source-line index (legacy callers).
+    pub line_starts: Vec<u32>,
 }
 
 /// One ESM import binding. Compiled from ImportDeclaration entries.
@@ -235,6 +251,10 @@ pub struct Compiler {
     /// VariableDecl compile path consults this to reuse the pre-allocated
     /// slot instead of allocating a fresh one. Cleared after the body pass.
     pre_allocated_slots: std::collections::HashMap<String, u16>,
+    /// Ω.5.P51.E1: source-line index, populated once at top-level
+    /// compile_module entry. Propagated to every CompiledModule and
+    /// FunctionProto so runtime errors can derive line:col from any pc.
+    source_line_starts: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -336,7 +356,17 @@ impl Compiler {
             reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
             pending_named_exports: Vec::new(),
             pre_allocated_slots: std::collections::HashMap::new(),
+            source_line_starts: Vec::new(),
         }
+    }
+
+    /// Ω.5.P51.E1: store the source-line index for this compilation. Called
+    /// from the top-level compile_module(src) entry before c.compile_module(ast).
+    /// The index is moved (not cloned) onto the resulting CompiledModule and
+    /// every FunctionProto produced under this Compiler, threading runtime
+    /// error enrichment with line:col data without re-scanning source.
+    pub fn set_source_line_starts(&mut self, line_starts: Vec<u32>) {
+        self.source_line_starts = line_starts;
     }
 
     pub fn compile_module(&mut self, m: &Module) -> Result<CompiledModule, CompileError> {
@@ -596,6 +626,7 @@ impl Compiler {
             exports: std::mem::take(&mut self.exports),
             reexport_sources: std::mem::take(&mut self.reexport_sources),
             side_effect_imports: std::mem::take(&mut self.side_effect_imports),
+            line_starts: std::mem::take(&mut self.source_line_starts),
         })
     }
 
@@ -2535,6 +2566,11 @@ impl Compiler {
             reexport_sources: Vec::new(), side_effect_imports: Vec::new(),
             pending_named_exports: Vec::new(),
             pre_allocated_slots: std::collections::HashMap::new(),
+            // Ω.5.P51.E1: share the parent's source-line index. Sub-compilers
+            // emit bytecode whose pcs map to the SAME source — line:col
+            // lookup uses the same line_starts vector. Cheap clone; the
+            // vector is bounded by source line count.
+            source_line_starts: self.source_line_starts.clone(),
         };
         let param_count = params.len() as u16;
         // Tier-Ω.5.l: track the rest-parameter slot. Per spec only the
@@ -2825,6 +2861,8 @@ impl Compiler {
             arguments_slot,
             self_name_slot,
             is_generator,
+            line_starts: sub.source_line_starts,
+            source_map: sub.source_map,
             is_async,
         })
     }

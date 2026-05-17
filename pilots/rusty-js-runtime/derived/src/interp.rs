@@ -374,6 +374,10 @@ impl Runtime {
     /// to drive bytecode execution while retaining access to the post-
     /// execution local-slot values.
     pub fn run_frame_module(&mut self, frame: &mut Frame) -> Result<Value, RuntimeError> {
+        // Ω.5.P51.E1: propagate the URL onto module-level Frames so the
+        // top-level run_module() entry can pass the URL through. Module
+        // frames built via Frame::new_module have empty url by default;
+        // evaluate_module sets it before invoking run_frame_module.
         self.run_frame(frame)
     }
 
@@ -397,6 +401,13 @@ impl Runtime {
             match self.run_frame_inner(frame) {
                 Ok(v) => return Ok(v),
                 Err(e) => {
+                    // Ω.5.P51.E1: enrich runtime errors with file:line:col
+                    // from the frame's source_map + line_starts. The faulting
+                    // pc is just past the opcode that threw; the most recent
+                    // source_map entry with offset <= pc names the span.
+                    // We enrich once per error (idempotent via " at " marker)
+                    // so re-throws through nested frames don't accumulate.
+                    let e = enrich_with_source_pos(e, frame);
                     let (catchable_msg, catchable_name): (Option<String>, &str) = match &e {
                         RuntimeError::Thrown(_) => (None, ""),
                         RuntimeError::TypeError(m) => (Some(m.clone()), "TypeError"),
@@ -1714,6 +1725,9 @@ impl Runtime {
         let mut inner = Frame {
             bytecode: &proto.bytecode,
             constants: &proto.constants,
+            source_map: &proto.source_map,
+            line_starts: &proto.line_starts,
+            source_url: "",
             locals_names: &proto.locals,
             upvalue_names: &proto.upvalues,
             locals,
@@ -1831,6 +1845,17 @@ fn property_key(v: &Value) -> String {
 pub struct Frame<'a> {
     pub bytecode: &'a [u8],
     pub constants: &'a rusty_js_bytecode::ConstantsPool,
+    /// Ω.5.P51.E1: pc → span map for this frame's bytecode. Lets runtime
+    /// errors at fault time look up the source span (and via line_starts,
+    /// the file:line:col) of the failing instruction. Empty for hand-built
+    /// frames.
+    pub source_map: &'a [(usize, rusty_js_ast::Span)],
+    /// Ω.5.P51.E1: byte offsets of each line start in this frame's source.
+    /// Used alongside source_map to derive line:col without re-scanning.
+    pub line_starts: &'a [u32],
+    /// Ω.5.P51.E1: URL of the source this frame was compiled from. Prepended
+    /// to line:col in error messages. Empty when unknown.
+    pub source_url: &'a str,
     /// Tier-Ω.5.jj.diag: parallel to `locals`, carries the compiler's
     /// local-descriptor names so error messages can name which local
     /// resolved to an undefined callee. Empty when the frame doesn't
@@ -1892,6 +1917,9 @@ impl<'a> Frame<'a> {
         Self {
             bytecode: &m.bytecode,
             constants: &m.constants,
+            source_map: &m.source_map,
+            line_starts: &m.line_starts,
+            source_url: "",
             locals_names: &m.locals,
             upvalue_names: &[],
             locals,
@@ -1971,6 +1999,39 @@ impl<'a> Frame<'a> {
 /// Array.prototype→Object.prototype: no 'entries' slot` immediately
 /// names Array.prototype.entries as the missing slot. Compounds across
 /// every CallMethod error at the engine site that wires it in.
+/// Ω.5.P51.E1: enrich a runtime error with file:line:col derived from the
+/// frame's pc + source_map + line_starts. Idempotent — re-throws through
+/// nested frames will see the marker " @" and skip re-enrichment. Empty
+/// source_map / line_starts (hand-built frames) leave the error untouched.
+fn enrich_with_source_pos(e: RuntimeError, frame: &Frame) -> RuntimeError {
+    fn enrich_msg(msg: String, frame: &Frame) -> String {
+        if msg.contains(" @") || frame.source_map.is_empty() || frame.line_starts.is_empty() {
+            return msg;
+        }
+        // pc at fault is past the opcode byte; the span we want is the
+        // largest source_map entry whose offset <= pc.
+        let pc = frame.pc.saturating_sub(1);
+        let span = match frame.source_map.iter().rposition(|&(off, _)| off <= pc) {
+            Some(idx) => frame.source_map[idx].1,
+            None => return msg,
+        };
+        let (line, col) = rusty_js_bytecode::byte_offset_to_line_col(
+            frame.line_starts, span.start as u32,
+        );
+        if frame.source_url.is_empty() {
+            format!("{} @{}:{}", msg, line, col)
+        } else {
+            format!("{} @{}:{}:{}", msg, frame.source_url, line, col)
+        }
+    }
+    match e {
+        RuntimeError::TypeError(m) => RuntimeError::TypeError(enrich_msg(m, frame)),
+        RuntimeError::RangeError(m) => RuntimeError::RangeError(enrich_msg(m, frame)),
+        RuntimeError::ReferenceError(m) => RuntimeError::ReferenceError(enrich_msg(m, frame)),
+        other => other,
+    }
+}
+
 fn describe_proto_chain_for_key(rt: &Runtime, receiver: &Value, key: &str) -> String {
     let mut links: Vec<String> = Vec::new();
     let start_id = match receiver {

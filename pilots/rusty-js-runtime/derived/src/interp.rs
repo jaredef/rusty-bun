@@ -1354,13 +1354,29 @@ impl Runtime {
                     // has Layer-B context. Compounds across every CallMethod
                     // failure at this site.
                     let receiver_tag = describe_value_for_diag(self, &receiver);
+                    // Tier-Ω.5.P24.E1.proto-chain-walk: when the method lookup
+                    // yielded a non-callable value, pre-compute the prototype
+                    // chain walk for the same key so the fault tag names
+                    // exactly which prototype link is missing the slot. Doc 723
+                    // route-(b) compounding — one engine-site enrichment that
+                    // pays off across every "callee is not callable" with a
+                    // method name. Cheap (only fires on the error path); names
+                    // the missing intrinsic by structural walk rather than
+                    // forcing a manual chain-walk per debug round.
+                    let chain_tag = if matches!(&method, Value::Undefined | Value::Null) {
+                        method_name.as_deref().map(|mn| describe_proto_chain_for_key(self, &receiver, mn))
+                    } else { None };
                     let result = self.call_function(method, receiver, args).map_err(|e| match e {
                         RuntimeError::TypeError(msg) if msg.starts_with("callee is not callable") => {
+                            let chain_suffix = chain_tag.as_ref()
+                                .map(|c| format!(" (proto-chain='{}')", c))
+                                .unwrap_or_default();
                             RuntimeError::TypeError(format!(
-                                "{} (method='{}') (receiver={})",
+                                "{} (method='{}') (receiver={}){}",
                                 msg,
                                 method_name.unwrap_or_else(|| "?".into()),
                                 receiver_tag,
+                                chain_suffix,
                             ))
                         }
                         // Tier-Ω.5.ssss: same route-(b) escalation for method-
@@ -1875,6 +1891,86 @@ impl<'a> Frame<'a> {
 /// for fault-message enrichment. Primitives report their type name + a
 /// short value preview; Objects report kind + up to 3 own-key names so the
 /// bisect can identify the receiver shape without an interactive trace.
+/// Tier-Ω.5.P24.E1.proto-chain-walk: walk the receiver's prototype chain
+/// and produce a tag naming each link's internal-kind plus whether the
+/// requested key was found there. When a method dispatch ends in
+/// "callee is not callable: undefined", appending this tag tells the
+/// caller exactly which prototype is missing the intrinsic — `Array→
+/// Array.prototype→Object.prototype: no 'entries' slot` immediately
+/// names Array.prototype.entries as the missing slot. Compounds across
+/// every CallMethod error at the engine site that wires it in.
+fn describe_proto_chain_for_key(rt: &Runtime, receiver: &Value, key: &str) -> String {
+    let mut links: Vec<String> = Vec::new();
+    let start_id = match receiver {
+        Value::Object(id) => Some(*id),
+        Value::String(_) => rt.string_prototype,
+        Value::Number(_) => rt.number_prototype,
+        Value::BigInt(_) => rt.bigint_prototype,
+        _ => None,
+    };
+    let receiver_kind = match receiver {
+        Value::Object(id) => kind_tag(rt, *id),
+        Value::String(_) => "String".into(),
+        Value::Number(_) => "Number".into(),
+        Value::BigInt(_) => "BigInt".into(),
+        Value::Symbol(_) => "Symbol".into(),
+        Value::Boolean(_) => "Boolean".into(),
+        Value::Undefined => return "undefined".into(),
+        Value::Null => return "null".into(),
+    };
+    links.push(receiver_kind);
+    let mut cur = start_id;
+    let mut depth = 0;
+    let mut found_link: Option<usize> = None;
+    while let Some(c) = cur {
+        depth += 1;
+        if depth > 16 { links.push("…(deep)".into()); break; }
+        let o = rt.obj(c);
+        let kind = kind_tag(rt, c);
+        if !links.last().map(|s| s.as_str() == kind.as_str()).unwrap_or(false) {
+            links.push(kind);
+        }
+        if o.properties.contains_key(key) {
+            // Found the slot, but its value resolved to non-callable.
+            // The descriptor itself is present at this link.
+            found_link = Some(links.len() - 1);
+            break;
+        }
+        cur = o.proto;
+    }
+    match found_link {
+        Some(i) => format!("{}: '{}' slot present at link {} but value not callable", links.join("→"), key, i),
+        None => format!("{}: no '{}' slot on chain", links.join("→"), key),
+    }
+}
+
+fn kind_tag(rt: &Runtime, id: rusty_js_gc::ObjectId) -> String {
+    let o = rt.obj(id);
+    match &o.internal_kind {
+        crate::value::InternalKind::Array => "Array".into(),
+        crate::value::InternalKind::Function(fi) => {
+            if fi.name.is_empty() { "Function".into() } else { format!("Function({})", fi.name) }
+        }
+        crate::value::InternalKind::Closure(_) => "Closure".into(),
+        crate::value::InternalKind::BoundFunction(_) => "BoundFunction".into(),
+        crate::value::InternalKind::Promise(_) => "Promise".into(),
+        crate::value::InternalKind::Error => "Error".into(),
+        crate::value::InternalKind::RegExp(_) => "RegExp".into(),
+        _ => {
+            // Try matching against known intrinsic prototypes for clarity.
+            if rt.object_prototype == Some(id) { "Object.prototype".into() }
+            else if rt.array_prototype == Some(id) { "Array.prototype".into() }
+            else if rt.function_prototype == Some(id) { "Function.prototype".into() }
+            else if rt.promise_prototype == Some(id) { "Promise.prototype".into() }
+            else if rt.string_prototype == Some(id) { "String.prototype".into() }
+            else if rt.number_prototype == Some(id) { "Number.prototype".into() }
+            else if rt.bigint_prototype == Some(id) { "BigInt.prototype".into() }
+            else if rt.regexp_prototype == Some(id) { "RegExp.prototype".into() }
+            else { "Object".into() }
+        }
+    }
+}
+
 fn describe_value_for_diag(rt: &Runtime, v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".into(),

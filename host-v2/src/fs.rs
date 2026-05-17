@@ -629,7 +629,19 @@ pub fn install(rt: &mut Runtime) {
         ("statfs", "statfsSync"),
         ("unlink", "unlinkSync"),
         ("mkdir", "mkdirSync"),
-        ("utimes", "utimesSync"),  // utimesSync remains stub for now
+        ("utimes", "utimesSync"),
+        ("lutimes", "lutimesSync"),
+        ("glob", "globSync"),
+        ("opendir", "opendirSync"),
+        // Ω.5.P34.E1 fd-op async wrappers:
+        ("open", "openSync"),
+        ("close", "closeSync"),
+        ("fsync", "fsyncSync"),
+        ("fdatasync", "fdatasyncSync"),
+        ("ftruncate", "ftruncateSync"),
+        ("futimes", "futimesSync"),
+        ("write", "writeSync"),
+        ("read", "readSync"),
     ] {
         let key = sync_name.to_string();
         register_method(rt, fs, async_name, move |rt, args| {
@@ -654,15 +666,205 @@ pub fn install(rt: &mut Runtime) {
         });
     }
 
-    // Stubs that remain — fd-based ops, glob/watch APIs, openAsBlob,
-    // opendir, vector IO, lutimes. Throw ENOSYS-shaped TypeError per
-    // P32.E1's discipline; the surface stays present for typeof checks.
+    // Ω.5.P34.E1.fs-fd-ops: fd-based file operations backed by
+    // Runtime::fd_table. openSync returns an integer fd that maps to a
+    // stored std::fs::File; subsequent fsync/writeSync/readSync/
+    // ftruncateSync/futimesSync/closeSync operate on it.
+    register_method(rt, fs, "openSync", |rt, args| {
+        let path = arg_string(args, 0);
+        let flags = match args.get(1) {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            Some(Value::Number(n)) => format!("{}", *n as i32),
+            _ => "r".into(),
+        };
+        let mut opts = std::fs::OpenOptions::new();
+        // Accept Node flag strings ("r", "r+", "w", "w+", "a", "a+", "wx", "ax")
+        // and integer-flag fallback (treat as O_RDONLY base; +1 → write, +2 → rw).
+        match flags.as_str() {
+            "r" => { opts.read(true); }
+            "r+" => { opts.read(true).write(true); }
+            "w" => { opts.write(true).create(true).truncate(true); }
+            "w+" => { opts.read(true).write(true).create(true).truncate(true); }
+            "a" => { opts.append(true).create(true); }
+            "a+" => { opts.read(true).append(true).create(true); }
+            "wx" => { opts.write(true).create_new(true); }
+            "wx+" => { opts.read(true).write(true).create_new(true); }
+            "ax" => { opts.append(true).create_new(true); }
+            "ax+" => { opts.read(true).append(true).create_new(true); }
+            other => {
+                // Integer-flag form: lossy mapping (O_RDONLY=0, O_WRONLY=1,
+                // O_RDWR=2; ignore O_CREAT etc. — they're rare in CJS shims).
+                let n = other.parse::<i32>().unwrap_or(0);
+                match n & 0x3 {
+                    1 => { opts.write(true).create(true); }
+                    2 => { opts.read(true).write(true).create(true); }
+                    _ => { opts.read(true); }
+                }
+            }
+        }
+        let file = opts.open(&path)
+            .map_err(|e| RuntimeError::TypeError(format!("openSync: {}", e)))?;
+        let fd = rt.next_fd;
+        rt.next_fd += 1;
+        rt.fd_table.insert(fd, file);
+        Ok(Value::Number(fd as f64))
+    });
+    register_method(rt, fs, "closeSync", |rt, args| {
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        match rt.fd_table.remove(&fd) {
+            Some(_) => Ok(Value::Undefined),
+            None => Err(RuntimeError::TypeError(format!("closeSync: EBADF (fd={})", fd))),
+        }
+    });
+    register_method(rt, fs, "fsyncSync", |rt, args| {
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let file = rt.fd_table.get(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("fsyncSync: EBADF (fd={})", fd)))?;
+        file.sync_all().map(|_| Value::Undefined)
+            .map_err(|e| RuntimeError::TypeError(format!("fsyncSync: {}", e)))
+    });
+    register_method(rt, fs, "fdatasyncSync", |rt, args| {
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let file = rt.fd_table.get(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("fdatasyncSync: EBADF (fd={})", fd)))?;
+        file.sync_data().map(|_| Value::Undefined)
+            .map_err(|e| RuntimeError::TypeError(format!("fdatasyncSync: {}", e)))
+    });
+    register_method(rt, fs, "ftruncateSync", |rt, args| {
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let len = match args.get(1) { Some(Value::Number(n)) => *n as u64, _ => 0 };
+        let file = rt.fd_table.get(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("ftruncateSync: EBADF (fd={})", fd)))?;
+        file.set_len(len).map(|_| Value::Undefined)
+            .map_err(|e| RuntimeError::TypeError(format!("ftruncateSync: {}", e)))
+    });
+    register_method(rt, fs, "futimesSync", |rt, args| {
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let atime_s = match args.get(1) { Some(Value::Number(n)) => *n, _ => 0.0 };
+        let mtime_s = match args.get(2) { Some(Value::Number(n)) => *n, _ => 0.0 };
+        let file = rt.fd_table.get(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("futimesSync: EBADF (fd={})", fd)))?;
+        let to_st = |s: f64| -> std::time::SystemTime {
+            let dur = std::time::Duration::from_secs_f64(s.max(0.0));
+            std::time::UNIX_EPOCH + dur
+        };
+        let times = std::fs::FileTimes::new().set_accessed(to_st(atime_s)).set_modified(to_st(mtime_s));
+        file.set_times(times).map(|_| Value::Undefined)
+            .map_err(|e| RuntimeError::TypeError(format!("futimesSync: {}", e)))
+    });
+    register_method(rt, fs, "writeSync", |rt, args| {
+        use std::io::Write;
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let data: Vec<u8> = match args.get(1) {
+            Some(v) => value_to_bytes(rt, v, None),
+            None => Vec::new(),
+        };
+        let file = rt.fd_table.get_mut(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("writeSync: EBADF (fd={})", fd)))?;
+        let n = file.write(&data)
+            .map_err(|e| RuntimeError::TypeError(format!("writeSync: {}", e)))?;
+        Ok(Value::Number(n as f64))
+    });
+    register_method(rt, fs, "readSync", |rt, args| {
+        use std::io::Read;
+        // readSync(fd, buffer, offset, length, position)
+        let fd = match args.first() { Some(Value::Number(n)) => *n as i32, _ => -1 };
+        let length = match args.get(3) { Some(Value::Number(n)) => *n as usize, _ => 0 };
+        let mut buf = vec![0u8; length];
+        let file = rt.fd_table.get_mut(&fd)
+            .ok_or_else(|| RuntimeError::TypeError(format!("readSync: EBADF (fd={})", fd)))?;
+        let n = file.read(&mut buf)
+            .map_err(|e| RuntimeError::TypeError(format!("readSync: {}", e)))?;
+        // Write bytes into the provided buffer at offset.
+        let offset = match args.get(2) { Some(Value::Number(n)) => *n as usize, _ => 0 };
+        if let Some(Value::Object(bid)) = args.get(1).cloned() {
+            for (i, b) in buf[..n].iter().enumerate() {
+                rt.object_set(bid, (offset + i).to_string(), Value::Number(*b as f64));
+            }
+        }
+        Ok(Value::Number(n as f64))
+    });
+    // utimesSync — path-based modify times, via std::fs::FileTimes.
+    register_method(rt, fs, "utimesSync", |_rt, args| {
+        let path = arg_string(args, 0);
+        let atime_s = match args.get(1) { Some(Value::Number(n)) => *n, _ => 0.0 };
+        let mtime_s = match args.get(2) { Some(Value::Number(n)) => *n, _ => 0.0 };
+        let file = std::fs::OpenOptions::new().write(true).open(&path)
+            .or_else(|_| std::fs::OpenOptions::new().read(true).open(&path))
+            .map_err(|e| RuntimeError::TypeError(format!("utimesSync: {}", e)))?;
+        let to_st = |s: f64| -> std::time::SystemTime {
+            let dur = std::time::Duration::from_secs_f64(s.max(0.0));
+            std::time::UNIX_EPOCH + dur
+        };
+        let times = std::fs::FileTimes::new().set_accessed(to_st(atime_s)).set_modified(to_st(mtime_s));
+        file.set_times(times).map(|_| Value::Undefined)
+            .map_err(|e| RuntimeError::TypeError(format!("utimesSync: {}", e)))
+    });
+    // lutimesSync — like utimesSync but doesn't follow symlinks. Cheap
+    // approximation: delegate to utimesSync. Real impl needs libc::utimensat
+    // with AT_SYMLINK_NOFOLLOW; deferred.
+    register_method(rt, fs, "lutimesSync", |rt, args| {
+        let fs_global = match rt.globals.get("fs") { Some(Value::Object(id)) => *id, _ => return Ok(Value::Undefined) };
+        let f = rt.object_get(fs_global, "utimesSync");
+        rt.call_function(f, Value::Object(fs_global), args.to_vec())
+    });
+    // globSync — basic shell-pattern matching. Supports `*` (any chars
+    // within a path segment), `?` (single char), `**` (any subpath).
+    // Per Node `fs.glob`, returns array of matching paths.
+    register_method(rt, fs, "globSync", |rt, args| {
+        let pattern = arg_string(args, 0);
+        let mut results: Vec<String> = Vec::new();
+        glob_walk(".", &pattern, &mut results);
+        let arr = rt.alloc_object(Object::new_array());
+        for (i, p) in results.iter().enumerate() {
+            rt.object_set(arr, i.to_string(), Value::String(Rc::new(p.clone())));
+        }
+        rt.object_set(arr, "length".into(), Value::Number(results.len() as f64));
+        Ok(Value::Object(arr))
+    });
+    // opendirSync — returns a Dir-shaped object with read()/close()/path.
+    register_method(rt, fs, "opendirSync", |rt, args| {
+        let path = arg_string(args, 0);
+        let dir_entries: Vec<String> = std::fs::read_dir(&path)
+            .map_err(|e| RuntimeError::TypeError(format!("opendirSync: {}", e)))?
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let dir = rt.alloc_object(Object::new_ordinary());
+        rt.object_set(dir, "path".into(), Value::String(Rc::new(path)));
+        // Stash entries + cursor on the Dir for the closures.
+        let entries_arr = rt.alloc_object(Object::new_array());
+        for (i, name) in dir_entries.iter().enumerate() {
+            rt.object_set(entries_arr, i.to_string(), Value::String(Rc::new(name.clone())));
+        }
+        rt.object_set(entries_arr, "length".into(), Value::Number(dir_entries.len() as f64));
+        rt.object_set(dir, "__entries".into(), Value::Object(entries_arr));
+        rt.object_set(dir, "__cursor".into(), Value::Number(0.0));
+        register_method(rt, dir, "read", |rt, _args| {
+            let this = match rt.current_this() { Value::Object(id) => id, _ => return Ok(Value::Null) };
+            let entries = match rt.object_get(this, "__entries") { Value::Object(id) => id, _ => return Ok(Value::Null) };
+            let cur = match rt.object_get(this, "__cursor") { Value::Number(n) => n as usize, _ => 0 };
+            let len = match rt.object_get(entries, "length") { Value::Number(n) => n as usize, _ => 0 };
+            if cur >= len { return Ok(Value::Null); }
+            let name = rt.object_get(entries, &cur.to_string());
+            rt.object_set(this, "__cursor".into(), Value::Number((cur + 1) as f64));
+            // Build a Dirent-shaped object.
+            let de = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(de, "name".into(), name);
+            Ok(Value::Object(de))
+        });
+        register_method(rt, dir, "close", |_rt, _args| Ok(Value::Undefined));
+        Ok(Value::Object(dir))
+    });
+
+    // Stubs that remain — watch family, openAsBlob, vector IO. Each
+    // throws ENOSYS-shaped TypeError per P32.E1's discipline.
+    // openAsBlob needs Blob streaming substrate; vector IO needs
+    // iovec semantics; watch/watchFile/unwatchFile need inotify or
+    // polling integration. All deferred to future substrate rounds.
     for name in [
-        "fdatasync", "fdatasyncSync", "fsync", "fsyncSync", "ftruncate",
-        "ftruncateSync", "futimes", "futimesSync", "glob", "globSync",
-        "lutimes", "lutimesSync", "openAsBlob", "openSync", "opendir",
-        "opendirSync", "readvSync", "unwatchFile", "utimesSync", "watch",
-        "watchFile", "writeSync", "writevSync",
+        "openAsBlob", "readvSync", "unwatchFile", "watch", "watchFile",
+        "writevSync",
     ] {
         let n = name.to_string();
         let stub = make_callable(rt, name, move |_rt, _args| {
@@ -686,6 +888,75 @@ pub fn install(rt: &mut Runtime) {
     rt.object_set(fs, "_toUnixTimestamp".into(), Value::Object(to_unix));
 
     rt.globals.insert("fs".into(), Value::Object(fs));
+}
+
+// Ω.5.P34.E1.fs-glob: basic shell-pattern walker for fs.globSync.
+// Supports `*` (any chars within a path segment), `?` (single char),
+// `**` (any subpath including empty). Pattern is matched against
+// paths relative to `start_dir`. Returns matches in undefined order.
+fn glob_walk(start_dir: &str, pattern: &str, out: &mut Vec<String>) {
+    let segs: Vec<&str> = pattern.split('/').collect();
+    fn walk(
+        cur: &std::path::Path,
+        rel: &str,
+        segs: &[&str],
+        out: &mut Vec<String>,
+    ) {
+        if segs.is_empty() {
+            out.push(rel.to_string());
+            return;
+        }
+        let seg = segs[0];
+        let rest = &segs[1..];
+        if seg == "**" {
+            // Match zero or more directories. First try the rest at the
+            // current level (zero dirs), then recurse into subdirs.
+            walk(cur, rel, rest, out);
+            if let Ok(read) = std::fs::read_dir(cur) {
+                for entry in read.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        let new_rel = if rel.is_empty() { name.clone() } else { format!("{}/{}", rel, name) };
+                        walk(&entry.path(), &new_rel, segs, out);
+                    }
+                }
+            }
+            return;
+        }
+        if let Ok(read) = std::fs::read_dir(cur) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if glob_match(seg, &name) {
+                    let new_rel = if rel.is_empty() { name.clone() } else { format!("{}/{}", rel, name) };
+                    if rest.is_empty() {
+                        out.push(new_rel);
+                    } else if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        walk(&entry.path(), &new_rel, rest, out);
+                    }
+                }
+            }
+        }
+    }
+    walk(std::path::Path::new(start_dir), "", &segs, out);
+}
+
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = name.chars().collect();
+    fn rec(p: &[char], t: &[char]) -> bool {
+        if p.is_empty() { return t.is_empty(); }
+        match p[0] {
+            '*' => {
+                // Match zero or more chars within the segment.
+                if rec(&p[1..], t) { return true; }
+                if !t.is_empty() && rec(p, &t[1..]) { return true; }
+                false
+            }
+            '?' => !t.is_empty() && rec(&p[1..], &t[1..]),
+            c => !t.is_empty() && t[0] == c && rec(&p[1..], &t[1..]),
+        }
+    }
+    rec(&pat, &txt)
 }
 
 // Ω.5.P33.E1: recursive copy helper for fs.cpSync.

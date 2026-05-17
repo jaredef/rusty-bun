@@ -105,6 +105,15 @@ pub struct Runtime {
     /// Key: source-module URL. Value: list of (cell, binding-kind,
     /// optional-named-binding-name) tuples to update at drain time.
     pub pending_live_bindings: HashMap<String, Vec<crate::module::DeferredImportBinding>>,
+    /// Tier-Ω.5.P34.E1.fd-table: host-side file-descriptor registry for
+    /// node:fs ops that take an integer fd (openSync, closeSync,
+    /// fsync/fdatasync/futimes/ftruncate, writeSync, readSync, etc.).
+    /// Keyed by the fd integer the engine hands back to JS (starting at
+    /// 3 to skip stdin/stdout/stderr). Insertion: openSync. Removal:
+    /// closeSync. Lives on Runtime so it survives across native callbacks
+    /// without per-call construction.
+    pub fd_table: HashMap<i32, std::fs::File>,
+    pub next_fd: i32,
 }
 
 impl Runtime {
@@ -131,6 +140,8 @@ impl Runtime {
             regexp_prototype: None,
             gen_yields_stack: Vec::new(),
             pending_live_bindings: HashMap::new(),
+            fd_table: HashMap::new(),
+            next_fd: 3,
         }
     }
 

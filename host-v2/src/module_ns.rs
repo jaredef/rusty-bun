@@ -1,10 +1,17 @@
-//! Ω.5.P16.E2.ns-default-synth — HostFinalizeModuleNamespace closure for
-//! Doc 717 Tuple A/B.
+//! Ω.5.P18.E1.ns-default-synth-narrow — HostFinalizeModuleNamespace closure.
 //!
-//! Tuple A: ESM module exports named bindings but no `default`. Synthesize
-//! `default` whose value is the namespace object itself. Matches the de-facto
-//! shape used by `import x from "lodash/foo"`-style CJS-shimmed packages
-//! whose default-import callers expect the whole namespace.
+//! Earlier Ω.5.P16.E2 added Tuple A (synthesize `default = namespace` when
+//! the module had named exports but no default) for compatibility with
+//! `import x from "lodash/foo"` patterns. Per Doc 721 Step 4 against the
+//! Ω.5.P17 residual, Tuple A causes a 237-package III.a keyCount-Δ+1 cluster
+//! versus Bun, which does NOT synthesize default on ESM-with-named-exports.
+//! CJS-shimmed packages route through `evaluate_cjs_module` instead and
+//! never reach this hook, so Tuple A's stated rationale doesn't apply here.
+//!
+//! Tuple A is now restricted to the empty-namespace case: a module that
+//! exports nothing at all gets `default = namespace` as a fallback so
+//! default-import callers receive a stable empty handle. Modules with at
+//! least one named export are left untouched, matching Bun.
 //!
 //! Tuple B: ESM module exports only `default` and the default value is an
 //! object. Synthesize one named export per own enumerable string key of the
@@ -26,13 +33,14 @@ pub fn install(rt: &mut Runtime) {
             (has, dv, other)
         };
 
-        if !has_default {
-            // Tuple A: default = namespace itself.
+        if !has_default && named_count == 0 {
+            // Tuple A (narrow): module exports nothing — install default as
+            // a fallback handle pointing at the empty namespace.
             rt.object_set(ns, "default".to_string(), Value::Object(ns));
             return Ok(());
         }
 
-        if named_count == 0 {
+        if has_default && named_count == 0 {
             // Tuple B: spread default's own enumerable string keys.
             if let Value::Object(def_id) = default_value {
                 let pairs: Vec<(String, Value)> = rt.obj(def_id).properties

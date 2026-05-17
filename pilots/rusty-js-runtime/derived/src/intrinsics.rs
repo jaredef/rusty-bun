@@ -1783,13 +1783,20 @@ impl Runtime {
                 _ => Err(RuntimeError::TypeError("BigInt.prototype.valueOf: this is not a BigInt".into())),
             }
         });
-        register_method(self, bi_proto, "toString", |rt, _args| {
-            match rt.current_this() {
-                Value::BigInt(b) => Ok(Value::String(std::rc::Rc::new(b.to_decimal()))),
-                _ => Err(RuntimeError::TypeError("BigInt.prototype.toString: this is not a BigInt".into())),
-            }
+        register_method(self, bi_proto, "toString", |rt, args| {
+            let b = match rt.current_this() {
+                Value::BigInt(b) => b,
+                _ => return Err(RuntimeError::TypeError("BigInt.prototype.toString: this is not a BigInt".into())),
+            };
+            let radix = match args.first() {
+                Some(Value::Number(n)) if (2.0..=36.0).contains(n) => *n as u32,
+                Some(Value::Undefined) | None => 10,
+                _ => return Err(RuntimeError::TypeError("BigInt.prototype.toString radix out of range".into())),
+            };
+            Ok(Value::String(std::rc::Rc::new(b.to_radix(radix))))
         });
         self.object_set(bi_id, "prototype".into(), Value::Object(bi_proto));
+        self.bigint_prototype = Some(bi_proto);
         self.globals.insert("BigInt".into(), Value::Object(bi_id));
         // Boolean ctor with prototype.valueOf.
         let bool_obj = make_native("Boolean", |_rt, args| {

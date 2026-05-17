@@ -85,6 +85,7 @@ pub struct Runtime {
     pub promise_prototype: Option<rusty_js_gc::ObjectId>,
     pub string_prototype: Option<rusty_js_gc::ObjectId>,
     pub number_prototype: Option<rusty_js_gc::ObjectId>,
+    pub bigint_prototype: Option<rusty_js_gc::ObjectId>,
     /// Tier-Ω.5.i: %RegExp.prototype% — installed alongside other
     /// intrinsic prototypes; alloc_object auto-wires RegExp objects.
     pub regexp_prototype: Option<rusty_js_gc::ObjectId>,
@@ -116,6 +117,7 @@ impl Runtime {
             promise_prototype: None,
             string_prototype: None,
             number_prototype: None,
+            bigint_prototype: None,
             regexp_prototype: None,
             gen_yields_stack: Vec::new(),
         }
@@ -616,12 +618,22 @@ impl Runtime {
                     frame.push(Value::Number(n));
                 }
                 Op::Inc => {
-                    let v = to_number(&frame.pop()?);
-                    frame.push(Value::Number(v + 1.0));
+                    let raw = frame.pop()?;
+                    if let Value::BigInt(b) = &raw {
+                        frame.push(Value::BigInt(Rc::new(b.add(&crate::bigint::JsBigInt::one()))));
+                    } else {
+                        let v = to_number(&raw);
+                        frame.push(Value::Number(v + 1.0));
+                    }
                 }
                 Op::Dec => {
-                    let v = to_number(&frame.pop()?);
-                    frame.push(Value::Number(v - 1.0));
+                    let raw = frame.pop()?;
+                    if let Value::BigInt(b) = &raw {
+                        frame.push(Value::BigInt(Rc::new(b.sub(&crate::bigint::JsBigInt::one()))));
+                    } else {
+                        let v = to_number(&raw);
+                        frame.push(Value::Number(v - 1.0));
+                    }
                 }
 
                 // ─── Comparison / equality ───
@@ -663,33 +675,69 @@ impl Runtime {
                 // sign extension). bn.js's 26-bit limb arithmetic depended
                 // on these being correct for big intermediate values.
                 Op::BitAnd => {
-                    let r = to_number(&frame.pop()?) as i64 as i32;
-                    let l = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((l & r) as f64));
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        frame.push(Value::BigInt(Rc::new(a.bit_and(b))));
+                    } else {
+                        let r = to_number(&rv) as i64 as i32;
+                        let l = to_number(&lv) as i64 as i32;
+                        frame.push(Value::Number((l & r) as f64));
+                    }
                 }
                 Op::BitOr => {
-                    let r = to_number(&frame.pop()?) as i64 as i32;
-                    let l = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((l | r) as f64));
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        frame.push(Value::BigInt(Rc::new(a.bit_or(b))));
+                    } else {
+                        let r = to_number(&rv) as i64 as i32;
+                        let l = to_number(&lv) as i64 as i32;
+                        frame.push(Value::Number((l | r) as f64));
+                    }
                 }
                 Op::BitXor => {
-                    let r = to_number(&frame.pop()?) as i64 as i32;
-                    let l = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((l ^ r) as f64));
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        frame.push(Value::BigInt(Rc::new(a.bit_xor(b))));
+                    } else {
+                        let r = to_number(&rv) as i64 as i32;
+                        let l = to_number(&lv) as i64 as i32;
+                        frame.push(Value::Number((l ^ r) as f64));
+                    }
                 }
                 Op::BitNot => {
-                    let v = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((!v) as f64));
+                    let v = frame.pop()?;
+                    if let Value::BigInt(b) = &v {
+                        frame.push(Value::BigInt(Rc::new(b.bit_not())));
+                    } else {
+                        let n = to_number(&v) as i64 as i32;
+                        frame.push(Value::Number((!n) as f64));
+                    }
                 }
                 Op::Shl => {
-                    let r = (to_number(&frame.pop()?) as i64 as i32 as u32) & 0x1F;
-                    let l = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((l.wrapping_shl(r)) as f64));
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        match a.shl(b) {
+                            Some(p) => frame.push(Value::BigInt(Rc::new(p))),
+                            None => return Err(RuntimeError::TypeError("BigInt << invalid shift".into())),
+                        }
+                    } else {
+                        let r = (to_number(&rv) as i64 as i32 as u32) & 0x1F;
+                        let l = to_number(&lv) as i64 as i32;
+                        frame.push(Value::Number((l.wrapping_shl(r)) as f64));
+                    }
                 }
                 Op::Shr => {
-                    let r = (to_number(&frame.pop()?) as i64 as i32 as u32) & 0x1F;
-                    let l = to_number(&frame.pop()?) as i64 as i32;
-                    frame.push(Value::Number((l >> r) as f64));
+                    let rv = frame.pop()?; let lv = frame.pop()?;
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        match a.shr(b) {
+                            Some(p) => frame.push(Value::BigInt(Rc::new(p))),
+                            None => return Err(RuntimeError::TypeError("BigInt >> invalid shift".into())),
+                        }
+                    } else {
+                        let r = (to_number(&rv) as i64 as i32 as u32) & 0x1F;
+                        let l = to_number(&lv) as i64 as i32;
+                        frame.push(Value::Number((l >> r) as f64));
+                    }
                 }
                 Op::UShr => {
                     // Tier-Ω.5.JJJJJJJJ: spec-correct ToUint32 per ECMA §7.1.7.
@@ -869,6 +917,11 @@ impl Runtime {
                         }
                         Value::Number(_) => {
                             if let Some(proto) = self.number_prototype {
+                                self.object_get(proto, &key)
+                            } else { Value::Undefined }
+                        }
+                        Value::BigInt(_) => {
+                            if let Some(proto) = self.bigint_prototype {
                                 self.object_get(proto, &key)
                             } else { Value::Undefined }
                         }

@@ -612,7 +612,20 @@ impl<'src> Parser<'src> {
                 Ok(Expr::BoolLiteral { value: false, span })
             }
             TokenKind::Number(value, _) => { self.bump()?; Ok(Expr::NumberLiteral { value, span }) }
-            TokenKind::BigInt(digits, _) => { self.bump()?; Ok(Expr::BigIntLiteral { digits, span }) }
+            TokenKind::BigInt(digits, kind) => {
+                self.bump()?;
+                // Tier-Ω.5.CCCCCCCC follow-up: preserve radix prefix in the
+                // AST so the runtime's StringToBigInt parses radix-prefixed
+                // literals (`0xFFn` etc.) correctly per ECMA §7.1.13.
+                use crate::token::NumberKind;
+                let normalized = match kind {
+                    NumberKind::Hex => format!("0x{}", digits),
+                    NumberKind::Octal | NumberKind::LegacyOctal => format!("0o{}", digits),
+                    NumberKind::Binary => format!("0b{}", digits),
+                    NumberKind::Decimal => digits,
+                };
+                Ok(Expr::BigIntLiteral { digits: normalized, span })
+            }
             TokenKind::String(value) => { self.bump()?; Ok(Expr::StringLiteral { value, span }) }
             TokenKind::Template { cooked, part, .. } => {
                 use crate::token::TemplatePart;

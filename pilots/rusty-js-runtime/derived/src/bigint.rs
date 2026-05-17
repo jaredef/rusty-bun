@@ -130,6 +130,25 @@ impl JsBigInt {
         out
     }
 
+    /// Format in the given radix (2..=36). Lowercase digits per ECMA §6.1.6.2.13.
+    pub fn to_radix(&self, radix: u32) -> String {
+        if radix == 10 { return self.to_decimal(); }
+        assert!((2..=36).contains(&radix));
+        if self.is_zero() { return "0".into(); }
+        let mut limbs = self.mag.clone();
+        let mut digits: Vec<u32> = Vec::new();
+        while !mag_is_zero(&limbs) {
+            let rem = mag_div_small(&mut limbs, radix);
+            digits.push(rem);
+        }
+        let mut out = String::new();
+        if self.sign < 0 { out.push('-'); }
+        for d in digits.iter().rev() {
+            out.push(std::char::from_digit(*d, radix).unwrap());
+        }
+        out
+    }
+
     pub fn to_f64(&self) -> f64 {
         if self.is_zero() { return 0.0; }
         // Combine high limbs into an f64 (lossy for large magnitudes;
@@ -242,6 +261,135 @@ impl JsBigInt {
         Some((q, r))
     }
 
+    /// Left-shift by n bits. n must be non-negative and fit u32.
+    /// Returns None otherwise (caller throws RangeError).
+    pub fn shl(&self, n: &JsBigInt) -> Option<JsBigInt> {
+        if n.is_negative() { return None; }
+        if self.is_zero() { return Some(JsBigInt::zero()); }
+        let nf = n.to_f64();
+        if !nf.is_finite() || nf > (1u64 << 20) as f64 { return None; }
+        let bits = nf as u32;
+        let limb_shift = (bits / 32) as usize;
+        let bit_shift = bits % 32;
+        let mut out = vec![0u32; self.mag.len() + limb_shift + 1];
+        for (i, &l) in self.mag.iter().enumerate() {
+            let lo = (l as u64) << bit_shift;
+            out[i + limb_shift] |= (lo & 0xffff_ffff) as u32;
+            out[i + limb_shift + 1] |= (lo >> 32) as u32;
+        }
+        mag_trim(&mut out);
+        Some(JsBigInt { sign: self.sign, mag: out })
+    }
+
+    /// Arithmetic right-shift by n bits. For positive BigInts this is
+    /// divmod-by-2^n quotient; for negative it floors toward -infinity
+    /// per JS semantics. n must be non-negative and reasonable.
+    pub fn shr(&self, n: &JsBigInt) -> Option<JsBigInt> {
+        if n.is_negative() { return None; }
+        if self.is_zero() { return Some(JsBigInt::zero()); }
+        let nf = n.to_f64();
+        if !nf.is_finite() { return None; }
+        let bits = nf as u64;
+        if bits >= (self.mag.len() as u64) * 32 + 1 {
+            return Some(if self.sign < 0 { JsBigInt::neg_one() } else { JsBigInt::zero() });
+        }
+        let bits = bits as u32;
+        let limb_shift = (bits / 32) as usize;
+        let bit_shift = bits % 32;
+        let mut out: Vec<u32> = self.mag.iter().skip(limb_shift).copied().collect();
+        if bit_shift > 0 {
+            for i in 0..out.len() {
+                let lo = out[i] >> bit_shift;
+                let hi = out.get(i + 1).copied().unwrap_or(0) << (32 - bit_shift);
+                out[i] = lo | hi;
+            }
+        }
+        mag_trim(&mut out);
+        if out.is_empty() || mag_is_zero(&out) {
+            return Some(if self.sign < 0 { JsBigInt::neg_one() } else { JsBigInt::zero() });
+        }
+        // Floor toward -infinity for negative: if any low bit was truncated,
+        // subtract 1 from the magnitude (which is +1 in floor terms).
+        if self.sign < 0 {
+            let mut truncated = false;
+            for i in 0..limb_shift {
+                if self.mag.get(i).copied().unwrap_or(0) != 0 { truncated = true; break; }
+            }
+            if !truncated && bit_shift > 0 && limb_shift < self.mag.len() {
+                if self.mag[limb_shift] & ((1u32 << bit_shift) - 1) != 0 { truncated = true; }
+            }
+            if truncated {
+                let bumped = mag_add(&out, &[1]);
+                let mut b = bumped;
+                mag_trim(&mut b);
+                return Some(JsBigInt { sign: -1, mag: b });
+            }
+        }
+        Some(JsBigInt { sign: self.sign, mag: out })
+    }
+
+    /// Bitwise AND. For two non-negative operands, simple per-limb AND.
+    /// For sign-mixed or both-negative, uses two's-complement semantics
+    /// per ECMA §6.1.6.2.20 BigInt::bitwiseAND.
+    pub fn bit_and(&self, other: &JsBigInt) -> JsBigInt {
+        if !self.is_negative() && !other.is_negative() {
+            let n = self.mag.len().min(other.mag.len());
+            let mut out: Vec<u32> = (0..n).map(|i| self.mag[i] & other.mag[i]).collect();
+            mag_trim(&mut out);
+            let sign = if mag_is_zero(&out) { 0 } else { 1 };
+            return JsBigInt { sign, mag: if out.is_empty() { vec![0] } else { out } };
+        }
+        // Negative path: convert both to two's-complement over max-width,
+        // AND, then convert back. Pilot scope: small magnitudes (snowflakes
+        // are non-negative); broader negative-AND handling deferred.
+        let max_limbs = self.mag.len().max(other.mag.len()) + 1;
+        let a = mag_to_twos(self, max_limbs);
+        let b = mag_to_twos(other, max_limbs);
+        let r: Vec<u32> = (0..max_limbs).map(|i| a[i] & b[i]).collect();
+        twos_to_bigint(r)
+    }
+
+    pub fn bit_or(&self, other: &JsBigInt) -> JsBigInt {
+        if !self.is_negative() && !other.is_negative() {
+            let n = self.mag.len().max(other.mag.len());
+            let mut out: Vec<u32> = (0..n).map(|i|
+                self.mag.get(i).copied().unwrap_or(0)
+                    | other.mag.get(i).copied().unwrap_or(0)
+            ).collect();
+            mag_trim(&mut out);
+            let sign = if mag_is_zero(&out) { 0 } else { 1 };
+            return JsBigInt { sign, mag: out };
+        }
+        let max_limbs = self.mag.len().max(other.mag.len()) + 1;
+        let a = mag_to_twos(self, max_limbs);
+        let b = mag_to_twos(other, max_limbs);
+        let r: Vec<u32> = (0..max_limbs).map(|i| a[i] | b[i]).collect();
+        twos_to_bigint(r)
+    }
+
+    pub fn bit_xor(&self, other: &JsBigInt) -> JsBigInt {
+        if !self.is_negative() && !other.is_negative() {
+            let n = self.mag.len().max(other.mag.len());
+            let mut out: Vec<u32> = (0..n).map(|i|
+                self.mag.get(i).copied().unwrap_or(0)
+                    ^ other.mag.get(i).copied().unwrap_or(0)
+            ).collect();
+            mag_trim(&mut out);
+            let sign = if mag_is_zero(&out) { 0 } else { 1 };
+            return JsBigInt { sign, mag: out };
+        }
+        let max_limbs = self.mag.len().max(other.mag.len()) + 1;
+        let a = mag_to_twos(self, max_limbs);
+        let b = mag_to_twos(other, max_limbs);
+        let r: Vec<u32> = (0..max_limbs).map(|i| a[i] ^ b[i]).collect();
+        twos_to_bigint(r)
+    }
+
+    pub fn bit_not(&self) -> JsBigInt {
+        // ~x = -(x + 1) per two's-complement.
+        self.add(&JsBigInt::one()).neg()
+    }
+
     /// Non-negative integer exponent power. Returns None if exponent
     /// is negative (ECMA RangeError for BigInt ** -1).
     pub fn pow(&self, exp: &JsBigInt) -> Option<JsBigInt> {
@@ -264,6 +412,54 @@ impl JsBigInt {
         }
         Some(result)
     }
+}
+
+/// Two's-complement representation of a signed bigint in `n_limbs` u32 limbs.
+fn mag_to_twos(x: &JsBigInt, n_limbs: usize) -> Vec<u32> {
+    let mut out = vec![0u32; n_limbs];
+    if x.sign >= 0 {
+        for (i, &l) in x.mag.iter().enumerate() {
+            if i < n_limbs { out[i] = l; }
+        }
+    } else {
+        // -x: invert magnitude bits and add 1
+        for i in 0..n_limbs {
+            out[i] = !x.mag.get(i).copied().unwrap_or(0);
+        }
+        let mut carry: u64 = 1;
+        for limb in out.iter_mut() {
+            let s = (*limb as u64) + carry;
+            *limb = (s & 0xffff_ffff) as u32;
+            carry = s >> 32;
+            if carry == 0 { break; }
+        }
+    }
+    out
+}
+
+fn twos_to_bigint(r: Vec<u32>) -> JsBigInt {
+    // High-bit of top limb determines sign.
+    let top = *r.last().unwrap_or(&0);
+    let is_neg = (top & 0x8000_0000) != 0;
+    if !is_neg {
+        let mut m = r;
+        mag_trim(&mut m);
+        let sign = if mag_is_zero(&m) { 0 } else { 1 };
+        return JsBigInt { sign, mag: m };
+    }
+    // Negate two's-complement: invert + 1
+    let n = r.len();
+    let mut inv = vec![0u32; n];
+    for i in 0..n { inv[i] = !r[i]; }
+    let mut carry: u64 = 1;
+    for limb in inv.iter_mut() {
+        let s = (*limb as u64) + carry;
+        *limb = (s & 0xffff_ffff) as u32;
+        carry = s >> 32;
+        if carry == 0 { break; }
+    }
+    mag_trim(&mut inv);
+    JsBigInt { sign: -1, mag: inv }
 }
 
 // ───────────────────── Unsigned magnitude helpers ────────────────

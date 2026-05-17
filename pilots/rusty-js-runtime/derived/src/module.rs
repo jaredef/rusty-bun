@@ -245,7 +245,7 @@ pub enum HostHook {
     /// namespace + the AST. The hook can mutate the namespace to add
     /// synthetic bindings (Tuple A: default = namespace; Tuple B: named
     /// exports synthesized from default's own properties).
-    FinalizeModuleNamespace(Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef) -> Result<(), RuntimeError>>),
+    FinalizeModuleNamespace(Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef, &str) -> Result<(), RuntimeError>>),
     /// Called at run_to_completion's idle phase (phase 3) when both
     /// microtask and macrotask queues are empty. The host should:
     /// (a) consult its OS I/O multiplexer (mio Poll, libuv, io_uring,
@@ -270,7 +270,7 @@ pub enum HostHook {
 
 #[derive(Default)]
 pub struct HostHooks {
-    pub finalize_namespace: Option<Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef) -> Result<(), RuntimeError>>>,
+    pub finalize_namespace: Option<Box<dyn Fn(&mut Runtime, &AstModule, ObjectRef, &str) -> Result<(), RuntimeError>>>,
     pub poll_io: Option<Box<dyn Fn(&mut Runtime) -> Result<bool, RuntimeError>>>,
     pub resolve_builtin: Option<Box<dyn Fn(&mut Runtime, &str) -> Result<Option<ObjectRef>, RuntimeError>>>,
 }
@@ -959,7 +959,7 @@ impl Runtime {
 
         // Call HostFinalizeModuleNamespace if installed.
         if let Some(hook) = self.host_hooks.finalize_namespace.take() {
-            hook(self, &ast_rc, namespace)?;
+            hook(self, &ast_rc, namespace, url)?;
             self.host_hooks.finalize_namespace = Some(hook);
         }
 

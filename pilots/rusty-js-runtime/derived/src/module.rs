@@ -1283,14 +1283,20 @@ impl Runtime {
                 // Examples observed:
                 //   ajv (sets `exports.default = Ajv`): bun keyCount=11
                 //   lodash (no default): bun keyCount=312 incl name/...
-                let has_user_default = self.obj(*oid).properties.contains_key("default");
-                let is_callable = matches!(
+                // Ω.5.P41.E1.cjs-ns-esmodule-trigger: the strip-fn-intrinsics
+                // decision keys on `__esModule === true`, not on user-default.
+                // Empirical Bun behavior verified across ajv/debug/pino/
+                // @databases/sql: all four set default=self, but only ajv
+                // (which also flags __esModule) gets stripped to 11 keys.
+                // The other three keep name/length/prototype because their
+                // source didn't mark itself as a TS/Babel-compiled ES module.
+                let esmod_v = self.object_get(*oid, "__esModule");
+                let strip_fn_intrinsics = matches!(esmod_v, Value::Boolean(true)) && matches!(
                     self.obj(*oid).internal_kind,
                     crate::value::InternalKind::Function(_)
                     | crate::value::InternalKind::Closure(_)
                     | crate::value::InternalKind::BoundFunction(_)
                 );
-                let strip_fn_intrinsics = is_callable && has_user_default;
                 // Ω.5.P40.E1.cjs-ns-getter-dispatch: collect (key, value,
                 // optional-getter) triples. Pre-fix the namespace builder
                 // copied descriptor.value directly, so accessor properties

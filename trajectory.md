@@ -1465,3 +1465,90 @@ The post-P17 measurement also satisfies Doc 721 Step 4 with a wide |U-(A+F)| del
 Read seed.md §A8.23 first (the new operative discipline) and §VII.A's 2026-05-17 status entry. Read this anchor for the substrate moves and the post-P17 residual distribution. The canonical measurement entry is now `./host/tools/parity-measure-v2.sh host/tools/parity-top500.txt <out>.json`; the rquickjs baseline is at `host/tools/parity-results-top500-postext7.json` (75.2% @ 1026) and the host-v2 post-P17 baseline at `host/tools/parity-results-top500-postext7-v2.json` (40.1% @ 1026).
 
 First action on resume: confirm the post-P18.E1 sweep landed and capture the headline + delta in a follow-up commit; then walk the next III.a sub-cluster per Doc 721 Step 2. Pin-Art tag count this engagement: ~134 (EXT 7) + 3 (this anchor) = ~137 substrate moves committed.
+
+
+## RESUME VECTOR EXTENSION 9 — 2026-05-17 day (P18→P48 burst lands; host-v2 70.7% closes within 4.5 pp of rquickjs ceiling)
+
+### Headline
+
+post-P48 canonical reading: **70.7% (726 / 1026)** on parity-top500 host-v2. Captured in `host/tools/parity-results-top500-postp48.json`. Pass 726 / Fail 248 / Skip 52.
+
+Delta vs the EXT 8 baseline (post-P17, 40.1% / 412): **+30.6 percentage points, +314 raw packages** across ~30 substrate moves committed between P18 and P48 (plus a small non-tagged 3-gate cleanup at the burst tail). host/ (rquickjs ceiling) remains 75.2% on the same basket; host-v2 is now **within 4.5 pp** of that ceiling, where it stood 35.1 pp below at EXT 8.
+
+### Substrate moves this burst (P18 → P48)
+
+The burst was dispatched across one work session 2026-05-17 morning (07:58 → 11:04 PDT). Tag sequence and one-line theme per commit:
+
+- **P18.E1 → P38.E1** — sequence not enumerated here in detail; landed property-descriptor + CJS-namespace-construction + ESM-detection + module-resolution gap-fills, mostly III.a kc-Δ and III.a typeof-diff cluster work. The detailed per-tag walks live in the git log between 9c2032fd and the EXT 8 anchor.
+- **P38.E1.cjs-ns-filter-conditional** — restore name/length/prototype on CJS-fn modules without user-default.
+- **P39.E1.buffer-surface** — install missing node:buffer entries (File / INSPECT_MAX_BYTES / SlowBuffer / kMaxLength / kStringMaxLength / isAscii / isUtf8 / atob / btoa / resolveObjectURL / transcode / default).
+- **P40.E1.cjs-ns-getter-dispatch** — invoke accessor getters when building CJS-as-ESM namespace.
+- **P41.E1.cjs-ns-esmodule-trigger** — key strip-fn-intrinsics on `__esModule`, not user-default.
+- **P42.E1.esm-sniff-minified** — detect ESM markers in minified single-line bodies.
+- **P43.E1.tuple-a-by-url-shape** — synthesize default for `.js`-via-module-field ESM modules.
+- **P44.E1.transcode-undef + integer-index Object.keys ordering** — joint close on two small cuts.
+- **P45.E1 + E2** — dynamic-import caller-URL plumbing + Node-shaped `process.version`.
+- **P46.E1.napi-v1** — Node-API substrate: dlopen + 59 N-API entry points. (Largest single move in the burst.)
+- **P46.E2.napi-async** — threadsafe_function + async_work + event-loop integration.
+- **P46.E3.napi-keepalive** — tsfn ref/unref + async_work hold the event loop alive.
+- **P46.E4 + P47.E1** — napi promises/buffer/wrap + real createRequire (closes nx-style native-loader chains).
+- **P48.E1.exports-wildcard-extension-strip** — resolve `pkg/bin/name.js` against `./bin/*` patterns.
+- **non-tagged cleanup (9c2032fd)** — `host-v2: close errno + process EventEmitter + node:path subpath gates`. Three small gap-fills bundled rather than individually tagged.
+
+### Post-P48 residual probe-shape distribution
+
+Across the 234 deduped FAILs (the JSON has duplicate entries from the SKIP-format path; the 248 in the summary is the authoritative raw count):
+
+| count | share | shape | exemplars |
+|-------|-------|-------|-----------|
+| 124 | 53.0% | III.c dyn-import (`TypeError: dynamic import…`) | arktype, temporal-polyfill, got, axios |
+| 55 | 23.5% | III.a OK/OK keyCount Δ±1-2 | superstruct (52→51), fflate (49→50), node-fetch (16→14) |
+| 17 | 7.3% | III.a OK/OK same keyCount, typeof diff (Symbol→string) | zod $brand pattern persists |
+| 14 | 6.0% | III.a OK/OK keyCount Δ 3-10 | accessor-descriptor / getter-setter gaps |
+| 10 | 4.3% | III.a OK/OK keyCount Δ>10 | enquirer (43→65) |
+| 9 | 3.8% | other / both-ERR mismatch | |
+| 4 | 1.7% | bun ERR / rb OK (false-pass candidate per Doc 726 §VI.5) | |
+| 1 | 0.4% | III.a same-kc value-diff | |
+
+Per-cluster deltas vs EXT 8 (P17) residual:
+
+- **III.a kc±1-2:** 237 → 55 (−182). The single biggest absorption — the cluster the EXT 8 anchor named as the top-of-queue priority. P18→P44 cleanup material absorbed most of it.
+- **III.a kc±3-10:** 77 → 14 (−63). Closed by accessor-descriptor handling moves (P40/P41 area).
+- **III.a kc>10:** 19 → 10 (−9). Smaller absorption; enquirer-style getter-setter expansion still present.
+- **III.a typeof-diff:** 22 → 17 (−5). Essentially stable — the zod $brand pattern Symbol→string is unfixed; predicted at EXT 8 as a separate move and remains unaddressed.
+- **III.c dyn-import:** 144 → 124 (−20). Partially eaten by P45 caller-URL plumbing; the deeper sub-dep eval/parse chain is intact.
+
+### Doc 726 / Doc 727 alignment
+
+Per Doc 727 §V the substrate-tracking falsifier is the residual probe-shape distribution staying inside the predicted band. Predictions made at EXT 8 against the P17 residual:
+
+- III.a kc±1-2 predicted U ≈ 150-200 for the analogous BBBBBBBB-style joint close at host-v2. Realized A ≈ 182 raw closures across P18→P44. **Inside band.**
+- III.c dyn-import predicted "multiple smaller cuts inside the dep-load chain"; P45 took one cut and produced ~20 closures. **Inside band qualitatively** — small per-cut yield with many cuts remaining is exactly the predicted shape.
+- III.a typeof-diff (zod $brand) predicted as a separate move not yet dispatched. Residual unchanged. **Trivially confirms the prediction:** if you don't dispatch a move against a cluster, the cluster doesn't shrink.
+
+The migration-cost gap (rquickjs − rusty-js) at this basket reads **4.5 pp**. At EXT 6 (post-BBBBBBBB on host/, no host-v2 reading) the gap could only be estimated indirectly. At EXT 8 it was 35.1 pp. The narrowing-by-2× in single sessions twice running is a basin-internal signal that the rusty-js engine is now in a mature substrate-tracking regime — the remaining gap is enumerable cuts, not architectural deficit.
+
+### Operational notes this anchor
+
+- Pi shutdown at the burst tail. Last commit 11:04:32 PDT; user reports voltage spike on USB-mounted T7 (the bus-powered SSD's 5V-rail loaded under the burst's heavy `bun add` activity). User-side amelioration: a wrapper for the parity scripts now caps the load further than the existing `nice/ionice` + sleep throttle. Nothing was lost from the shutdown — git tree was clean before the crash; the only casualty was the post-burst sweep that hadn't been launched yet.
+- The "shutdown forensic" turn this session: commit timestamps + file mtimes pinned the shutdown to the gap between the 11:04:32 cleanup commit and a planned `parity-measure-v2.sh` launch. The 8-hour gap between shutdown and resume meant the post-P48 sweep was the first action this session.
+- 2 commits ahead of origin at session start (`9c2032fd` cleanup + `526efe57` gitignore). To push this anchor.
+
+### Seed update this anchor
+
+No new §A8.* discipline this anchor. §A8.23 from EXT 8 (host-v2 + rusty-js-runtime as primary substrate target) is operative and was the directive that produced the P18→P48 burst.
+
+### Open scope at this anchor
+
+1. **III.c dyn-import sub-dep eval/parse chain (124 pkgs)** — now the dominant residual. Each `load_module` failure inside a dyn-import target is a Doc 721 Step 2 walk in its own right; the chain isn't one cut but many. Candidate: dispatch one chain per session and re-measure.
+2. **III.a kc±1-2 residual (55 pkgs)** — the long tail of the EXT 8 priority cluster. After P18→P44 ate the bulk, what remains is likely the harder cases (Symbol-keyed leakage into Object.keys per ECMA §7.3.21, plus a few accessor-descriptor edge cases). Candidate tag: Ω.5.P49.E1.object-keys-symbol-filter.
+3. **III.a typeof-diff for branded Symbol keys (17 pkgs)** — zod's `$brand:"string"` should be `"symbol"`. Same prediction as EXT 8, still queued. Likely smaller surface than item 1.
+4. **III.a kc>10 accessor-descriptor expansion (10 pkgs)** — enquirer 43→65 shape. Namespace export path leaking more keys than Bun does; could be over-exposure rather than under-exposure (false-pass candidate territory).
+5. **The 8 "rb OK / bun ERR" entries** — Doc 726 §VI.5 false-pass candidates. If real, these are rusty-js spec-correctness exceeding Bun's behavior. Worth a per-package read.
+6. **Substantive engine investments still deferred (unchanged from EXT 8):** real Proxy interception, real fetch + Request/Response, Unicode regex properties, AST-level predictor v2 per Doc 724 §XI.d, full BigInt arithmetic parity (host-v2 has the intrinsics but not all arithmetic paths Ω.5.CCCCCCCC closed for rquickjs).
+
+### Resume protocol
+
+Read seed.md §A8.23 first. Read this anchor (EXT 9) for the post-P48 state. Canonical reading: `host/tools/parity-results-top500-postp48.json` (70.7%, 726/1026). Ceiling reference: `host/tools/parity-results-top500-postext7.json` (75.2%, host/). Migration-cost gap: 4.5 pp.
+
+First action on resume: pick one cluster from the open-scope list, walk it per Doc 721 Step 2, dispatch a tagged move, run `parity-measure-v2.sh` for the next reading. Pin-Art tag count this engagement: ~137 (EXT 8) + ~30 (this burst) = ~167 substrate moves committed.

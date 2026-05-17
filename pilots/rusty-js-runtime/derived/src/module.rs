@@ -1247,10 +1247,23 @@ impl Runtime {
             r.status = ModuleStatus::Evaluated;
         }
 
+        // Ω.5.P50.E3 (C2 constraint): detect module.exports reassignment.
+        // Node CJS-ESM interop synthesizes `default = module.exports` only
+        // when the user's CJS code assigned `module.exports = X` (replaced
+        // the auto-allocated exports object). For the bare `exports.foo =
+        // bar` pattern (no reassignment), Bun's namespace doesn't include
+        // a synthetic default — fflate, abortcontroller-polyfill, shellwords,
+        // ts-toolbelt, micromark-util-types all fit this shape. Compare
+        // object identity: final_exports IS initial_exports → no reassign.
+        let exports_reassigned = match (&final_exports, &initial_exports) {
+            (Value::Object(a), Value::Object(b)) => a != b,
+            _ => true,
+        };
+
         // Refresh the placeholder namespace view in place so any cached
         // ObjectRef (e.g. an ESM importer holding `ns`) sees the final
         // exports shape.
-        self.populate_cjs_namespace_view(placeholder, &final_exports);
+        self.populate_cjs_namespace_view(placeholder, &final_exports, exports_reassigned);
 
         Ok(placeholder)
     }
@@ -1260,7 +1273,12 @@ impl Runtime {
     /// "./lib.cjs"` to satisfy the spec namespace shape.
     pub fn cjs_namespace_view(&mut self, exports: Value) -> ObjectRef {
         let ns = self.alloc_object(Object::new_module_namespace());
-        self.populate_cjs_namespace_view(ns, &exports);
+        // Callers using this entry don't have the initial-exports reference
+        // (the module already evaluated). Conservative default: assume
+        // module.exports was reassigned → synthesize default. Real CJS
+        // load goes through populate_cjs_namespace_view with the reassign
+        // bit computed correctly.
+        self.populate_cjs_namespace_view(ns, &exports, true);
         ns
     }
 
@@ -1310,7 +1328,7 @@ impl Runtime {
         Ok(ns)
     }
 
-    fn populate_cjs_namespace_view(&mut self, ns: ObjectRef, exports: &Value) {
+    fn populate_cjs_namespace_view(&mut self, ns: ObjectRef, exports: &Value, exports_reassigned: bool) {
         match exports {
             Value::Object(oid) => {
                 // Mirror own properties + a `default` pointer at the
@@ -1378,10 +1396,26 @@ impl Runtime {
                 for (k, v) in pairs {
                     self.object_set(ns, k, v);
                 }
-                self.object_set(ns, "default".to_string(), exports.clone());
+                // Ω.5.P50.E3 (C2): synthesize default = module.exports when
+                // the source did anything to it — reassigned the binding, set
+                // an explicit `default`, or populated with `exports.X = Y`.
+                // The narrow exclusion: an unwritten initial-exports object
+                // (UMD-side-effect polyfills like abortcontroller-polyfill;
+                // empty types-only stubs like ts-toolbelt). Bun's namespace
+                // matches: those packages have no default; populated CJS
+                // exports do.
+                let exports_has_user_keys = self
+                    .obj(*oid)
+                    .properties
+                    .iter()
+                    .any(|(k, _)| k.as_str() != "__esModule");
+                let has_explicit_default = !matches!(self.object_get(*oid, "default"), Value::Undefined);
+                if exports_reassigned || exports_has_user_keys || has_explicit_default {
+                    self.object_set(ns, "default".to_string(), exports.clone());
+                }
             }
             _ => {
-                // Non-object exports: only `default` is meaningful.
+                // Non-object exports: only `default` is meaningful, always synth.
                 self.object_set(ns, "default".to_string(), exports.clone());
             }
         }

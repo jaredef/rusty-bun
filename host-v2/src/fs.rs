@@ -401,6 +401,78 @@ pub fn install(rt: &mut Runtime) {
     rt.object_set(realpath_sync, "native".into(), Value::Object(realpath_sync_native));
     rt.object_set(fs, "realpathSync".into(), Value::Object(realpath_sync));
 
+    // Ω.5.P32.E1.fs-surface-stubs: bulk-install the Node fs surface
+    // entries fs-extra and similar re-export-everything packages probe
+    // at module-init. Surfaced via Ω.5.P24.E1 probe walking fs-extra
+    // (bun keyCount=152, ours=91; 61 missing). Stubs: methods throw
+    // ENOSYS-shaped errors when called; classes are constructor stubs;
+    // constants get numeric values per Node's fs.constants. Module
+    // shape now matches Bun at the typeof + Object.keys level.
+    //
+    // POSIX fs.constants (mode bits + access modes) per Node docs.
+    let constants = new_object(rt);
+    let consts: &[(&str, f64)] = &[
+        ("F_OK", 0.0), ("R_OK", 4.0), ("W_OK", 2.0), ("X_OK", 1.0),
+        ("O_RDONLY", 0.0), ("O_WRONLY", 1.0), ("O_RDWR", 2.0),
+        ("O_CREAT", 64.0), ("O_EXCL", 128.0), ("O_NOCTTY", 256.0),
+        ("O_TRUNC", 512.0), ("O_APPEND", 1024.0), ("O_DIRECTORY", 65536.0),
+        ("O_NOFOLLOW", 131072.0), ("O_SYNC", 1052672.0), ("O_DSYNC", 4096.0),
+        ("S_IFMT", 61440.0), ("S_IFREG", 32768.0), ("S_IFDIR", 16384.0),
+        ("S_IFCHR", 8192.0), ("S_IFBLK", 24576.0), ("S_IFIFO", 4096.0),
+        ("S_IFLNK", 40960.0), ("S_IFSOCK", 49152.0),
+        ("S_IRWXU", 448.0), ("S_IRUSR", 256.0), ("S_IWUSR", 128.0), ("S_IXUSR", 64.0),
+        ("S_IRWXG", 56.0), ("S_IRGRP", 32.0), ("S_IWGRP", 16.0), ("S_IXGRP", 8.0),
+        ("S_IRWXO", 7.0), ("S_IROTH", 4.0), ("S_IWOTH", 2.0), ("S_IXOTH", 1.0),
+        ("COPYFILE_EXCL", 1.0), ("COPYFILE_FICLONE", 2.0), ("COPYFILE_FICLONE_FORCE", 4.0),
+        ("UV_FS_O_FILEMAP", 0.0), ("UV_DIRENT_UNKNOWN", 0.0),
+        ("UV_DIRENT_FILE", 1.0), ("UV_DIRENT_DIR", 2.0), ("UV_DIRENT_LINK", 3.0),
+    ];
+    for (name, val) in consts {
+        rt.object_set(constants, (*name).into(), Value::Number(*val));
+    }
+    rt.object_set(fs, "constants".into(), Value::Object(constants));
+    // Top-level access-mode shortcuts (also live on fs directly per Node).
+    rt.object_set(fs, "F_OK".into(), Value::Number(0.0));
+    rt.object_set(fs, "R_OK".into(), Value::Number(4.0));
+    rt.object_set(fs, "W_OK".into(), Value::Number(2.0));
+    rt.object_set(fs, "X_OK".into(), Value::Number(1.0));
+
+    // Stub method surface: anything called throws an ENOSYS-shaped
+    // TypeError. Keeps Object.keys parity with Bun without claiming
+    // implementations we don't have.
+    for name in [
+        "access", "accessSync", "appendFile", "appendFileSync", "copyFile",
+        "copyFileSync", "cp", "cpSync", "fdatasync", "fdatasyncSync", "fsync",
+        "fsyncSync", "ftruncate", "ftruncateSync", "futimes", "futimesSync",
+        "glob", "globSync", "link", "linkSync", "lutimes", "lutimesSync",
+        "mkdir", "mkdtemp", "mkdtempSync", "openAsBlob", "openSync", "opendir",
+        "opendirSync", "readlink", "readlinkSync", "readvSync", "rename",
+        "renameSync", "rm", "rmSync", "rmdir", "rmdirSync", "statfs",
+        "statfsSync", "symlink", "symlinkSync", "truncate", "truncateSync",
+        "unlink", "unwatchFile", "utimes", "utimesSync", "watch", "watchFile",
+        "writeSync", "writevSync",
+    ] {
+        let n = name.to_string();
+        let stub = make_callable(rt, name, move |_rt, _args| {
+            Err(RuntimeError::TypeError(format!("fs.{}: not implemented (Tier-Ω.5.P32.E1 stub)", n)))
+        });
+        rt.object_set(fs, name.into(), Value::Object(stub));
+    }
+    // Class stubs (Stats, Dirent, Dir) — constructor-throw shape.
+    for cls in ["Stats", "Dirent", "Dir"] {
+        let n = cls.to_string();
+        let stub = make_callable(rt, cls, move |_rt, _args| {
+            Err(RuntimeError::TypeError(format!("fs.{}: class not constructable (Tier-Ω.5.P32.E1 stub)", n)))
+        });
+        rt.object_set(fs, cls.into(), Value::Object(stub));
+    }
+    // Internal helper Node exposes for legacy compat.
+    let to_unix = make_callable(rt, "_toUnixTimestamp", |_rt, args| {
+        let v = args.first().cloned().unwrap_or(Value::Number(0.0));
+        Ok(v)
+    });
+    rt.object_set(fs, "_toUnixTimestamp".into(), Value::Object(to_unix));
+
     rt.globals.insert("fs".into(), Value::Object(fs));
 }
 

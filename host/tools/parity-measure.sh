@@ -59,7 +59,7 @@ for pkg in $PKGS; do
     (
       cd "$d"
       [ -f package.json ] || echo '{"name":"sb","version":"0.0.0"}' > package.json
-      nice -n 19 ionice -c3 bun add "$pkg" > /dev/null 2>&1
+      timeout 120s nice -n 19 ionice -c3 bun add "$pkg" > /dev/null 2>&1
     )
     sleep 0.5
   fi
@@ -79,11 +79,18 @@ for pkg in $PKGS; do
   # package by bare specifier; resolution walks up from the probe's
   # directory.
   cp "$TOOLS/parity-probe.mjs" "$d/parity-probe.mjs"
-  bun_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" nice -n 19 ionice -c3 bun parity-probe.mjs 2>/dev/null)
-  rb_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" nice -n 19 ionice -c3 "$RB" parity-probe.mjs 2>/dev/null)
+  bun_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" timeout 30s nice -n 19 ionice -c3 bun parity-probe.mjs 2>/dev/null)
+  bun_rc=$?
+  rb_out=$(cd "$d" && PARITY_PROBE_PKG="$pkg" timeout 30s nice -n 19 ionice -c3 "$RB" parity-probe.mjs 2>/dev/null)
+  rb_rc=$?
 
-  # Compare
-  if [ "$bun_out" = "$rb_out" ] && [ -n "$bun_out" ]; then
+  # Compare. exit 124 = timeout — record separately so hang-prone packages
+  # (top-level IPC/network side effects) don't get conflated with semantic FAILs.
+  if [ $bun_rc -eq 124 ] || [ $rb_rc -eq 124 ]; then
+    status="TIMEOUT"
+    n_fail=$((n_fail + 1))
+    mismatch_log+=("$pkg: TIMEOUT bun_rc=$bun_rc rb_rc=$rb_rc")
+  elif [ "$bun_out" = "$rb_out" ] && [ -n "$bun_out" ]; then
     status="PASS"
     n_pass=$((n_pass + 1))
   else

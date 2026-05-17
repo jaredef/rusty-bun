@@ -487,6 +487,53 @@ pub fn install_buffer(rt: &mut Runtime) {
     rt.object_set(ns, "constants".into(), Value::Object(buf_constants));
     rt.object_set(buf_ctor, "constants".into(), Value::Object(buf_constants));
     register_method(rt, ns, "Blob", stub("buffer", "Blob"));
+    // Ω.5.P39.E1.buffer-surface: missing node:buffer surface entries
+    // surfaced by exemplar walk on the `buffer` package. Bun keyCount=15,
+    // ours=3; adds File class stub, INSPECT_MAX_BYTES default, SlowBuffer
+    // (legacy Node 0.x alias for Buffer), kMaxLength / kStringMaxLength
+    // (top-level mirrors of constants.MAX_LENGTH / MAX_STRING_LENGTH),
+    // isAscii / isUtf8 (encoding probes), atob/btoa (re-exports of the
+    // global functions), resolveObjectURL + transcode stubs, plus the
+    // CJS-style `default` re-export.
+    register_method(rt, ns, "File", stub("buffer", "File"));
+    register_method(rt, ns, "SlowBuffer", |rt, args| {
+        // Legacy alias for Buffer.alloc(n). Delegate.
+        let buf_global = match rt.globals.get("Buffer") { Some(Value::Object(id)) => *id, _ => return Ok(Value::Undefined) };
+        let from = rt.object_get(buf_global, "alloc");
+        rt.call_function(from, Value::Undefined, args.to_vec())
+    });
+    rt.object_set(ns, "INSPECT_MAX_BYTES".into(), Value::Number(50.0));
+    rt.object_set(ns, "kMaxLength".into(), Value::Number((4.0_f64).powi(30) * 2.0));
+    rt.object_set(ns, "kStringMaxLength".into(), Value::Number(1073741799.0));
+    register_method(rt, ns, "isAscii", |_rt, args| {
+        // Accepts a Buffer / TypedArray / DataView. Check each byte < 128.
+        let id = match args.first() { Some(Value::Object(id)) => *id, _ => return Ok(Value::Boolean(true)) };
+        let len = match _rt.object_get(id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        for i in 0..len {
+            if let Value::Number(n) = _rt.object_get(id, &i.to_string()) {
+                if (n as u32) >= 0x80 { return Ok(Value::Boolean(false)); }
+            }
+        }
+        Ok(Value::Boolean(true))
+    });
+    register_method(rt, ns, "isUtf8", |_rt, args| {
+        // Accepts a Buffer / TypedArray / DataView. Check via std::str::from_utf8.
+        let id = match args.first() { Some(Value::Object(id)) => *id, _ => return Ok(Value::Boolean(true)) };
+        let len = match _rt.object_get(id, "length") { Value::Number(n) => n as usize, _ => 0 };
+        let mut bytes = Vec::with_capacity(len);
+        for i in 0..len {
+            if let Value::Number(n) = _rt.object_get(id, &i.to_string()) {
+                bytes.push(n as u8);
+            } else { return Ok(Value::Boolean(false)); }
+        }
+        Ok(Value::Boolean(std::str::from_utf8(&bytes).is_ok()))
+    });
+    // atob / btoa — re-exports of the globals (so `import {atob} from 'node:buffer'` works).
+    if let Some(v) = rt.globals.get("atob").cloned() { rt.object_set(ns, "atob".into(), v); }
+    if let Some(v) = rt.globals.get("btoa").cloned() { rt.object_set(ns, "btoa".into(), v); }
+    register_method(rt, ns, "resolveObjectURL", stub("buffer", "resolveObjectURL"));
+    register_method(rt, ns, "transcode", stub("buffer", "transcode"));
+    rt.object_set(ns, "default".into(), Value::Object(ns));
     rt.globals.insert("buffer".into(), Value::Object(ns));
     // Tier-Ω.5.oo: Buffer also visible as a top-level global per Node
     // convention. csv-parse + csv-parser + many others call

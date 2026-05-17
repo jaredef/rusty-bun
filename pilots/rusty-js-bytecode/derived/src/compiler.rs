@@ -1876,12 +1876,22 @@ impl Compiler {
                         }
                     }
                 }
-                self.compile_expr(argument)?;
-                // Tier-Ω.5.x: `await expr` lowers to just `expr` — the
-                // suspension semantics are dropped in v1.
+                // Tier-Ω.5.P17.E1: `await expr` lowers to `__await(expr)` —
+                // a global intrinsic that synchronously unwraps already-settled
+                // Promises (resolved → value; rejected → throw) and passes
+                // non-Promises through. Full suspension semantics still
+                // deferred; sufficient for the parity probe and any other
+                // await-of-settled-Promise pattern.
                 if matches!(operator, UnaryOp::Await) {
+                    let nm = self.constants.intern(Constant::String("__await".into()));
+                    encode_op(&mut self.bytecode, Op::LoadGlobal);
+                    encode_u16(&mut self.bytecode, nm);
+                    self.compile_expr(argument)?;
+                    encode_op(&mut self.bytecode, Op::Call);
+                    encode_u8(&mut self.bytecode, 1);
                     return Ok(());
                 }
+                self.compile_expr(argument)?;
                 let op = match operator {
                     UnaryOp::Plus => Op::Pos,
                     UnaryOp::Minus => Op::Neg,

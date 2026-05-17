@@ -35,26 +35,104 @@ impl Runtime {
         self.install_test_record();
         self.install_destructure_helpers();
         self.install_spread_helpers();
-        // Tier-Ω.5.CCCCCCC: dynamic import() returns a rejected Promise
-        // (was: threw synchronously per Tier-Ω.5.ff). Real consumers wire
-        // `.catch(() => fallback)` around dynamic-import expressions for
-        // optional-feature polyfills (lru-cache/diagnostics-channel.js does
-        // `import('node:diagnostics_channel').then(...).catch(() => {})`);
-        // a sync throw bypasses .catch. A rejected promise threads through
-        // the chain correctly and the .catch handler runs.
-        // Module resolution semantics (succeeding for known specifiers)
-        // remain deferred — for now any dynamic import rejects.
+        // Tier-Ω.5.P17.E2: dynamic import() walks the real module resolver
+        // (was: returned an unconditionally-rejected Promise per Ω.5.CCCCCCC
+        // stub). Routes through the same `resolve_module_full` + `load_module`
+        // / `resolve_builtin_namespace` pipeline that static `import` uses.
+        // The loader is synchronous, so the returned Promise is synchronously
+        // settled — fulfilled with the module namespace on success, rejected
+        // with a string reason on failure. The compiler's `__await` lowering
+        // (Ω.5.P17.E1) then unwraps it on the same tick.
+        //
+        // Parent URL is synthetic — bare and `node:` specifiers don't consult
+        // it. Relative specifiers in dynamic imports would need real caller-
+        // frame plumbing; deferred until a consumer needs it.
         register_global_fn(self, "__dynamic_import", |rt, args| {
             let spec = args.first()
                 .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
                 .unwrap_or_else(|| "<unknown>".into());
             let p = crate::promise::new_promise(rt);
-            let reason = Value::String(Rc::new(format!(
-                "TypeError: dynamic import('{}') not yet supported (Tier-Ω.5.CCCCCCC stub — now rejects rather than throws)",
-                spec
-            )));
-            crate::promise::reject_promise(rt, p, reason);
+            // Use the process cwd as the parent dir so bare specifiers walk
+            // node_modules from the script's working directory (matches Bun's
+            // dynamic-import resolution origin when no caller-frame URL is
+            // plumbed). Real callsite URL plumbing is deferred.
+            let cwd = std::env::current_dir()
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "/".to_string());
+            let parent = format!("file://{}/__dynamic_import__", cwd);
+            let resolved = match rt.resolve_module_full(&parent, &spec, crate::module::ModuleKind::ESM) {
+                Ok(r) => r,
+                Err(e) => {
+                    let reason = Value::String(Rc::new(format!(
+                        "TypeError: dynamic import('{}') resolve failed: {:?}",
+                        spec, e
+                    )));
+                    crate::promise::reject_promise(rt, p, reason);
+                    return Ok(Value::Object(p));
+                }
+            };
+            let ns_result = if resolved.starts_with("node:") {
+                rt.resolve_builtin_namespace(&resolved)
+            } else {
+                rt.load_module(&resolved)
+            };
+            match ns_result {
+                Ok(ns) => crate::promise::resolve_promise(rt, p, Value::Object(ns)),
+                Err(e) => {
+                    let reason = Value::String(Rc::new(format!(
+                        "TypeError: dynamic import('{}') load failed: {:?}",
+                        spec, e
+                    )));
+                    crate::promise::reject_promise(rt, p, reason);
+                }
+            }
             Ok(Value::Object(p))
+        });
+        // Tier-Ω.5.P17.E1: synchronous unwrap of already-settled Promises.
+        // Paired with the compiler's `await` → `__await(expr)` lowering.
+        // - Non-Promise value: returned unchanged (spec: `await v` on a
+        //   non-thenable yields v).
+        // - Fulfilled Promise: returns the resolved value; clears any
+        //   pending-unhandled bookkeeping.
+        // - Rejected Promise: throws the rejection reason via RuntimeError::
+        //   Thrown so the surrounding try/catch behaves as ECMA-262 requires.
+        // - Pending Promise: errors with TypeError. Real suspension would
+        //   require frame park/resume; deferred. The dynamic-import path
+        //   synthesizes synchronously-settled Promises, so the probe never
+        //   hits this branch.
+        register_global_fn(self, "__await", |rt, args| {
+            let v = args.first().cloned().unwrap_or(Value::Undefined);
+            let id = match v {
+                Value::Object(id) => id,
+                other => return Ok(other),
+            };
+            let (is_promise, status, value) = {
+                let o = rt.obj(id);
+                if let InternalKind::Promise(ps) = &o.internal_kind {
+                    (true, ps.status, ps.value.clone())
+                } else {
+                    (false, crate::value::PromiseStatus::Pending, Value::Undefined)
+                }
+            };
+            if !is_promise {
+                return Ok(Value::Object(id));
+            }
+            match status {
+                crate::value::PromiseStatus::Fulfilled => {
+                    rt.pending_unhandled.remove(&id);
+                    Ok(value)
+                }
+                crate::value::PromiseStatus::Rejected => {
+                    rt.pending_unhandled.remove(&id);
+                    Err(RuntimeError::Thrown(value))
+                }
+                crate::value::PromiseStatus::Pending => {
+                    Err(RuntimeError::TypeError(
+                        "await on pending Promise not yet supported (Tier-Ω.5.P17.E1 stub)".into()
+                    ))
+                }
+            }
         });
         self.install_global_this();
     }

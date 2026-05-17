@@ -575,7 +575,7 @@ impl Runtime {
     /// Tier-Ω.5.b: dispatch a `node:*` specifier to the host's
     /// ResolveBuiltinModule hook. Caches the resulting namespace under
     /// the specifier so repeated imports yield identical handles.
-    fn resolve_builtin_namespace(&mut self, specifier: &str) -> Result<ObjectRef, RuntimeError> {
+    pub fn resolve_builtin_namespace(&mut self, specifier: &str) -> Result<ObjectRef, RuntimeError> {
         if let Some(rec) = self.modules.get(specifier) {
             if let Some(ns) = rec.borrow().namespace { return Ok(ns); }
         }

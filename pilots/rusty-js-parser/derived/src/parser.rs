@@ -11,7 +11,7 @@
 //! augmentation hooks).
 
 use crate::lexer::{Lexer, LexerGoal, LexError};
-use crate::token::{Punct, Token, TokenKind};
+use crate::token::{Punct, TemplatePart, Token, TokenKind};
 use rusty_js_ast::{
     BindingIdentifier, DefaultExportBody, ExportDeclaration, ExportEntry,
     ExportImportName, ExportSpecifier, ImportAttribute, ImportDeclaration,
@@ -968,7 +968,8 @@ fn token_completes_expression(t: &TokenKind) -> bool {
             | "get" | "set"
         ),
         TokenKind::Number(..) | TokenKind::String(..) | TokenKind::BigInt(..) => true,
-        TokenKind::Template { .. } | TokenKind::Regex { .. } => true,
+        TokenKind::Template { part, .. } => matches!(part, TemplatePart::NoSubstitution | TemplatePart::Tail),
+        TokenKind::Regex { .. } => true,
         TokenKind::PrivateIdent(_) => true,
         TokenKind::Punct(p) => matches!(p,
             Punct::RParen | Punct::RBracket | Punct::RBrace

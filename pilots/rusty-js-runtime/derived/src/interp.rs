@@ -126,6 +126,12 @@ pub struct Runtime {
     /// resolved URL. Separate from `modules` so we don't need to
     /// synthesize a CompiledModule for native libraries.
     pub napi_module_cache: HashMap<String, Value>,
+    /// Ω.5.P46.E2.napi-async: thread-safe inbox for jobs enqueued from
+    /// worker threads (async_work completion callbacks, threadsafe-
+    /// function call requests). PollIo drains this between fs ops and
+    /// the watcher poll. Boxed closures so each job carries its own
+    /// captured state.
+    pub napi_main_inbox: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<crate::napi::NapiMainJob>>>,
     /// Tier-Ω.5.P45.E1.module-url-stack: stack of URLs of modules
     /// currently being evaluated. evaluate_module / evaluate_cjs_module
     /// push the URL before running the frame and pop after. `__dynamic_import`
@@ -169,6 +175,7 @@ impl Runtime {
             napi_libs: Vec::new(),
             napi_envs: Vec::new(),
             napi_module_cache: HashMap::new(),
+            napi_main_inbox: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
         }
     }
 

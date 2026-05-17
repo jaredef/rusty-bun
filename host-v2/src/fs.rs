@@ -214,6 +214,13 @@ pub fn install_poll_io(rt: &mut Runtime) {
     rt.install_host_hook(HostHook::PollIo(Box::new(|rt: &mut Runtime| {
         let entries = drain_pending();
         if entries.is_empty() {
+            // Ω.5.P46.E2.napi-async: drain napi main-thread inbox first
+            // (async_work completion + threadsafe-function call requests).
+            // Those run synchronously here on the main thread.
+            let drained = rusty_js_runtime::napi::drain_main_inbox(rt);
+            if drained > 0 {
+                return Ok(true);
+            }
             // Ω.5.P37.E1.timers: fire due timers (setTimeout/setInterval/
             // setImmediate) as macrotasks before falling through to watcher
             // polling. Both share the same phase-3 idle slot.
@@ -234,15 +241,14 @@ pub fn install_poll_io(rt: &mut Runtime) {
             // doesn't spin between polls.
             let has_w = has_watchers();
             let has_t = crate::timer::has_pending();
+            let has_napi = rusty_js_runtime::napi::has_pending(rt);
             if has_w {
                 if poll_fire_watchers(rt) {
                     return Ok(true);
                 }
             }
-            if has_w || has_t {
+            if has_w || has_t || has_napi {
                 sleep_until_next_event();
-                // Sleep is bounded; we report progress so PollIo loops
-                // back to re-check timers + watchers after the sleep.
                 return Ok(true);
             }
             return Ok(false);

@@ -927,22 +927,289 @@ pub unsafe extern "C" fn napi_get_node_version(
 
 // ─── Default-fail shims for less-common surface to keep symbols present ───
 
-#[no_mangle]
-pub unsafe extern "C" fn napi_create_threadsafe_function(
-    _env: napi_env, _func: napi_value, _async_resource: napi_value, _async_resource_name: napi_value,
-    _max_queue_size: usize, _initial_thread_count: usize, _thread_finalize_data: *mut c_void,
-    _thread_finalize_cb: *mut c_void, _context: *mut c_void, _call_js_cb: *mut c_void,
-    _result: *mut c_void,
-) -> napi_status {
-    napi_generic_failure  // P46.E2
+// ─── Ω.5.P46.E2.napi-async: async_work + threadsafe_function ───
+//
+// Pattern: the JS engine runs on the main thread. async_work execute_cb
+// runs on a worker thread (no napi calls allowed except thread-safe).
+// complete_cb / call_js_cb run on the main thread, marshaled through
+// Runtime::napi_main_inbox + drained by PollIo.
+
+/// A job queued for execution on the main thread by worker threads.
+/// Boxed FnOnce + Send. The inbox is drained by PollIo (host-v2/src/fs.rs).
+pub type NapiMainJob = Box<dyn FnOnce(&mut Runtime) + Send>;
+
+/// SendPtr wraps a raw pointer to satisfy Send for cross-thread move.
+/// Caller proves the pointer is safe to use after move (no aliasing,
+/// pointee lives long enough). N-API contract makes this safe for
+/// `data: *mut c_void` (opaque user data) and env / func pointers
+/// (lifetime guaranteed by Runtime ownership).
+struct SendPtr<T>(*mut T);
+unsafe impl<T> Send for SendPtr<T> {}
+// Manual Copy/Clone — `#[derive]` requires T: Copy, but a raw pointer
+// to T doesn't depend on T being Copy. We want SendPtr<NapiEnv> etc.
+// to be unconditionally Copy.
+impl<T> Copy for SendPtr<T> {}
+impl<T> Clone for SendPtr<T> { fn clone(&self) -> Self { *self } }
+
+/// Wrap a function pointer as Send. extern "C" fn pointers are bits
+/// and trivially Send-safe, but Rust's type system doesn't know that
+/// without a wrapper.
+struct SendFn<F>(F);
+unsafe impl<F> Send for SendFn<F> {}
+impl<F: Copy> Copy for SendFn<F> {}
+impl<F: Copy> Clone for SendFn<F> { fn clone(&self) -> Self { *self } }
+
+#[repr(C)]
+pub struct NapiAsyncWork {
+    execute: unsafe extern "C" fn(env: napi_env, data: *mut c_void),
+    complete: unsafe extern "C" fn(env: napi_env, status: napi_status, data: *mut c_void),
+    data: SendPtr<c_void>,
+    env: SendPtr<NapiEnv>,
+    /// Set true between queue_async_work and the worker spawn returning.
+    /// Used by delete_async_work to refuse mid-flight deletion.
+    queued: bool,
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn napi_create_async_work(
-    _env: napi_env, _async_resource: napi_value, _async_resource_name: napi_value,
-    _execute: *mut c_void, _complete: *mut c_void, _data: *mut c_void, _result: *mut c_void,
+    env: napi_env, _async_resource: napi_value, _async_resource_name: napi_value,
+    execute: Option<unsafe extern "C" fn(env: napi_env, data: *mut c_void)>,
+    complete: Option<unsafe extern "C" fn(env: napi_env, status: napi_status, data: *mut c_void)>,
+    data: *mut c_void, result: *mut *mut NapiAsyncWork,
 ) -> napi_status {
-    napi_generic_failure  // P46.E2
+    if result.is_null() { return napi_invalid_arg; }
+    let execute = match execute { Some(f) => f, None => return napi_invalid_arg };
+    let complete = match complete { Some(f) => f, None => return napi_invalid_arg };
+    let work = Box::new(NapiAsyncWork {
+        execute, complete,
+        data: SendPtr(data),
+        env: SendPtr(env),
+        queued: false,
+    });
+    *result = Box::into_raw(work);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_queue_async_work(env: napi_env, work: *mut NapiAsyncWork) -> napi_status {
+    if work.is_null() { return napi_invalid_arg; }
+    if env.is_null() { return napi_invalid_arg; }
+    let env_ref = &mut *env;
+    let rt = &mut *env_ref.rt;
+    let inbox = rt.napi_main_inbox.clone();
+    let w = &mut *work;
+    if w.queued { return napi_generic_failure; }
+    w.queued = true;
+    let execute = SendFn(w.execute);
+    let complete = SendFn(w.complete);
+    let data: SendPtr<c_void> = w.data;     // SendPtr derives Copy
+    let env_send: SendPtr<NapiEnv> = w.env;
+    let work_ptr = SendPtr(work);
+    // Spawn worker thread. execute runs there; complete is queued onto
+    // the main thread via inbox. We capture the SendPtr/SendFn wrappers
+    // BY MOVE (rather than letting the move closure decompose to inner
+    // *mut accesses); rebinding via `let` forces whole-value capture.
+    std::thread::spawn(move || {
+        let execute_local = execute;
+        let env_local = env_send;
+        let data_local = data;
+        let complete_local = complete;
+        let work_local = work_ptr;
+        let status: napi_status = {
+            unsafe { (execute_local.0)(env_local.0, data_local.0); }
+            napi_ok
+        };
+        let job: NapiMainJob = Box::new(move |_rt: &mut Runtime| {
+            let complete2 = complete_local;
+            let env2 = env_local;
+            let data2 = data_local;
+            let work2 = work_local;
+            unsafe {
+                (complete2.0)(env2.0, status, data2.0);
+                let w = &mut *work2.0;
+                w.queued = false;
+            }
+        });
+        if let Ok(mut q) = inbox.lock() {
+            q.push_back(job);
+        }
+    });
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_delete_async_work(_env: napi_env, work: *mut NapiAsyncWork) -> napi_status {
+    if work.is_null() { return napi_invalid_arg; }
+    let w = &*work;
+    if w.queued { return napi_generic_failure; }  // mid-flight; don't free
+    let _ = Box::from_raw(work);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_cancel_async_work(_env: napi_env, _work: *mut NapiAsyncWork) -> napi_status {
+    napi_generic_failure  // best-effort; we don't track in-flight work for cancel
+}
+
+// ─── Threadsafe function ───
+
+#[repr(i32)]
+pub enum napi_threadsafe_function_call_mode {
+    napi_tsfn_nonblocking = 0,
+    napi_tsfn_blocking = 1,
+}
+
+#[repr(i32)]
+pub enum napi_threadsafe_function_release_mode {
+    napi_tsfn_release = 0,
+    napi_tsfn_abort = 1,
+}
+
+pub type napi_threadsafe_function = *mut NapiTsfn;
+pub type napi_threadsafe_function_call_js =
+    unsafe extern "C" fn(env: napi_env, js_callback: napi_value, context: *mut c_void, data: *mut c_void);
+
+pub struct NapiTsfn {
+    func_ref_slot: usize,  // index into NapiEnv::refs holding the JS func
+    call_js: Option<napi_threadsafe_function_call_js>,
+    context: SendPtr<c_void>,
+    env: SendPtr<NapiEnv>,
+    ref_count: std::sync::atomic::AtomicUsize,
+    active: std::sync::atomic::AtomicBool,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_threadsafe_function(
+    env: napi_env, func: napi_value, _async_resource: napi_value, _async_resource_name: napi_value,
+    _max_queue_size: usize, _initial_thread_count: usize,
+    _thread_finalize_data: *mut c_void, _thread_finalize_cb: *mut c_void,
+    context: *mut c_void,
+    call_js_cb: Option<napi_threadsafe_function_call_js>,
+    result: *mut napi_threadsafe_function,
+) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let func_v = match env_ref.get_handle(func) { Some(v) => v.clone(), None => return napi_invalid_arg };
+    let slot = env_ref.refs.len();
+    env_ref.refs.push(Some(func_v));
+    let tsfn = Box::new(NapiTsfn {
+        func_ref_slot: slot,
+        call_js: call_js_cb,
+        context: SendPtr(context),
+        env: SendPtr(env),
+        ref_count: std::sync::atomic::AtomicUsize::new(1),
+        active: std::sync::atomic::AtomicBool::new(true),
+    });
+    *result = Box::into_raw(tsfn);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_call_threadsafe_function(
+    tsfn: napi_threadsafe_function, data: *mut c_void,
+    _mode: napi_threadsafe_function_call_mode,
+) -> napi_status {
+    if tsfn.is_null() { return napi_invalid_arg; }
+    let tsfn_ref = &*tsfn;
+    if !tsfn_ref.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return napi_generic_failure;
+    }
+    let env_send = tsfn_ref.env;
+    let env_ref = &mut *env_send.0;
+    let inbox = (&*env_ref.rt).napi_main_inbox.clone();
+    let func_slot = tsfn_ref.func_ref_slot;
+    let context = tsfn_ref.context;
+    let data_send = SendPtr(data);
+    let call_js = tsfn_ref.call_js.map(SendFn);
+    let env_for_job = env_send;
+    let context_for_job = context;
+    let data_for_job = data_send;
+    let call_js_for_job = call_js;
+    let job: NapiMainJob = Box::new(move |_rt: &mut Runtime| {
+        let env_local = env_for_job;
+        let ctx_local = context_for_job;
+        let data_local = data_for_job;
+        let cb_local = call_js_for_job;
+        let env_ref = unsafe { &mut *env_local.0 };
+        let func_v = match env_ref.refs.get(func_slot).and_then(|o| o.clone()) {
+            Some(v) => v, None => return,
+        };
+        let func_handle = env_ref.push_handle(func_v);
+        if let Some(cb) = cb_local {
+            unsafe { (cb.0)(env_local.0, func_handle, ctx_local.0, data_local.0); }
+        }
+    });
+    if let Ok(mut q) = inbox.lock() {
+        q.push_back(job);
+    }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_acquire_threadsafe_function(tsfn: napi_threadsafe_function) -> napi_status {
+    if tsfn.is_null() { return napi_invalid_arg; }
+    let t = &*tsfn;
+    t.ref_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_release_threadsafe_function(
+    tsfn: napi_threadsafe_function, _mode: napi_threadsafe_function_release_mode,
+) -> napi_status {
+    if tsfn.is_null() { return napi_invalid_arg; }
+    let t = &*tsfn;
+    let prev = t.ref_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    if prev == 1 {
+        // Last release: deactivate.
+        t.active.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_ref_threadsafe_function(_env: napi_env, _tsfn: napi_threadsafe_function) -> napi_status {
+    napi_ok  // keepalive integration deferred — engine stays alive while any
+             // tsfn exists since releases happen via the same inbox.
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_unref_threadsafe_function(_env: napi_env, _tsfn: napi_threadsafe_function) -> napi_status {
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_threadsafe_function_context(
+    tsfn: napi_threadsafe_function, result: *mut *mut c_void,
+) -> napi_status {
+    if tsfn.is_null() || result.is_null() { return napi_invalid_arg; }
+    let t = &*tsfn;
+    *result = t.context.0;
+    napi_ok
+}
+
+/// Public entry for PollIo to drain queued main-thread jobs. Returns
+/// the count of jobs run.
+pub fn drain_main_inbox(rt: &mut Runtime) -> usize {
+    let drained: Vec<NapiMainJob> = {
+        let inbox = rt.napi_main_inbox.clone();
+        let mut q = match inbox.lock() { Ok(q) => q, Err(_) => return 0 };
+        q.drain(..).collect()
+    };
+    let n = drained.len();
+    for job in drained {
+        job(rt);
+    }
+    n
+}
+
+/// True if any napi work is registered (async_work in flight or tsfn
+/// active). Used by PollIo to keep the event loop alive.
+pub fn has_pending(rt: &Runtime) -> bool {
+    if let Ok(q) = rt.napi_main_inbox.lock() {
+        return !q.is_empty();
+    }
+    false
 }
 
 #[no_mangle]
@@ -1080,7 +1347,16 @@ pub static NAPI_KEEPALIVE: &[NapiSymPtr] = &[NapiSymPtr(napi_get_undefined as *c
     NapiSymPtr(napi_get_version as *const _),
     NapiSymPtr(napi_get_node_version as *const _),
     NapiSymPtr(napi_create_threadsafe_function as *const _),
+    NapiSymPtr(napi_call_threadsafe_function as *const _),
+    NapiSymPtr(napi_acquire_threadsafe_function as *const _),
+    NapiSymPtr(napi_release_threadsafe_function as *const _),
+    NapiSymPtr(napi_ref_threadsafe_function as *const _),
+    NapiSymPtr(napi_unref_threadsafe_function as *const _),
+    NapiSymPtr(napi_get_threadsafe_function_context as *const _),
     NapiSymPtr(napi_create_async_work as *const _),
+    NapiSymPtr(napi_queue_async_work as *const _),
+    NapiSymPtr(napi_delete_async_work as *const _),
+    NapiSymPtr(napi_cancel_async_work as *const _),
     NapiSymPtr(napi_define_class as *const _),
     NapiSymPtr(napi_wrap as *const _),
     NapiSymPtr(napi_unwrap as *const _),

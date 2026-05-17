@@ -4075,23 +4075,32 @@ impl Compiler {
                     encode_op(&mut self.bytecode, Op::Pop);
                 }
                 ClassMember::StaticBlock { body, span: _b_span } => {
-                    // Tier-Ω.5.XXXXXXX: static initializer blocks per ECMA
-                    // 2022 (stage 4). `class C { static { init; } }` runs the
-                    // body once at class-evaluation time with `this` bound
-                    // to the class. v1 deviation: compile the statements
-                    // inline at class-init time without explicit `this`
-                    // rebinding — most static blocks reference the class
-                    // via its lexical name (which is in scope). intl-segmenter
-                    // / puppeteer-core / many modern packages hit this; full
-                    // this-rebinding queued.
-                    //
-                    // The member loop's invariant is empty operand stack
-                    // between members; statements should not net-push.
-                    // compile_stmt's expression-statement path emits Pop
-                    // so we don't drift. No save/restore needed.
-                    for s in body {
-                        self.compile_stmt(s)?;
-                    }
+                    // Ω.5.P49.E5: static initializer blocks per ECMA 2022.
+                    // Spec: body runs once at class-evaluation time with `this`
+                    // bound to the class constructor. Lower as an anonymous
+                    // 0-arg closure called with the ctor as receiver via
+                    // CallMethod; this routes the body's `this`-references
+                    // (e.g. playwright's `static { this.Events = {...} }`)
+                    // through the standard CallMethod receiver path.
+                    self.class_stack.push(ClassFrame {
+                        super_ctor_name: super_ctor_slot.map(|_| super_ctor_name.clone()),
+                        super_proto_name: super_ctor_slot.map(|_| super_proto_name.clone()),
+                        in_constructor: false,
+                        is_static: true,
+                    });
+                    let block_proto = self.compile_function_proto(None, false, false, &[], body)?;
+                    self.class_stack.pop();
+                    let captures = block_proto.upvalues.clone();
+                    let idx = self.constants.intern(Constant::Function(Box::new(block_proto)));
+                    // Stack layout for CallMethod: [receiver, method, ...args].
+                    encode_op(&mut self.bytecode, Op::LoadLocal);
+                    encode_u16(&mut self.bytecode, ctor_slot);
+                    encode_op(&mut self.bytecode, Op::MakeClosure);
+                    encode_u16(&mut self.bytecode, idx);
+                    emit_captures(&mut self.bytecode, &captures);
+                    encode_op(&mut self.bytecode, Op::CallMethod);
+                    encode_u8(&mut self.bytecode, 0);
+                    encode_op(&mut self.bytecode, Op::Pop);
                 }
             }
         }

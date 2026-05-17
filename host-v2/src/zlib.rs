@@ -28,5 +28,25 @@ pub fn install(rt: &mut Runtime) {
     ] {
         register_method(rt, z, name, stub(name));
     }
+    // Constructor placeholders for `util.inherits(X, zlib.Inflate)` and
+    // `class X extends zlib.Inflate {}` patterns (pngjs Inflate, etc.).
+    // Each is an Object with a `prototype` carrying a `constructor` backref;
+    // util.inherits reads `super_.prototype` and that's the shape it needs.
+    // Call/construct semantics are not wired — consumer code that actually
+    // instantiates these will fail downstream, but module-load substrate
+    // (the import-and-shape parity layer) only needs the slots to exist.
+    for name in &[
+        "Zlib",
+        "Deflate", "Inflate",
+        "DeflateRaw", "InflateRaw",
+        "Gzip", "Gunzip",
+        "BrotliCompress", "BrotliDecompress",
+    ] {
+        let ctor = new_object(rt);
+        let proto = new_object(rt);
+        rt.object_set(ctor, "prototype".into(), Value::Object(proto));
+        rt.object_set(proto, "constructor".into(), Value::Object(ctor));
+        rt.object_set(z, name.to_string(), Value::Object(ctor));
+    }
     rt.globals.insert("zlib".into(), Value::Object(z));
 }

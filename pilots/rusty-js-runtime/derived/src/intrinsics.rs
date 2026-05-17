@@ -1959,6 +1959,48 @@ impl Runtime {
         self.object_set(usp_proto, "constructor".into(), Value::Object(usp_id));
         self.globals.insert("URLSearchParams".into(), Value::Object(usp_id));
 
+        // Ω.5.P49.E3: Fetch-API constructor stubs as callable globals.
+        // playwright-core's coreBundle aliases the global `Request` as
+        // `GlobalRequest` and writes `class APIRequest extends GlobalRequest`,
+        // which compiles down to a read of `GlobalRequest.prototype`. Each
+        // stub below is a callable global with a `.prototype` carrying a
+        // `.constructor` backref — sufficient for the [[Prototype]] wiring
+        // at class-init, and for util.inherits(X, Request) which reads
+        // super_.prototype. Real implementations are deferred.
+        for name in &[
+            "Request", "Response", "Headers", "FormData", "Blob", "File",
+            // WHATWG Streams — playwright extends TransformStream.
+            "ReadableStream", "WritableStream", "TransformStream",
+            "ReadableStreamDefaultReader", "ReadableStreamBYOBReader",
+            "ReadableStreamDefaultController", "ReadableByteStreamController",
+            "WritableStreamDefaultWriter", "WritableStreamDefaultController",
+            "TransformStreamDefaultController",
+            "ByteLengthQueuingStrategy", "CountQueuingStrategy",
+            "TextEncoderStream", "TextDecoderStream",
+        ] {
+            let nm = *name;
+            let ctor = make_native(name, move |_rt, _args| {
+                Err(RuntimeError::TypeError(format!(
+                    "{nm} constructor not yet implemented (Tier-Ω.5.P49.E3 stub)"
+                )))
+            });
+            let id = self.alloc_object(ctor);
+            let proto = self.alloc_object(Object::new_ordinary());
+            self.object_set(id, "prototype".into(), Value::Object(proto));
+            self.object_set(proto, "constructor".into(), Value::Object(id));
+            self.globals.insert((*name).into(), Value::Object(id));
+        }
+        // fetch() as a callable global that returns a rejected-Promise-shaped
+        // value (host-v2 lacks real Promise scheduling for fetch; the call
+        // surface exists for module-init read-shape probes).
+        let fetch_obj = make_native("fetch", |_rt, _args| {
+            Err(RuntimeError::TypeError(
+                "fetch not yet implemented (Tier-Ω.5.P49.E3 stub)".into(),
+            ))
+        });
+        let fetch_id = self.alloc_object(fetch_obj);
+        self.globals.insert("fetch".into(), Value::Object(fetch_id));
+
         // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
         // Tier-Ω.5.CCCCCCCC: backed by real JsBigInt arithmetic substrate.
         let bi_obj = make_native("BigInt", |_rt, args| {

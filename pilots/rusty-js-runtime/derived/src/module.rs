@@ -1732,16 +1732,37 @@ fn resolve_within_package(
                 }
             }
             // Wildcard pattern match: find any key with a single '*'.
-            for (k, v) in map.iter() {
-                if let Some(star_pos) = k.find('*') {
-                    let prefix = &k[..star_pos];
-                    let suffix = &k[star_pos + 1..];
-                    if subpath.starts_with(prefix) && subpath.ends_with(suffix)
-                        && subpath.len() >= prefix.len() + suffix.len()
-                    {
-                        let captured = &subpath[prefix.len()..subpath.len() - suffix.len()];
-                        if let Some(rel) = resolve_exports_target(v, captured, importer_kind) {
-                            return Some(pkg_dir.join(strip_dot_slash(&rel)));
+            //
+            // Ω.5.P48.E1.exports-wildcard-extension-strip: also try the
+            // wildcard match with common script extensions stripped from
+            // the subpath, in priority order. Packages like nx export
+            // `./bin/*` → `./dist/bin/*.js`; consumer code uses
+            // `require('nx/bin/nx.js')`. Naive substitution would yield
+            // `./dist/bin/nx.js.js` (the .js is in both the spec and
+            // the target). Bun's resolver strips before matching so
+            // `nx` is the capture, producing `./dist/bin/nx.js`.
+            let attempts: Vec<&str> = if subpath.ends_with(".js") {
+                vec![subpath, &subpath[..subpath.len() - 3]]
+            } else if subpath.ends_with(".mjs") || subpath.ends_with(".cjs") {
+                vec![subpath, &subpath[..subpath.len() - 4]]
+            } else {
+                vec![subpath]
+            };
+            for attempt in attempts {
+                for (k, v) in map.iter() {
+                    if let Some(star_pos) = k.find('*') {
+                        let prefix = &k[..star_pos];
+                        let suffix = &k[star_pos + 1..];
+                        if attempt.starts_with(prefix) && attempt.ends_with(suffix)
+                            && attempt.len() >= prefix.len() + suffix.len()
+                        {
+                            let captured = &attempt[prefix.len()..attempt.len() - suffix.len()];
+                            if let Some(rel) = resolve_exports_target(v, captured, importer_kind) {
+                                let p = pkg_dir.join(strip_dot_slash(&rel));
+                                if p.is_file() {
+                                    return Some(p);
+                                }
+                            }
                         }
                     }
                 }

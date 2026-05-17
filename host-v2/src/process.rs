@@ -88,7 +88,7 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         let bigint_fn: rusty_js_runtime::value::NativeFn = std::rc::Rc::new(|_rt, _args| {
             use std::time::{SystemTime, UNIX_EPOCH};
             let ns = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i64;
-            Ok(Value::BigInt(std::rc::Rc::new(format!("{}", ns))))
+            Ok(Value::BigInt(std::rc::Rc::new(rusty_js_runtime::bigint::JsBigInt::from_i64(ns))))
         });
         let bigint_obj = rusty_js_runtime::value::Object {
             proto: None, extensible: true, properties: std::collections::HashMap::new(),

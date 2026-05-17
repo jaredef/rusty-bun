@@ -535,33 +535,66 @@ impl Runtime {
                 }
                 Op::Sub => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
-                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
-                    frame.push(Value::Number(l - r));
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        frame.push(Value::BigInt(Rc::new(a.sub(b))));
+                    } else {
+                        let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
+                        frame.push(Value::Number(l - r));
+                    }
                 }
                 Op::Mul => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
-                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
-                    frame.push(Value::Number(l * r));
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        frame.push(Value::BigInt(Rc::new(a.mul(b))));
+                    } else {
+                        let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
+                        frame.push(Value::Number(l * r));
+                    }
                 }
                 Op::Div => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
-                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
-                    frame.push(Value::Number(l / r));
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        match a.divmod(b) {
+                            Some((q, _)) => frame.push(Value::BigInt(Rc::new(q))),
+                            None => return Err(RuntimeError::TypeError("Division by zero".into())),
+                        }
+                    } else {
+                        let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
+                        frame.push(Value::Number(l / r));
+                    }
                 }
                 Op::Mod => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
-                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
-                    frame.push(Value::Number(l % r));
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        match a.divmod(b) {
+                            Some((_, r)) => frame.push(Value::BigInt(Rc::new(r))),
+                            None => return Err(RuntimeError::TypeError("Division by zero".into())),
+                        }
+                    } else {
+                        let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
+                        frame.push(Value::Number(l % r));
+                    }
                 }
                 Op::Pow => {
                     let rv = frame.pop()?; let lv = frame.pop()?;
-                    let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
-                    frame.push(Value::Number(l.powf(r)));
+                    if let (Value::BigInt(a), Value::BigInt(b)) = (&lv, &rv) {
+                        match a.pow(b) {
+                            Some(p) => frame.push(Value::BigInt(Rc::new(p))),
+                            None => return Err(RuntimeError::TypeError("BigInt ** invalid exponent".into())),
+                        }
+                    } else {
+                        let r = self.to_num_coerced(&rv)?; let l = self.to_num_coerced(&lv)?;
+                        frame.push(Value::Number(l.powf(r)));
+                    }
                 }
                 Op::Neg => {
                     let raw = frame.pop()?;
-                    let v = self.to_num_coerced(&raw)?;
-                    frame.push(Value::Number(-v));
+                    if let Value::BigInt(b) = &raw {
+                        frame.push(Value::BigInt(Rc::new(b.neg())));
+                    } else {
+                        let v = self.to_num_coerced(&raw)?;
+                        frame.push(Value::Number(-v));
+                    }
                 }
                 Op::Pos => {
                     // Tier-Ω.5.jjjjj: unary `+` per ECMA-262 §13.5.4. When
@@ -1599,7 +1632,12 @@ impl Runtime {
         match frame.constants.get(idx) {
             Some(rusty_js_bytecode::Constant::Number(n)) => Ok(Value::Number(*n)),
             Some(rusty_js_bytecode::Constant::String(s)) => Ok(Value::String(Rc::new(s.clone()))),
-            Some(rusty_js_bytecode::Constant::BigInt(s)) => Ok(Value::BigInt(Rc::new(s.clone()))),
+            Some(rusty_js_bytecode::Constant::BigInt(s)) => {
+                match crate::bigint::JsBigInt::from_decimal(s) {
+                    Some(b) => Ok(Value::BigInt(Rc::new(b))),
+                    None => Err(RuntimeError::TypeError(format!("Invalid BigInt literal: {}", s))),
+                }
+            }
             Some(rusty_js_bytecode::Constant::Regex { .. }) => {
                 Err(RuntimeError::Unimplemented("Regex literals not yet supported".into()))
             }
@@ -1773,7 +1811,7 @@ fn describe_value_for_diag(rt: &Runtime, v: &Value) -> String {
         Value::Null => "null".into(),
         Value::Boolean(b) => format!("Boolean({})", b),
         Value::Number(n) => format!("Number({})", n),
-        Value::BigInt(s) => format!("BigInt({})", s),
+        Value::BigInt(b) => format!("BigInt({})", b.to_decimal()),
         Value::String(s) => {
             let t = s.as_str();
             if t.len() <= 24 { format!("String({:?})", t) }

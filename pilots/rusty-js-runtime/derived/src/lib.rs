@@ -8,6 +8,7 @@
 //! Control flow + function frames + intrinsics in subsequent sub-rounds.
 
 pub mod value;
+pub mod bigint;
 pub mod abstract_ops;
 pub mod interp;
 pub mod intrinsics;

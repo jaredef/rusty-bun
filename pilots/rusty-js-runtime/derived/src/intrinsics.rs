@@ -1746,19 +1746,29 @@ impl Runtime {
         self.globals.insert("URLSearchParams".into(), Value::Object(usp_id));
 
         // Tier-Ω.5.ll: BigInt as callable global. zod uses `BigInt(x)`.
+        // Tier-Ω.5.CCCCCCCC: backed by real JsBigInt arithmetic substrate.
         let bi_obj = make_native("BigInt", |_rt, args| {
+            use crate::bigint::JsBigInt;
             let v = args.first().cloned().unwrap_or(Value::Undefined);
             match v {
-                Value::BigInt(s) => Ok(Value::BigInt(s)),
-                Value::Number(n) => Ok(Value::BigInt(std::rc::Rc::new(format!("{}", n as i64)))),
-                Value::String(s) => {
-                    let trimmed = s.trim();
-                    Ok(Value::BigInt(std::rc::Rc::new(trimmed.to_string())))
+                Value::BigInt(b) => Ok(Value::BigInt(b)),
+                Value::Number(n) => {
+                    if !n.is_finite() || n.fract() != 0.0 {
+                        return Err(RuntimeError::TypeError(format!(
+                            "Cannot convert non-integer Number {} to BigInt", n)));
+                    }
+                    Ok(Value::BigInt(std::rc::Rc::new(JsBigInt::from_i64(n as i64))))
                 }
-                Value::Boolean(b) => Ok(Value::BigInt(std::rc::Rc::new(if b { "1".into() } else { "0".into() }))),
-                _ => Err(RuntimeError::Thrown(Value::String(std::rc::Rc::new(
-                    "TypeError: Cannot convert to BigInt".into()
-                )))),
+                Value::String(s) => {
+                    match JsBigInt::from_decimal(s.trim()) {
+                        Some(b) => Ok(Value::BigInt(std::rc::Rc::new(b))),
+                        None => Err(RuntimeError::TypeError(format!(
+                            "Cannot convert {:?} to BigInt", s.as_str()))),
+                    }
+                }
+                Value::Boolean(b) => Ok(Value::BigInt(std::rc::Rc::new(
+                    if b { JsBigInt::one() } else { JsBigInt::zero() }))),
+                _ => Err(RuntimeError::TypeError("Cannot convert to BigInt".into())),
             }
         });
         let bi_id = self.alloc_object(bi_obj);
@@ -1769,13 +1779,13 @@ impl Runtime {
         let bi_proto = self.alloc_object(Object::new_ordinary());
         register_method(self, bi_proto, "valueOf", |rt, _args| {
             match rt.current_this() {
-                Value::BigInt(s) => Ok(Value::BigInt(s)),
+                Value::BigInt(b) => Ok(Value::BigInt(b)),
                 _ => Err(RuntimeError::TypeError("BigInt.prototype.valueOf: this is not a BigInt".into())),
             }
         });
         register_method(self, bi_proto, "toString", |rt, _args| {
             match rt.current_this() {
-                Value::BigInt(s) => Ok(Value::String(s)),
+                Value::BigInt(b) => Ok(Value::String(std::rc::Rc::new(b.to_decimal()))),
                 _ => Err(RuntimeError::TypeError("BigInt.prototype.toString: this is not a BigInt".into())),
             }
         });

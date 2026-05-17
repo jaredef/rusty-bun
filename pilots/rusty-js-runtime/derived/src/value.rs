@@ -79,9 +79,10 @@ pub enum Value {
     Boolean(bool),
     Number(f64),
     String(Rc<String>),
-    /// BigInt stored as signed decimal-digit string in v1. Arithmetic
-    /// defers to a BigInt crate in a follow-on round.
-    BigInt(Rc<String>),
+    /// BigInt as a signed-magnitude limb vector per ECMA §6.1.6.2.
+    /// Tier-Ω.5.CCCCCCCC: real arithmetic substrate replacing the v1
+    /// Rc<String> representation that coerced through f64.
+    BigInt(Rc<crate::bigint::JsBigInt>),
     Object(ObjectRef),
 }
 
@@ -128,7 +129,7 @@ impl std::fmt::Debug for Value {
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{:?}", s.as_str()),
-            Value::BigInt(s) => write!(f, "{}n", s.as_str()),
+            Value::BigInt(b) => write!(f, "{}n", b.to_decimal()),
             Value::Object(id) => write!(f, "[Object #{}]", id.0),
         }
     }

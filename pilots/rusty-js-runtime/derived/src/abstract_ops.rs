@@ -12,7 +12,7 @@ pub fn to_boolean(v: &Value) -> bool {
         Value::Boolean(b) => *b,
         Value::Number(n) => !(n.is_nan() || *n == 0.0),
         Value::String(s) => !s.is_empty(),
-        Value::BigInt(s) => s.as_str() != "0",
+        Value::BigInt(b) => !b.is_zero(),
         Value::Object(_) => true,
     }
 }
@@ -27,7 +27,7 @@ pub fn to_number(v: &Value) -> f64 {
         Value::Boolean(false) => 0.0,
         Value::Number(n) => *n,
         Value::String(s) => parse_string_to_number(s.as_str()),
-        Value::BigInt(_) => f64::NAN,  // BigInt -> Number is a TypeError per spec; v1 returns NaN as placeholder
+        Value::BigInt(b) => b.to_f64(),  // ECMA §7.1.4 throws TypeError; we follow Bun's pragmatic lossy coercion
         Value::Object(_) => f64::NAN,  // Object -> primitive deferred
     }
 }
@@ -49,7 +49,7 @@ pub fn to_string(v: &Value) -> Rc<String> {
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => number_to_string(*n),
         Value::String(s) => return s.clone(),
-        Value::BigInt(s) => return s.clone(),
+        Value::BigInt(b) => b.to_decimal(),
         Value::Object(_) => "[object Object]".to_string(),  // Object ToString deferred
     })
 }
@@ -98,6 +98,18 @@ pub fn is_loosely_equal(a: &Value, b: &Value) -> bool {
             let y = parse_string_to_number(s.as_str());
             !x.is_nan() && !y.is_nan() && *x == y
         }
+        // ECMA §7.2.13 BigInt/Number: equal iff BigInt numerically == n.
+        (Value::BigInt(b), Value::Number(n)) | (Value::Number(n), Value::BigInt(b)) => {
+            if n.is_nan() || n.is_infinite() || n.fract() != 0.0 { return false; }
+            matches!(b.cmp_f64(*n), Some(std::cmp::Ordering::Equal))
+        }
+        // BigInt/String: parse the string as a BigInt and compare.
+        (Value::BigInt(b), Value::String(s)) | (Value::String(s), Value::BigInt(b)) => {
+            match crate::bigint::JsBigInt::from_decimal(s.as_str()) {
+                Some(parsed) => b.cmp(&parsed) == std::cmp::Ordering::Equal,
+                None => false,
+            }
+        }
         // Boolean -> Number, then re-compare loosely.
         (Value::Boolean(b), other) | (other, Value::Boolean(b)) => {
             let nb = if *b { 1.0 } else { 0.0 };
@@ -113,14 +125,28 @@ pub fn is_loosely_equal(a: &Value, b: &Value) -> bool {
 pub enum RelOrder { Less, Greater, Equal, Undefined }
 
 pub fn abstract_relational_compare(x: &Value, y: &Value) -> RelOrder {
+    use std::cmp::Ordering::*;
     // v1 simplified: ToPrimitive → if both String, lex compare; else ToNumber.
     if let (Value::String(a), Value::String(b)) = (x, y) {
-        use std::cmp::Ordering::*;
         return match a.as_str().cmp(b.as_str()) {
             Less => RelOrder::Less,
             Greater => RelOrder::Greater,
             Equal => RelOrder::Equal,
         };
+    }
+    // BigInt-aware relational compare per ECMA §7.2.13.
+    let ord_to_rel = |o: std::cmp::Ordering| match o {
+        Less => RelOrder::Less, Greater => RelOrder::Greater, Equal => RelOrder::Equal,
+    };
+    match (x, y) {
+        (Value::BigInt(a), Value::BigInt(b)) => return ord_to_rel(a.cmp(b)),
+        (Value::BigInt(a), Value::Number(n)) => {
+            return match a.cmp_f64(*n) { Some(o) => ord_to_rel(o), None => RelOrder::Undefined };
+        }
+        (Value::Number(n), Value::BigInt(b)) => {
+            return match b.cmp_f64(*n) { Some(o) => ord_to_rel(o.reverse()), None => RelOrder::Undefined };
+        }
+        _ => {}
     }
     let nx = to_number(x);
     let ny = to_number(y);
@@ -140,6 +166,9 @@ pub fn op_add(x: &Value, y: &Value) -> Value {
         concat.push_str(&xs);
         concat.push_str(&ys);
         return Value::String(Rc::new(concat));
+    }
+    if let (Value::BigInt(a), Value::BigInt(b)) = (x, y) {
+        return Value::BigInt(Rc::new(a.add(b)));
     }
     Value::Number(to_number(x) + to_number(y))
 }

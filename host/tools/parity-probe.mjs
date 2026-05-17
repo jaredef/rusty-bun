@@ -37,6 +37,6 @@ try {
     status: "ERR",
     pkg,
     error: (e && e.constructor && e.constructor.name) || "Error",
-    message: ((e && e.message) || String(e)).slice(0, 200),
+    message: ((e && e.message) || String(e)).slice(0, 800),
   }) + "\n");
 }

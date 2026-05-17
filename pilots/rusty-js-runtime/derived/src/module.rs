@@ -320,6 +320,12 @@ impl Runtime {
             let candidate = std::path::PathBuf::from(rest);
             return probe_with_extensions(&candidate, specifier);
         }
+        // Ω.5.P25.E1: absolute filesystem paths (`/foo/bar`) per webpack's
+        // `__webpack_require__` convention. Treat as file:// directly.
+        if specifier.starts_with('/') {
+            let candidate = std::path::PathBuf::from(specifier);
+            return probe_with_extensions(&candidate, specifier);
+        }
         Err(RuntimeError::TypeError(format!(
             "bare specifier '{}' requires resolve_module_full (caller did not thread the Runtime)",
             specifier
@@ -377,10 +383,20 @@ impl Runtime {
             return Runtime::resolve_module(parent_url, target);
         }
         // Non-bare paths reuse the existing logic.
+        //
+        // Ω.5.P25.E1.absolute-path-resolve: also accept absolute paths
+        // (`/` prefix). Webpack-generated `__webpack_require__` and many
+        // bundler `require` calls hand absolute file-system paths in;
+        // pre-fix the resolver classified them as bare specifiers and
+        // failed with "bare specifier '/abs/path' is malformed". Closes
+        // @databases/pg, @jest/expect, and a long tail of webpack-
+        // bundled CJS packages that surfaced through the Ω.5.P24.E1
+        // probe.
         if specifier.starts_with("node:")
             || specifier.starts_with("./")
             || specifier.starts_with("../")
             || specifier.starts_with("file://")
+            || specifier.starts_with('/')
         {
             return Runtime::resolve_module(parent_url, specifier);
         }

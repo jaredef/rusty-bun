@@ -10,6 +10,7 @@ pub mod assert;
 pub mod crypto;
 pub mod events;
 pub mod fs;
+pub mod module_ns;
 pub mod node_stubs;
 pub mod http;
 pub mod https;
@@ -38,6 +39,8 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     process::install(rt, argv);
     fs::install(rt);
     fs::install_poll_io(rt);
+    // Ω.5.P16.E2.ns-default-synth: Doc 717 Tuple A/B closure.
+    module_ns::install(rt);
     http::install(rt);
     crypto::install(rt);
     // Tier-Ω.5.s: bundle of small built-in stubs.

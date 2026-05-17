@@ -132,6 +132,11 @@ pub struct Runtime {
     /// the watcher poll. Boxed closures so each job carries its own
     /// captured state.
     pub napi_main_inbox: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<crate::napi::NapiMainJob>>>,
+    /// Ω.5.P46.E3.napi-keepalive: count of napi resources currently
+    /// holding the event loop alive (refd threadsafe functions, in-flight
+    /// async work). PollIo's `has_pending` consults this; the loop won't
+    /// exit while > 0.
+    pub napi_keepalive: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Tier-Ω.5.P45.E1.module-url-stack: stack of URLs of modules
     /// currently being evaluated. evaluate_module / evaluate_cjs_module
     /// push the URL before running the frame and pop after. `__dynamic_import`
@@ -176,6 +181,7 @@ impl Runtime {
             napi_envs: Vec::new(),
             napi_module_cache: HashMap::new(),
             napi_main_inbox: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+            napi_keepalive: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 

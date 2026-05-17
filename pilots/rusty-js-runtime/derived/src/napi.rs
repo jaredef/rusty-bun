@@ -997,9 +997,12 @@ pub unsafe extern "C" fn napi_queue_async_work(env: napi_env, work: *mut NapiAsy
     let env_ref = &mut *env;
     let rt = &mut *env_ref.rt;
     let inbox = rt.napi_main_inbox.clone();
+    let keepalive = rt.napi_keepalive.clone();
     let w = &mut *work;
     if w.queued { return napi_generic_failure; }
     w.queued = true;
+    // P46.E3: bump engine keepalive — drop after complete_cb runs.
+    keepalive.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let execute = SendFn(w.execute);
     let complete = SendFn(w.complete);
     let data: SendPtr<c_void> = w.data;     // SendPtr derives Copy
@@ -1009,26 +1012,31 @@ pub unsafe extern "C" fn napi_queue_async_work(env: napi_env, work: *mut NapiAsy
     // the main thread via inbox. We capture the SendPtr/SendFn wrappers
     // BY MOVE (rather than letting the move closure decompose to inner
     // *mut accesses); rebinding via `let` forces whole-value capture.
+    let keepalive_for_thread = keepalive.clone();
     std::thread::spawn(move || {
         let execute_local = execute;
         let env_local = env_send;
         let data_local = data;
         let complete_local = complete;
         let work_local = work_ptr;
+        let keepalive = keepalive_for_thread;
         let status: napi_status = {
             unsafe { (execute_local.0)(env_local.0, data_local.0); }
             napi_ok
         };
+        let keepalive_for_job = keepalive.clone();
         let job: NapiMainJob = Box::new(move |_rt: &mut Runtime| {
             let complete2 = complete_local;
             let env2 = env_local;
             let data2 = data_local;
             let work2 = work_local;
+            let ka = keepalive_for_job;
             unsafe {
                 (complete2.0)(env2.0, status, data2.0);
                 let w = &mut *work2.0;
                 w.queued = false;
             }
+            ka.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
         if let Ok(mut q) = inbox.lock() {
             q.push_back(job);
@@ -1076,6 +1084,15 @@ pub struct NapiTsfn {
     env: SendPtr<NapiEnv>,
     ref_count: std::sync::atomic::AtomicUsize,
     active: std::sync::atomic::AtomicBool,
+    /// Ω.5.P46.E3: per-tsfn keepalive bit. When set, the tsfn
+    /// contributes 1 to Runtime::napi_keepalive so the event loop
+    /// stays alive even if the inbox is empty. Toggled by
+    /// napi_ref_threadsafe_function / napi_unref_threadsafe_function.
+    /// Initial state per N-API spec: ref'd.
+    keepalive_active: std::sync::atomic::AtomicBool,
+    /// Shared handle to Runtime's keepalive counter so toggle ops
+    /// don't need to thread an env pointer.
+    keepalive_counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[no_mangle]
@@ -1092,6 +1109,10 @@ pub unsafe extern "C" fn napi_create_threadsafe_function(
     let func_v = match env_ref.get_handle(func) { Some(v) => v.clone(), None => return napi_invalid_arg };
     let slot = env_ref.refs.len();
     env_ref.refs.push(Some(func_v));
+    let keepalive_counter = (&*env_ref.rt).napi_keepalive.clone();
+    // P46.E3: tsfn starts ref'd; bump the global keepalive counter so
+    // the event loop knows to stay alive.
+    keepalive_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let tsfn = Box::new(NapiTsfn {
         func_ref_slot: slot,
         call_js: call_js_cb,
@@ -1099,6 +1120,8 @@ pub unsafe extern "C" fn napi_create_threadsafe_function(
         env: SendPtr(env),
         ref_count: std::sync::atomic::AtomicUsize::new(1),
         active: std::sync::atomic::AtomicBool::new(true),
+        keepalive_active: std::sync::atomic::AtomicBool::new(true),
+        keepalive_counter,
     });
     *result = Box::into_raw(tsfn);
     napi_ok
@@ -1161,20 +1184,44 @@ pub unsafe extern "C" fn napi_release_threadsafe_function(
     let t = &*tsfn;
     let prev = t.ref_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     if prev == 1 {
-        // Last release: deactivate.
+        // Last release: deactivate. Also drop keepalive if still active
+        // so the event loop can exit.
         t.active.store(false, std::sync::atomic::Ordering::SeqCst);
+        if t.keepalive_active.compare_exchange(true, false,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst).is_ok()
+        {
+            t.keepalive_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
     napi_ok
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn napi_ref_threadsafe_function(_env: napi_env, _tsfn: napi_threadsafe_function) -> napi_status {
-    napi_ok  // keepalive integration deferred — engine stays alive while any
-             // tsfn exists since releases happen via the same inbox.
+pub unsafe extern "C" fn napi_ref_threadsafe_function(_env: napi_env, tsfn: napi_threadsafe_function) -> napi_status {
+    if tsfn.is_null() { return napi_invalid_arg; }
+    let t = &*tsfn;
+    // Toggle from unref'd → ref'd. CAS so concurrent ref/unref from
+    // multiple threads serialize.
+    if t.keepalive_active.compare_exchange(false, true,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst).is_ok()
+    {
+        t.keepalive_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    napi_ok
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn napi_unref_threadsafe_function(_env: napi_env, _tsfn: napi_threadsafe_function) -> napi_status {
+pub unsafe extern "C" fn napi_unref_threadsafe_function(_env: napi_env, tsfn: napi_threadsafe_function) -> napi_status {
+    if tsfn.is_null() { return napi_invalid_arg; }
+    let t = &*tsfn;
+    if t.keepalive_active.compare_exchange(true, false,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst).is_ok()
+    {
+        t.keepalive_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
     napi_ok
 }
 
@@ -1203,9 +1250,14 @@ pub fn drain_main_inbox(rt: &mut Runtime) -> usize {
     n
 }
 
-/// True if any napi work is registered (async_work in flight or tsfn
-/// active). Used by PollIo to keep the event loop alive.
+/// True if any napi work is registered or holding the event loop
+/// alive: inbox has queued jobs, async_work is in flight, or any
+/// threadsafe function is still ref'd. Used by PollIo to keep the
+/// event loop alive past sync-script completion.
 pub fn has_pending(rt: &Runtime) -> bool {
+    if rt.napi_keepalive.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        return true;
+    }
     if let Ok(q) = rt.napi_main_inbox.lock() {
         return !q.is_empty();
     }

@@ -1269,30 +1269,35 @@ impl Runtime {
                 // Mirror own properties + a `default` pointer at the
                 // exports value itself.
                 //
-                // Ω.5.P21.E1.cjs-ns-filter: filter `__esModule` (the
-                // transpiler-emitted ES-module flag) and function-instance
-                // intrinsic properties (`name`, `length`, `prototype`) when
-                // the exports value is callable. Pattern: TS-compiled CJS
-                // packages whose `module.exports = SomeClass` (mitt, kleur,
-                // ajv, ...) leak the class's `name`/`length`/`prototype` as
-                // named exports; Bun's CJS-as-ESM bridge does not surface
-                // them. The same packages typically set `__esModule` via
-                // `Object.defineProperty(exports, '__esModule', { value: true })`
-                // (non-enumerable per ECMA §6.2.5.4 default), and Bun
-                // similarly omits it from the namespace shape.
+                // Ω.5.P38.E1.cjs-ns-filter-conditional: filter
+                // `__esModule` always (transpiler flag Bun never
+                // surfaces). For function-instance intrinsic props
+                // (`name`/`length`/`prototype`), filter when the source
+                // module self-set `module.exports.default` — Bun reads
+                // that as a TS-compiled "the module knows what its
+                // namespace looks like" signal and doesn't pad. When
+                // the source did NOT set default, Bun pads with
+                // name/length/prototype (lodash, debug, ms, minimist
+                // pattern: `module.exports = aFunction`, no default).
+                //
+                // Examples observed:
+                //   ajv (sets `exports.default = Ajv`): bun keyCount=11
+                //   lodash (no default): bun keyCount=312 incl name/...
+                let has_user_default = self.obj(*oid).properties.contains_key("default");
                 let is_callable = matches!(
                     self.obj(*oid).internal_kind,
                     crate::value::InternalKind::Function(_)
                     | crate::value::InternalKind::Closure(_)
                     | crate::value::InternalKind::BoundFunction(_)
                 );
+                let strip_fn_intrinsics = is_callable && has_user_default;
                 let pairs: Vec<(String, Value)> = self
                     .obj(*oid)
                     .properties
                     .iter()
                     .filter(|(k, _)| {
                         if k.as_str() == "__esModule" { return false; }
-                        if is_callable && matches!(k.as_str(), "name" | "length" | "prototype") {
+                        if strip_fn_intrinsics && matches!(k.as_str(), "name" | "length" | "prototype") {
                             return false;
                         }
                         true

@@ -50,8 +50,11 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         rt.object_set(s, "fd".into(), Value::Number(fd_num));
         rt.object_set(s, "columns".into(), Value::Number(80.0));
         rt.object_set(s, "rows".into(), Value::Number(24.0));
-        register_method(rt, s, "write", |_rt, args| {
-            if let Some(Value::String(s)) = args.first() { eprint!("{}", s); }
+        let fd = fd_num as u32;
+        register_method(rt, s, "write", move |_rt, args| {
+            if let Some(Value::String(s)) = args.first() {
+                if fd == 1 { print!("{}", s); } else { eprint!("{}", s); }
+            }
             Ok(Value::Boolean(true))
         });
         register_method(rt, s, "on", |rt, _args| Ok(rt.current_this()));

@@ -1855,13 +1855,25 @@ fn resolve_exports_target(
             // build and a synthesized `default` shape that diverges from
             // Bun's ESM-namespace shape. Closes the io-ts / @opentelemetry/api
             // family (sub-shape of the post-P19 III.a keyCount-±1-2 cluster).
-            let priority: &[&str] = match importer_kind {
-                ModuleKind::ESM => &["import", "module", "node", "default"],
-                ModuleKind::CJS => &["require", "node", "default"],
+            // Ω.5.P50.E4 (C3 constraint): conditions match in DECLARATION
+            // ORDER, not priority order. Per Node packages docs:
+            // "Conditions are matched in object order, as within JS objects."
+            // Previously rb used a hardcoded priority array, which matched
+            // top-level "import" before nested "node" — wrong for
+            // {"node": {"import": "./a.mjs", "require": "./a.cjs"},
+            //  "import": "./browser.js"}. Node-runtime importers should
+            // pick the "node" branch first because it appears earlier in
+            // declaration order AND its condition is active.
+            //
+            // serde_json's preserve_order feature is enabled so the Map
+            // iteration order matches the source JSON's key order.
+            let active: &[&str] = match importer_kind {
+                ModuleKind::ESM => &["node", "import", "module", "default"],
+                ModuleKind::CJS => &["node", "require", "default"],
             };
-            for cond in priority {
-                if let Some(v) = map.get(*cond) {
-                    if let Some(r) = resolve_exports_target(v, capture, importer_kind) {
+            for (key, value) in map.iter() {
+                if active.contains(&key.as_str()) {
+                    if let Some(r) = resolve_exports_target(value, capture, importer_kind) {
                         return Some(r);
                     }
                 }

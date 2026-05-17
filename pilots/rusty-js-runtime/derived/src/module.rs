@@ -1291,7 +1291,17 @@ impl Runtime {
                     | crate::value::InternalKind::BoundFunction(_)
                 );
                 let strip_fn_intrinsics = is_callable && has_user_default;
-                let pairs: Vec<(String, Value)> = self
+                // Ω.5.P40.E1.cjs-ns-getter-dispatch: collect (key, value,
+                // optional-getter) triples. Pre-fix the namespace builder
+                // copied descriptor.value directly, so accessor properties
+                // (Object.defineProperty(exports, X, { get() {...} })) all
+                // surfaced as Value::Undefined. ansi-colors and any package
+                // that lazily computes color/style functions via getters
+                // hit this — Object.keys was right but typeof m[k] returned
+                // "undefined". Now we capture the getter ref alongside,
+                // and below invoke it (with the source object as receiver)
+                // before setting the namespace property.
+                let triples: Vec<(String, Value, Option<Value>)> = self
                     .obj(*oid)
                     .properties
                     .iter()
@@ -1302,8 +1312,16 @@ impl Runtime {
                         }
                         true
                     })
-                    .map(|(k, d)| (k.clone(), d.value.clone()))
+                    .map(|(k, d)| (k.clone(), d.value.clone(), d.getter.clone()))
                     .collect();
+                let mut pairs: Vec<(String, Value)> = Vec::with_capacity(triples.len());
+                for (k, v, getter) in triples {
+                    let resolved = if let Some(g) = getter {
+                        self.call_function(g, Value::Object(*oid), Vec::new())
+                            .unwrap_or(Value::Undefined)
+                    } else { v };
+                    pairs.push((k, resolved));
+                }
                 for (k, v) in pairs {
                     self.object_set(ns, k, v);
                 }

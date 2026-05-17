@@ -883,7 +883,12 @@ impl Runtime {
                     });
             }
         }
-        self.run_frame_module(&mut frame)?;
+        // Ω.5.P45.E1: push current module URL so __dynamic_import can
+        // resolve relative specifiers against the real caller.
+        self.current_module_url.push(url.to_string());
+        let run_result = self.run_frame_module(&mut frame);
+        self.current_module_url.pop();
+        run_result?;
         // Tier-Ω.5.jjj: read locals through the cell promotion seam.
         // If a slot was promoted to an upvalue cell (because a nested
         // closure captured it), frame.locals[slot] now holds Undefined
@@ -1064,8 +1069,13 @@ impl Runtime {
         // are expected (the wrapper itself never uses them), so the
         // import-resolution and reexport-loading loops are noops here;
         // we skip them to keep the path linear.
+        // Ω.5.P45.E1: track the CJS module's URL for __dynamic_import
+        // relative-specifier resolution.
         let mut frame = Frame::new_module(&bytecode_rc);
-        self.run_frame_module(&mut frame)?;
+        self.current_module_url.push(url.to_string());
+        let run_result = self.run_frame_module(&mut frame);
+        self.current_module_url.pop();
+        run_result?;
         let locals = frame.locals.clone();
 
         // Find the wrapper function: it's the `default` local. The
@@ -1174,7 +1184,14 @@ impl Runtime {
         let module_v = Value::Object(module_id);
 
         // Call the wrapper with the synthesized argument tuple.
-        let _ = self.call_function(
+        // Ω.5.P45.E1: push the CJS module's URL around the wrapper-fn
+        // invocation so dynamic-imports inside the CJS body see the
+        // correct parent URL (not the cwd fallback). The earlier push
+        // around run_frame_module wrapped only the wrapper-MODULE body
+        // (defining the wrapper fn); the actual CJS body runs only
+        // when we call the wrapper, so the push needs to wrap THAT.
+        self.current_module_url.push(url.to_string());
+        let call_result = self.call_function(
             wrapper_fn,
             Value::Undefined,
             vec![
@@ -1184,7 +1201,9 @@ impl Runtime {
                 filename_v,
                 dirname_v,
             ],
-        )?;
+        );
+        self.current_module_url.pop();
+        let _ = call_result?;
 
         // After the call, the canonical exports value is
         // `module.exports` (which may have been rebound).

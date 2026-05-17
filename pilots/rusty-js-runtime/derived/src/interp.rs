@@ -114,6 +114,17 @@ pub struct Runtime {
     /// without per-call construction.
     pub fd_table: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
+    /// Tier-Ω.5.P45.E1.module-url-stack: stack of URLs of modules
+    /// currently being evaluated. evaluate_module / evaluate_cjs_module
+    /// push the URL before running the frame and pop after. `__dynamic_import`
+    /// consults `.last()` to resolve relative specifiers against the
+    /// actual calling module's URL (per ECMA-262 §16.2.1.8 step 5,
+    /// which specifies the referencing script/module as the resolution
+    /// origin). Pre-fix the cwd-fallback parent_url worked for bare/
+    /// node: specifiers but broke relative imports from packages
+    /// (e.g. nx's `import('../src/native/...')` resolving against the
+    /// caller's cwd instead of the nx package's own location).
+    pub current_module_url: Vec<String>,
 }
 
 impl Runtime {
@@ -142,6 +153,7 @@ impl Runtime {
             pending_live_bindings: HashMap::new(),
             fd_table: HashMap::new(),
             next_fd: 3,
+            current_module_url: Vec::new(),
         }
     }
 

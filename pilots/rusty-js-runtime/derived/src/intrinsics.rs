@@ -52,15 +52,23 @@ impl Runtime {
                 .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
                 .unwrap_or_else(|| "<unknown>".into());
             let p = crate::promise::new_promise(rt);
-            // Use the process cwd as the parent dir so bare specifiers walk
-            // node_modules from the script's working directory (matches Bun's
-            // dynamic-import resolution origin when no caller-frame URL is
-            // plumbed). Real callsite URL plumbing is deferred.
-            let cwd = std::env::current_dir()
-                .ok()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "/".to_string());
-            let parent = format!("file://{}/__dynamic_import__", cwd);
+            // Ω.5.P45.E1: parent URL is the URL of the calling module if
+            // we're inside one (via `current_module_url` stack pushed by
+            // evaluate_module/evaluate_cjs_module). Falls back to the
+            // process cwd for the top-level case (script run directly,
+            // not from inside a loaded module body). Closes nx and similar
+            // packages whose internal `import('../src/native/X.js')` needs
+            // to resolve relative to the importing file, not the script's
+            // cwd.
+            let parent = if let Some(url) = rt.current_module_url.last() {
+                url.clone()
+            } else {
+                let cwd = std::env::current_dir()
+                    .ok()
+                    .and_then(|p| p.to_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "/".to_string());
+                format!("file://{}/__dynamic_import__", cwd)
+            };
             let resolved = match rt.resolve_module_full(&parent, &spec, crate::module::ModuleKind::ESM) {
                 Ok(r) => r,
                 Err(e) => {

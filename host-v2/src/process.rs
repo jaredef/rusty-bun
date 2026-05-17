@@ -32,7 +32,13 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
         else if cfg!(target_arch = "aarch64") { "arm64" }
         else { "unknown" }.to_string()
     )));
-    set_constant(rt, process, "version", Value::String(Rc::new("v0.1.0-rusty-bun".to_string())));
+    // Ω.5.P45.E2: report a real Node major version. Many packages
+    // pattern-match `process.version` against /^v\d+\.\d+\.\d+$/ for
+    // platform-support gating (nx is the canonical case — its native
+    // dependency loader prints "NX Missing Platform Dependency" if the
+    // version doesn't parse as Node-shaped). Match the process.versions.node
+    // value below so consumers cross-checking the two agree.
+    set_constant(rt, process, "version", Value::String(Rc::new("v20.10.0".to_string())));
     // Tier-Ω.5.pppp: process.versions for fast-glob + many libs that gate
     // behavior on node major version.
     let versions = new_object(rt);

@@ -134,6 +134,75 @@ impl Runtime {
                 }
             }
         });
+        // Tier-Ω.5.P26.E1.webassembly-stub: minimum-viable WebAssembly
+        // global so packages that capture WebAssembly.compile / .instantiate
+        // / .Module at module init don't crash on `undefined.compile`.
+        // Surfaced through Ω.5.P24.E1 proto-chain probe walking
+        // @actions/http-client (whose `lazyllhttp` shim calls
+        // WebAssembly.compile during require). All methods return rejected
+        // Promises or throw; consumers that actually run wasm fail later
+        // with a clear "WebAssembly not implemented" error, but the
+        // module-load gate is closed.
+        let wasm = self.alloc_object(Object::new_ordinary());
+        let unsupported = || -> RuntimeError {
+            RuntimeError::TypeError("WebAssembly not implemented (Tier-Ω.5.P26.E1 stub)".into())
+        };
+        register_method(self, wasm, "compile", move |rt, _args| {
+            let p = crate::promise::new_promise(rt);
+            crate::promise::reject_promise(rt, p, Value::String(Rc::new(
+                "TypeError: WebAssembly.compile not implemented (Tier-Ω.5.P26.E1 stub)".into()
+            )));
+            Ok(Value::Object(p))
+        });
+        register_method(self, wasm, "instantiate", move |rt, _args| {
+            let p = crate::promise::new_promise(rt);
+            crate::promise::reject_promise(rt, p, Value::String(Rc::new(
+                "TypeError: WebAssembly.instantiate not implemented (Tier-Ω.5.P26.E1 stub)".into()
+            )));
+            Ok(Value::Object(p))
+        });
+        register_method(self, wasm, "compileStreaming", move |rt, _args| {
+            let p = crate::promise::new_promise(rt);
+            crate::promise::reject_promise(rt, p, Value::String(Rc::new(
+                "TypeError: WebAssembly.compileStreaming not implemented (Tier-Ω.5.P26.E1 stub)".into()
+            )));
+            Ok(Value::Object(p))
+        });
+        register_method(self, wasm, "instantiateStreaming", move |rt, _args| {
+            let p = crate::promise::new_promise(rt);
+            crate::promise::reject_promise(rt, p, Value::String(Rc::new(
+                "TypeError: WebAssembly.instantiateStreaming not implemented (Tier-Ω.5.P26.E1 stub)".into()
+            )));
+            Ok(Value::Object(p))
+        });
+        register_method(self, wasm, "validate", |_rt, _args| Ok(Value::Boolean(false)));
+        // Constructor stubs — packages probe `typeof WebAssembly.Module` etc.
+        // to decide on a code path; returning a callable that throws on
+        // construction is more disciplined than leaving them undefined.
+        for ctor_name in &["Module", "Instance", "Memory", "Table", "Global", "Tag", "Function"] {
+            let name = (*ctor_name).to_string();
+            let stub = make_native(&name, move |_rt, _args| Err(unsupported()));
+            let stub_id = self.alloc_object(stub);
+            self.object_set(wasm, name, Value::Object(stub_id));
+        }
+        // Error-class stubs — packages do `instanceof WebAssembly.CompileError`
+        // / `RuntimeError` / `LinkError` after their try/catch.
+        for err_name in &["CompileError", "LinkError", "RuntimeError"] {
+            let name = (*err_name).to_string();
+            let stub = make_native(&name, move |_rt, args| {
+                let o = Object::new_ordinary();
+                let id = _rt.alloc_object(o);
+                let msg = args.first()
+                    .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
+                    .unwrap_or_default();
+                _rt.object_set(id, "message".into(), Value::String(Rc::new(msg)));
+                Ok(Value::Object(id))
+            });
+            let stub_id = self.alloc_object(stub);
+            self.object_set(wasm, name, Value::Object(stub_id));
+        }
+        self.globals.insert("WebAssembly".into(), Value::Object(wasm));
+
         self.install_global_this();
     }
 

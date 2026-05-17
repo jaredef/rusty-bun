@@ -114,6 +114,18 @@ pub struct Runtime {
     /// without per-call construction.
     pub fd_table: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
+    /// Ω.5.P46.E1.napi-v1: dlopen'd .node native modules. Held forever
+    /// (until process exit) so their function pointers stay valid across
+    /// later JS calls into the module.
+    pub napi_libs: Vec<libloading::Library>,
+    /// Ω.5.P46.E1.napi-v1: live NapiEnv boxes — one per loaded .node
+    /// module. Roots their handle tables + ref tables so values survive
+    /// across JS↔native boundaries.
+    pub napi_envs: Vec<Box<crate::napi::NapiEnv>>,
+    /// Ω.5.P46.E1.napi-v1: cache of `.node` module exports keyed by
+    /// resolved URL. Separate from `modules` so we don't need to
+    /// synthesize a CompiledModule for native libraries.
+    pub napi_module_cache: HashMap<String, Value>,
     /// Tier-Ω.5.P45.E1.module-url-stack: stack of URLs of modules
     /// currently being evaluated. evaluate_module / evaluate_cjs_module
     /// push the URL before running the frame and pop after. `__dynamic_import`
@@ -154,6 +166,9 @@ impl Runtime {
             fd_table: HashMap::new(),
             next_fd: 3,
             current_module_url: Vec::new(),
+            napi_libs: Vec::new(),
+            napi_envs: Vec::new(),
+            napi_module_cache: HashMap::new(),
         }
     }
 

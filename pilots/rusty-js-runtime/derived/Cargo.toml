@@ -14,6 +14,8 @@ rusty-js-gc = { path = "../../rusty-js-gc/derived" }
 regex = "1"
 serde_json = "1"
 indexmap = "2"
+# Ω.5.P46.E1.napi-v1: dlopen for .node native modules.
+libloading = "0.8"
 
 [dev-dependencies]
 # Tier-Ω.5.b module loader tests exercise the node:* built-in dispatch

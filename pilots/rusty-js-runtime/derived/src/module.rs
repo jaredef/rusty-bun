@@ -577,6 +577,27 @@ impl Runtime {
             }
         }
         if let Some(stripped) = url.strip_prefix("file://") {
+            // Ω.5.P46.E1.napi-v1: .node native modules go through dlopen
+            // before any source-text read. dynamic import('./foo.node')
+            // and static `import * as m from './foo.node'` both land here.
+            if stripped.ends_with(".node") {
+                if let Some(v) = self.napi_module_cache.get(url).cloned() {
+                    // Synthesize a transient namespace pointing at the
+                    // cached exports (load_module returns ObjectRef).
+                    if let Value::Object(id) = v { return Ok(id); }
+                }
+                let exports = crate::napi::load_napi_module(self, stripped)?;
+                self.napi_module_cache.insert(url.to_string(), exports.clone());
+                // For ESM-style consumers (`import * as m`), return the
+                // exports object; the namespace IS the exports for native
+                // modules.
+                if let Value::Object(id) = exports {
+                    return Ok(id);
+                }
+                return Err(RuntimeError::TypeError(format!(
+                    "napi: load returned non-object from '{}'", stripped
+                )));
+            }
             let source = std::fs::read_to_string(stripped).map_err(|e| {
                 RuntimeError::TypeError(format!("module load: cannot read '{}': {}", stripped, e))
             })?;
@@ -1410,6 +1431,23 @@ impl Runtime {
                 return Ok(Value::Object(ns));
             }
         }
+        // Ω.5.P46.E1.napi-v1: `.node` files are dlopen'd N-API native
+        // modules. Route them through napi::load_napi_module before the
+        // ordinary CJS/ESM load. Stash the result under `cjs_exports`
+        // so the cache lookup above short-circuits on subsequent
+        // require()s.
+        let resolved_path = resolved.strip_prefix("file://").unwrap_or(&resolved);
+        if resolved_path.ends_with(".node") {
+            // Ω.5.P46.E1.napi-v1: native module. Cache hits via a separate
+            // map so we don't need to synthesize a ModuleRecord with an
+            // empty CompiledModule (which has no zero-value).
+            if let Some(v) = self.napi_module_cache.get(&resolved).cloned() {
+                return Ok(v);
+            }
+            let exports = crate::napi::load_napi_module(self, resolved_path)?;
+            self.napi_module_cache.insert(resolved.clone(), exports.clone());
+            return Ok(exports);
+        }
         // Load. For CJS the return is module.exports; for ESM,
         // the namespace object.
         let ns = self.load_module(&resolved)?;
@@ -1495,6 +1533,7 @@ fn probe_with_extensions(candidate: &std::path::Path, original: &str) -> Result<
         with_suffix(candidate, ".cjs"),
         with_suffix(candidate, ".js"),
         with_suffix(candidate, ".json"),
+        with_suffix(candidate, ".node"),  // Ω.5.P46.E1.napi-v1
         candidate.join("index.mjs"),
         candidate.join("index.cjs"),
         candidate.join("index.js"),

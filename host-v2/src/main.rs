@@ -6,6 +6,15 @@ use rusty_bun_host_v2::install_bun_host;
 use rusty_js_runtime::{Runtime, Value};
 use std::process::ExitCode;
 
+// Ω.5.P46.E1.napi-v1: reference the keepalive array so the linker
+// retains every napi_* C symbol. Without this Rust dead-code-strips the
+// `#[no_mangle] pub extern "C"` shims (they're not referenced by any
+// other Rust code) and dlopen'd .node modules can't resolve them via
+// dlsym. The array itself is declared `#[no_mangle] pub static`, so
+// just reading its length here is enough to anchor every entry.
+#[used]
+static _NAPI_RETAIN: usize = rusty_js_runtime::napi::NAPI_KEEPALIVE.len();
+
 fn format_thrown(rt: &Runtime, v: &Value) -> String {
     match v {
         Value::String(s) => format!("Thrown: {}", s),

@@ -1103,10 +1103,30 @@ fn install_function_proto(rt: &mut Runtime, host: ObjectRef) {
         };
         let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
         let bound_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+        // Ω.5.P50.E2 (C1 constraint): per ECMA-262 §20.2.5.5 BoundFunctionCreate
+        // + §10.4.1, bound functions have spec-mandated name "bound "+target.name
+        // and length max(0, target.length - boundArgs.length). Without these,
+        // call-bind output (array.prototype.* polyfills, data-view-* shims,
+        // hasown, queue-microtask, emoji-regex, etc.) emit module-namespaces
+        // missing name/length where Bun has them — the kc-pm-1-2 cluster's
+        // 18+5-pkg signature.
+        let target_name = match rt.object_get(target, "name") {
+            Value::String(s) => (*s).clone(),
+            _ => String::new(),
+        };
+        let target_length = match rt.object_get(target, "length") {
+            Value::Number(n) if n.is_finite() => n,
+            _ => 0.0,
+        };
+        let n_bound = bound_args.len() as f64;
+        let bound_length = (target_length - n_bound).max(0.0);
+        let bound_name = format!("bound {}", target_name);
+        let mut properties = indexmap::IndexMap::new();
+        crate::value::install_function_meta_props(&mut properties, &bound_name, bound_length);
         let bf = Object {
             proto: None,
             extensible: true,
-            properties: indexmap::IndexMap::new(),
+            properties,
             internal_kind: InternalKind::BoundFunction(BoundFunctionInternals {
                 target,
                 this: bound_this,

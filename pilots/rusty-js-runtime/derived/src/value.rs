@@ -83,6 +83,16 @@ pub enum Value {
     /// Tier-Ω.5.CCCCCCCC: real arithmetic substrate replacing the v1
     /// Rc<String> representation that coerced through f64.
     BigInt(Rc<crate::bigint::JsBigInt>),
+    /// Tier-Ω.5.P19.E1.symbol-value-type: Symbol as a distinct value variant.
+    /// Carries the canonical internal `@@sym:<n>:<desc>` or `@@sym:<key>`
+    /// form verbatim so `to_string(Value::Symbol)` returns the same string
+    /// used as the underlying property-storage key. E2-class relaxation:
+    /// the data model keeps string-keyed storage; the variant carries the
+    /// typeof + enumeration discrimination only. Well-known symbols
+    /// (`Symbol.iterator`, etc.) remain `Value::String("@@iterator")` so
+    /// existing intrinsic-method dispatch sites continue to work without
+    /// a parallel migration.
+    Symbol(Rc<String>),
     Object(ObjectRef),
 }
 
@@ -95,6 +105,7 @@ impl Value {
             Value::Number(_) => "number",
             Value::String(_) => "string",
             Value::BigInt(_) => "bigint",
+            Value::Symbol(_) => "symbol",
             // Post-3.e.d: Value::Object's typeof requires a heap to peek
             // InternalKind. Without a runtime here we report "object";
             // callers that need precise function/object disambiguation
@@ -115,6 +126,7 @@ impl Value {
             }
             (Value::String(x), Value::String(y)) => x == y,
             (Value::BigInt(x), Value::BigInt(y)) => x == y,
+            (Value::Symbol(x), Value::Symbol(y)) => x == y,
             (Value::Object(x), Value::Object(y)) => x == y,
             _ => false,
         }
@@ -130,6 +142,7 @@ impl std::fmt::Debug for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{:?}", s.as_str()),
             Value::BigInt(b) => write!(f, "{}n", b.to_decimal()),
+            Value::Symbol(s) => write!(f, "Symbol({:?})", s.as_str()),
             Value::Object(id) => write!(f, "[Object #{}]", id.0),
         }
     }

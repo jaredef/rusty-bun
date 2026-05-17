@@ -841,7 +841,7 @@ impl Runtime {
                 if matches!(o.internal_kind, InternalKind::Array) {
                     // Numeric keys in ascending order, length excluded.
                     let mut ks: Vec<(u64, String)> = o.properties.iter()
-                        .filter_map(|(k, d)| if d.enumerable && k != "length" {
+                        .filter_map(|(k, d)| if d.enumerable && k != "length" && !k.starts_with("@@") {
                             k.parse::<u64>().ok().map(|n| (n, k.clone()))
                         } else { None })
                         .collect();
@@ -853,7 +853,10 @@ impl Runtime {
                     // surfaced function-arity (and any other enumerable
                     // own "length" property a CJS namespace mirrors from
                     // a default-fn export).
-                    o.properties.iter().filter(|(_, d)| d.enumerable)
+                    // Ω.5.P19.E1: filter `@@`-prefixed keys (Symbol-typed
+                    // and well-known-symbol keys) per ECMA §7.3.21
+                    // EnumerableOwnProperties string-only path.
+                    o.properties.iter().filter(|(k, d)| d.enumerable && !k.starts_with("@@"))
                         .map(|(k, _)| k.clone()).collect()
                 }
             };
@@ -874,7 +877,7 @@ impl Runtime {
                 let o = rt.obj(id);
                 let is_array = matches!(o.internal_kind, InternalKind::Array);
                 let mut entries: Vec<(String, Option<Value>)> = o.properties.iter()
-                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
+                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length") && !k.starts_with("@@"))
                     .map(|(k, d)| (k.clone(), d.getter.clone()))
                     .collect();
                 if is_array {
@@ -908,7 +911,7 @@ impl Runtime {
                 let o = rt.obj(id);
                 let is_array = matches!(o.internal_kind, InternalKind::Array);
                 let mut entries: Vec<(String, Option<Value>)> = o.properties.iter()
-                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length"))
+                    .filter(|(k, d)| d.enumerable && !(is_array && *k == "length") && !k.starts_with("@@"))
                     .map(|(k, d)| (k.clone(), d.getter.clone()))
                     .collect();
                 if is_array {
@@ -1218,14 +1221,19 @@ impl Runtime {
                 let is_array = matches!(o.internal_kind, InternalKind::Array);
                 if is_array {
                     let mut ks: Vec<(u64, String)> = o.properties.iter()
-                        .filter_map(|(k, _)| k.parse::<u64>().ok().map(|n| (n, k.clone())))
+                        .filter_map(|(k, _)| if k.starts_with("@@") { None } else {
+                            k.parse::<u64>().ok().map(|n| (n, k.clone()))
+                        })
                         .collect();
                     ks.sort_by_key(|(n, _)| *n);
                     let mut out: Vec<String> = ks.into_iter().map(|(_, k)| k).collect();
                     if o.properties.contains_key("length") { out.push("length".into()); }
                     out
                 } else {
-                    o.properties.keys().cloned().collect()
+                    // Ω.5.P19.E1: getOwnPropertyNames is string-keyed only
+                    // per ECMA §20.1.2.10. Symbol-keyed properties surface
+                    // through getOwnPropertySymbols instead.
+                    o.properties.keys().filter(|k| !k.starts_with("@@")).cloned().collect()
                 }
             };
             for (i, k) in keys.iter().enumerate() {
@@ -1245,12 +1253,17 @@ impl Runtime {
                 Some(Value::Object(id)) => *id,
                 _ => return Ok(Value::Object(rt.alloc_object(Object::new_array()))),
             };
+            // Ω.5.P19.E1: narrow to user-created Symbol-keyed properties
+            // (`@@sym:` prefix). Well-known symbol slots (`@@iterator`,
+            // `@@toStringTag`, ...) are storage details, not what consumers
+            // expect from getOwnPropertySymbols. Values surface as
+            // Value::Symbol so `typeof getOwnPropertySymbols(o)[0] === 'symbol'`.
             let keys: Vec<String> = rt.obj(id).properties.keys()
-                .filter(|k| k.starts_with("@@"))
+                .filter(|k| k.starts_with("@@sym:"))
                 .cloned().collect();
             let arr = rt.alloc_object(Object::new_array());
             for (i, k) in keys.iter().enumerate() {
-                rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+                rt.object_set(arr, i.to_string(), Value::Symbol(Rc::new(k.clone())));
             }
             rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
             Ok(Value::Object(arr))
@@ -2767,8 +2780,19 @@ impl Runtime {
                 Value::Object(id) => {
                     let keys: Vec<String> = rt.obj(id).properties.keys().cloned().collect();
                     let arr = rt.alloc_object(Object::new_array());
+                    // Ω.5.P19.E1: surface Symbol-keyed slots as Value::Symbol
+                    // so `typeof Reflect.ownKeys(o)[i] === 'symbol'` holds
+                    // for user-created symbol entries. Well-known slots
+                    // (`@@iterator` etc.) stay as strings; they are storage
+                    // representations of well-knowns and consumers expect
+                    // either form.
                     for (i, k) in keys.iter().enumerate() {
-                        rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+                        let v = if k.starts_with("@@sym:") {
+                            Value::Symbol(Rc::new(k.clone()))
+                        } else {
+                            Value::String(Rc::new(k.clone()))
+                        };
+                        rt.object_set(arr, i.to_string(), v);
                     }
                     rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
                     Ok(Value::Object(arr))
@@ -3028,7 +3052,7 @@ impl Runtime {
             let desc = args.first()
                 .map(|v| crate::abstract_ops::to_string(v).as_str().to_string())
                 .unwrap_or_default();
-            Ok(Value::String(Rc::new(format!("@@sym:{}:{}", n, desc))))
+            Ok(Value::Symbol(Rc::new(format!("@@sym:{}:{}", n, desc))))
         });
         let sym = self.alloc_object(sym_obj);
         // Well-known Symbol.iterator is, in v1, the string key "@@iterator".
@@ -3052,13 +3076,14 @@ impl Runtime {
         self.object_set(sym, "asyncDispose".into(), Value::String(Rc::new("@@asyncDispose".into())));
         register_method(self, sym, "for", |_rt, args| {
             let s = args.first().map(|v| crate::abstract_ops::to_string(v).as_str().to_string()).unwrap_or_default();
-            Ok(Value::String(Rc::new(format!("@@sym:{}", s))))
+            Ok(Value::Symbol(Rc::new(format!("@@sym:{}", s))))
         });
         register_method(self, sym, "keyFor", |_rt, args| {
-            // v1: returns the description portion of a Symbol.for()-produced
-            // string, undefined otherwise. Matches Ω.5.c's string-shaped
-            // Symbol representation.
-            let s = args.first().and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None });
+            // Ω.5.P19.E1: Symbol value type. Accept Value::Symbol only
+            // (spec § 20.4.2.7 throws TypeError on non-Symbol; we return
+            // undefined to match prior pragmatic laxity). Recover the key
+            // from the canonical `@@sym:<key>` form Symbol.for produces.
+            let s = args.first().and_then(|v| if let Value::Symbol(s) = v { Some(s.clone()) } else { None });
             match s {
                 Some(s) if s.starts_with("@@sym:") && !s.contains(':') => Ok(Value::Undefined),
                 Some(s) => {
@@ -3073,7 +3098,7 @@ impl Runtime {
         let sym_proto = self.alloc_object(Object::new_ordinary());
         register_method(self, sym_proto, "toString", |rt, _args| {
             match rt.current_this() {
-                Value::String(s) if s.starts_with("@@sym:") => {
+                Value::Symbol(s) => {
                     let body = s.strip_prefix("@@sym:").unwrap_or(&s);
                     let desc = body.split_once(':').map(|(_, d)| d).unwrap_or(body);
                     Ok(Value::String(Rc::new(format!("Symbol({})", desc))))
@@ -3250,6 +3275,11 @@ fn json_stringify(rt: &Runtime, v: &Value) -> String {
         }
         Value::String(s) => json_quote_string(s.as_str()),
         Value::BigInt(_) => "null".into(),
+        // ECMA §25.5.2.4 SerializeJSONProperty: Symbol values serialize to
+        // undefined and the enclosing object omits the key. We surface
+        // "undefined" here; the caller's per-property filter at the object
+        // branch elides keys whose serialized form is "undefined".
+        Value::Symbol(_) => "undefined".into(),
         Value::Object(id) => {
             // Snapshot the props (clones Value) to avoid recursive borrow.
             let (is_array, props): (bool, Vec<(String, PropertyDescriptor)>) = {
@@ -3267,8 +3297,13 @@ fn json_stringify(rt: &Runtime, v: &Value) -> String {
                 let body: Vec<String> = entries.into_iter().map(|(_, s)| s).collect();
                 format!("[{}]", body.join(","))
             } else {
+                // Ω.5.P19.E1: JSON.stringify ignores Symbol-keyed properties
+                // per ECMA §25.5.2.4 (the `@@` prefix on both user symbols
+                // and well-known-symbol slots). Also skip values whose
+                // serialized form is `"undefined"` (covers Symbol values
+                // too — the upper-level Symbol match returns "undefined").
                 let entries: Vec<String> = props.iter()
-                    .filter(|(_, d)| d.enumerable && !matches!(d.value, Value::Undefined))
+                    .filter(|(k, d)| d.enumerable && !k.starts_with("@@") && !matches!(d.value, Value::Undefined | Value::Symbol(_)))
                     .map(|(k, d)| format!("{}:{}", json_quote_string(k), json_stringify(rt, &d.value)))
                     .collect();
                 format!("{{{}}}", entries.join(","))

@@ -1486,6 +1486,7 @@ impl Runtime {
                     Value::Number(_) => "number",
                     Value::String(_) => "string",
                     Value::BigInt(_) => "bigint",
+                    Value::Symbol(_) => "symbol",
                     Value::Object(_) => "object",
                 };
                 return Err(RuntimeError::TypeError(format!(
@@ -1870,6 +1871,7 @@ fn describe_value_for_diag(rt: &Runtime, v: &Value) -> String {
         Value::Boolean(b) => format!("Boolean({})", b),
         Value::Number(n) => format!("Number({})", n),
         Value::BigInt(b) => format!("BigInt({})", b.to_decimal()),
+        Value::Symbol(s) => format!("Symbol({:?})", s.as_str()),
         Value::String(s) => {
             let t = s.as_str();
             if t.len() <= 24 { format!("String({:?})", t) }

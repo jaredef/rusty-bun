@@ -13,6 +13,7 @@ pub fn to_boolean(v: &Value) -> bool {
         Value::Number(n) => !(n.is_nan() || *n == 0.0),
         Value::String(s) => !s.is_empty(),
         Value::BigInt(b) => !b.is_zero(),
+        Value::Symbol(_) => true,
         Value::Object(_) => true,
     }
 }
@@ -28,7 +29,8 @@ pub fn to_number(v: &Value) -> f64 {
         Value::Number(n) => *n,
         Value::String(s) => parse_string_to_number(s.as_str()),
         Value::BigInt(b) => b.to_f64(),  // ECMA §7.1.4 throws TypeError; we follow Bun's pragmatic lossy coercion
-        Value::Object(_) => f64::NAN,  // Object -> primitive deferred
+        Value::Symbol(_) => f64::NAN,    // ECMA §7.1.4 throws TypeError on Symbol; lossy NaN matches existing BigInt pragmatism
+        Value::Object(_) => f64::NAN,    // Object -> primitive deferred
     }
 }
 
@@ -50,6 +52,13 @@ pub fn to_string(v: &Value) -> Rc<String> {
         Value::Number(n) => number_to_string(*n),
         Value::String(s) => return s.clone(),
         Value::BigInt(b) => b.to_decimal(),
+        // Ω.5.P19.E1: Symbol stores its canonical `@@sym:<n>:<desc>` form
+        // as the inner Rc<String>, which is also the underlying property-
+        // storage key. Returning it preserves the round-trip `obj[sym] = v`
+        // → `obj.properties["@@sym:..."]` invariant the storage layer
+        // depends on. Spec §7.1.17 throws TypeError on Symbol; we follow
+        // the same pragmatic relaxation BigInt takes one line up.
+        Value::Symbol(s) => return s.clone(),
         Value::Object(_) => "[object Object]".to_string(),  // Object ToString deferred
     })
 }
@@ -80,6 +89,13 @@ pub fn is_strictly_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::String(x), Value::String(y)) => x.as_str() == y.as_str(),
         (Value::BigInt(x), Value::BigInt(y)) => x == y,
+        // Ω.5.P19.E1: SameValue on Symbols compares the canonical
+        // `@@sym:` string by content. Symbol() with each call carries a
+        // distinct counter, so two literal `Symbol('x')` calls never
+        // compare equal. Symbol.for(k) intentionally produces a stable
+        // `@@sym:<k>` form for any given k, so `Symbol.for('a') === Symbol.for('a')`
+        // holds via content equality.
+        (Value::Symbol(x), Value::Symbol(y)) => x.as_str() == y.as_str(),
         (Value::Object(x), Value::Object(y)) => x == y,
         _ => false,
     }

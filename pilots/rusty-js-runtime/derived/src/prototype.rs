@@ -78,6 +78,7 @@ fn install_object_proto(rt: &mut Runtime, host: ObjectRef) {
             Value::Number(_) => "[object Number]".to_string(),
             Value::String(_) => "[object String]".to_string(),
             Value::BigInt(_) => "[object BigInt]".to_string(),
+            Value::Symbol(_) => "[object Symbol]".to_string(),
             Value::Object(id) => {
                 let tag = match &rt.obj(id).internal_kind {
                     InternalKind::Array => "Array",

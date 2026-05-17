@@ -32,10 +32,10 @@ pub fn install(rt: &mut Runtime) {
             "node:http http.createServer: not yet implemented (Tier-Ω.5.r stub)".into(),
         ))
     });
-    register_method(rt, http, "Agent", |_rt, _args| {
-        Err(RuntimeError::TypeError(
-            "node:http http.Agent: not yet implemented (Tier-Ω.5.r stub)".into(),
-        ))
+    // Ω.5.P49.E4: parallel to https.Agent — benign at module-init.
+    register_method(rt, http, "Agent", |rt, _args| {
+        let id = rt.alloc_object(rusty_js_runtime::Object::new_ordinary());
+        Ok(Value::Object(id))
     });
 
     // STATUS_CODES — partial. Enough entries that callers probing

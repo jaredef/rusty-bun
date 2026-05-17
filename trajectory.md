@@ -1552,3 +1552,77 @@ No new §A8.* discipline this anchor. §A8.23 from EXT 8 (host-v2 + rusty-js-run
 Read seed.md §A8.23 first. Read this anchor (EXT 9) for the post-P48 state. Canonical reading: `host/tools/parity-results-top500-postp48.json` (70.7%, 726/1026). Ceiling reference: `host/tools/parity-results-top500-postext7.json` (75.2%, host/). Migration-cost gap: 4.5 pp.
 
 First action on resume: pick one cluster from the open-scope list, walk it per Doc 721 Step 2, dispatch a tagged move, run `parity-measure-v2.sh` for the next reading. Pin-Art tag count this engagement: ~137 (EXT 8) + ~30 (this burst) = ~167 substrate moves committed.
+
+
+## RESUME VECTOR EXTENSION 10 — 2026-05-17 evening (Ω.5.P49.E1-E5 alphabet walk on playwright; canonical sweep 71.1%)
+
+### Headline
+
+post-P49 canonical reading: **71.1% (730 / 1026)** on parity-top500 host-v2. `host/tools/parity-results-top500-postp49.json`. Pass 730 / Fail 244 / Skip 52.
+
+Delta vs post-P48 (70.7% / 726): **+0.4 pp, +4 raw packages**. Migration-cost gap (host/ ceiling − host-v2): 75.2 − 71.1 = **4.1 pp**, narrowed from 4.5 pp at EXT 9.
+
+Five E-moves landed across one walk on playwright-core, four of which are general-substrate features. Headline yield is small because the alphabet walk was specifically chasing one package's chain — each E-move closed the cut blocking *that* package's import, but downstream cuts in other basket packages bottleneck at different places. The substrate-feature value is wider than the basket headline shows.
+
+### The walk: P49.E1 → P49.E5
+
+Per Doc 717 alphabet, all five tags on playwright-core's load chain. Three general-substrate features, two host-level shape stubs:
+
+- **Ω.5.P49.E1.template-head-middle-not-expr-complete** (1afdf7dc). Parser regex/division disambiguation: `token_completes_expression()` returned `true` for all Template tokens, causing the lexer to read `/` as division at the start of template substitutions. Fix: only `TemplatePart::NoSubstitution` and `Tail` complete an expression; `Head` and `Middle` open a substitution-expression context where the next `/` should lex as RegularExpressionLiteral. Visible unlocks: csso, stylelint past parse stage (into deeper cuts).
+- **Ω.5.P49.E2.super-member-store** (bc7f62db). Compiler: `super.x = v` assignment hit the bare-Super error path because `compile_plain_assign`'s Member arm called `compile_expr(object)` on `Expr::Super`. Fix: when assignment target's object is `Super`, emit `PushThis` per ES2015 spec (`super.x = v` walks HomeObject's proto for lookup but the receiver is `this`). Mirror of `compile_super_member_load`'s read-side simplification — consistent across read/write paths. Visible unlock: **linkedom full OK**.
+- **Ω.5.P49.E3.intrinsic-ctor-stubs** (044849a8). zlib: `Inflate`, `Deflate`, `Gzip`, `Gunzip`, `{De,In}flateRaw`, `BrotliCompress`, `BrotliDecompress`, `Zlib` as ctor objects with `prototype.constructor` wired. intrinsics: `Request`, `Response`, `Headers`, `FormData`, `Blob`, `File`, `ReadableStream`, `WritableStream`, `TransformStream` + controllers/readers/queuing strategies + `TextEncoderStream`/`TextDecoderStream` as callable globals with `prototype.constructor`. `fetch()` global also added. `class APIRequest extends GlobalRequest` and `class X extends TransformStream` now compile; `util.inherits(Inflate, zlib.Inflate)` finds an object.
+- **Ω.5.P49.E4.agent-benign-at-init** (53e0bd3e). `http.Agent` / `https.Agent` return an empty Object instead of throwing — playwright's `happyEyeballs.ts` constructs `new https.Agent({})` at module-top-level (outer-scope default). Throwing stub killed the import; benign one lets init finish.
+- **Ω.5.P49.E5.static-init-blocks** (3831f7f1). ES2022 `static { ... }` blocks: parser and AST already routed them through `ClassMember::StaticBlock`, but the compiler lowered the body inline against the enclosing `this` rather than the class constructor. Fix: wrap the body as an anonymous 0-arg closure and emit `CallMethod` with the class ctor as receiver — the standard `[receiver, method, ...args]` stack layout routes `this` correctly. ClassFrame pushed with `is_static=true` for super resolution. Smoke test: `class Foo { static { this.Events = {A:'a'} } }` followed by `class Bar extends Foo { static { this.x = this.Events.A } }` works correctly through proto-of-ctor.
+
+### Why the basket headline only moved +4
+
+Walking one package's chain peels its specific cuts. Each E-move closed *that* package's blocker but the next package in the residual usually fails at a different point. E1 unblocked csso/stylelint past parse but they hit Buffer/Array `.map` gaps next (separate cluster). E2 unblocked linkedom completely (+1). E3 unblocked playwright's GlobalRequest/TransformStream and pngjs's Inflate but playwright then hit deeper cuts and pngjs may be transitively shadowed. E4 unblocked playwright past Agent. E5 unblocked playwright past static-block but playwright then hit its own runtime control-flow cut (`new options2(...)` returning a plain Object that lacks the inherited `.addListener`).
+
+Net visible to the basket: +4 packages (mostly linkedom and small ripples). The substrate-feature value (E1, E2, E5 are general engine features) is realized package-by-package as future moves close the *next* cuts in each chain.
+
+### Residual probe-shape distribution post-P49
+
+233 deduped FAILs:
+
+| count | share | shape | exemplars |
+|-------|-------|-------|-----------|
+| 119 | 51.1% | III.c dyn-import | arktype, temporal-polyfill, got, axios |
+| 55 | 23.6% | III.a OK/OK keyCount Δ±1-2 | superstruct, fflate, node-fetch |
+| 15 | 6.4% | III.a OK/OK same kc, typeof diff | zod $brand |
+| 14 | 6.0% | III.a OK/OK keyCount Δ 3-10 | accessor-descriptor gaps |
+| 11 | 4.7% | III.a OK/OK keyCount Δ>10 | enquirer-style getter expansion |
+| 9 | 3.9% | other / both-ERR | |
+| 5 | 2.1% | III.c CompileError | ioredis-mock (>25 args), forever (octal-escape), 3 others |
+| 4 | 1.7% | bun ERR / rb OK (false-pass candidate per Doc 726 §VI.5) | |
+| 1 | 0.4% | III.a same-kc value-diff | |
+
+### Per-cluster delta vs EXT 9 (post-P48)
+
+- **III.c dyn-import:** 124 → 119 (−5). E3 ctor stubs ate sub-dep extends-chain failures inside dyn-import targets.
+- **III.c CompileError:** carved out as its own bucket post-P49 — 5 remaining (ioredis-mock, forever + 3). Pre-E1, this bucket was 10; E1 absorbed 5 and the rest pushed past parse into other shapes.
+- **III.a kc±1-2:** 55 → 55 (unchanged — not addressed this round).
+- **III.a typeof-diff:** 17 → 15 (−2, noise-level).
+- **III.a kc±3-10:** 14 → 14 (unchanged).
+- **III.a kc>10:** 10 → 11 (+1, noise).
+
+### Doc 727 alignment
+
+This walk was a basin-internal prediction: pick the dominant residual (III.c CompileError, 10 pkgs at EXT 9), chase the alphabet on a single high-yield package, and expect to absorb the cluster plus radiate to adjacent shapes. Realized: E1 absorbed half the CompileError sub-cluster (5/10) into deeper cuts; E2-E5 closed playwright-internal cuts that aren't general residual representatives. Predicted U for the bundle was 5-10 (CompileError absorption); realized A ≈ 5 visible + 4 basket-yield = 9 from a single move-bundle. Inside the wide-but-recognizable band per Doc 727 §V.
+
+### Open scope at this anchor
+
+The III.c dyn-import cluster (119 pkgs, 51.1%) remains dominant. The five-pkg CompileError sub-bucket still has clean cuts available:
+1. **ioredis-mock — >255 call args.** Calling-convention u8 ceiling for function arguments. Either widen the encoding (u16) or restructure how spread/many-args calls are compiled.
+2. **forever — octal-escape forbidden in cjs wrapper.** Strict-mode octal literal in a CJS module getting wrapped. Either suppress strict-mode for the wrapper or accept legacy octals.
+3. **Three more CompileError sub-cuts** unidentified at this anchor; walk each.
+
+Beyond CompileError:
+4. **III.a kc±1-2 long tail (55 pkgs)** — the EXT 8 priority cluster's remaining hard cases. Symbol-keyed leakage into Object.keys per ECMA §7.3.21 named at EXT 8 / EXT 9 still queued. Candidate tag: Ω.5.P50.E1.object-keys-symbol-filter.
+5. **III.a typeof-diff (zod $brand pattern, 15 pkgs)** — Symbol value's `typeof` returning `"string"` instead of `"symbol"`. Long-standing.
+6. **The 4 bun-ERR / rb-OK entries** — Doc 726 §VI.5 false-pass review.
+
+### Resume protocol
+
+Read seed.md §A8.23 (current operative discipline). Canonical reading: `host/tools/parity-results-top500-postp49.json` (71.1%, 730/1026). Ceiling reference: `host/tools/parity-results-top500-postext7.json` (75.2%, host/). Migration-cost gap: 4.1 pp.
+
+First action on resume: pick from the open-scope list. The III.a kc±1-2 long-tail (Symbol-keys filter) is the highest-yield single move at this anchor since it addresses 55 packages with a single ECMA-spec fix. Pin-Art tag count this engagement: ~167 (EXT 9) + 5 (P49.E1-E5) = ~172 substrate moves committed.

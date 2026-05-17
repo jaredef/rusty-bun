@@ -1542,8 +1542,21 @@ fn resolve_exports_target(
         serde_json::Value::Object(map) => {
             // Conditional-exports map. Priority: importer-specific then
             // generic conditions.
+            //
+            // Ω.5.P20.E1.exports-module-condition: insert "module" before
+            // "node"/"default" for ESM. Packages with a dual ESM/CJS build
+            // commonly declare:
+            //   "exports": { ".": { "module": "./esm/x.js", "default": "./cjs/x.js" } }
+            // without an "import" key (the spec gives "module" a fallback
+            // role for the ESM build when "import" is absent — Node and Bun
+            // both honor it). Without this insertion the resolver fell back
+            // to "default" and loaded the CJS build, causing two parity
+            // failures per package: extra `__esModule` flag from the CJS
+            // build and a synthesized `default` shape that diverges from
+            // Bun's ESM-namespace shape. Closes the io-ts / @opentelemetry/api
+            // family (sub-shape of the post-P19 III.a keyCount-±1-2 cluster).
             let priority: &[&str] = match importer_kind {
-                ModuleKind::ESM => &["import", "node", "default"],
+                ModuleKind::ESM => &["import", "module", "node", "default"],
                 ModuleKind::CJS => &["require", "node", "default"],
             };
             for cond in priority {

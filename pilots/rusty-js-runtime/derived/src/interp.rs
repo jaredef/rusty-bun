@@ -95,6 +95,16 @@ pub struct Runtime {
     /// Nested generators (yield inside a generator that yields a generator)
     /// stack correctly.
     pub gen_yields_stack: Vec<rusty_js_gc::ObjectId>,
+    /// Tier-Ω.5.P23.E1.live-import-bindings: per-source-URL registry of
+    /// import-bindings whose source module was still Linking at evaluate-
+    /// time. When the source module's evaluation completes, the registry
+    /// is drained and each cell receives the resolved binding value.
+    /// Enables ECMA-262 §16.2.1.5 live binding semantics for the
+    /// common circular-import case where module M imports a default/
+    /// named export from module N while N is still loading M.
+    /// Key: source-module URL. Value: list of (cell, binding-kind,
+    /// optional-named-binding-name) tuples to update at drain time.
+    pub pending_live_bindings: HashMap<String, Vec<crate::module::DeferredImportBinding>>,
 }
 
 impl Runtime {
@@ -120,6 +130,7 @@ impl Runtime {
             bigint_prototype: None,
             regexp_prototype: None,
             gen_yields_stack: Vec::new(),
+            pending_live_bindings: HashMap::new(),
         }
     }
 

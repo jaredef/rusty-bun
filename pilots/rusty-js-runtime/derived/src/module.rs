@@ -37,6 +37,21 @@ use std::rc::Rc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleStatus { Unlinked, Linking, Linked, Evaluating, Evaluated, Failed }
 
+/// Tier-Ω.5.P23.E1.live-import-bindings: a deferred import-binding awaiting
+/// the source module's evaluation to complete so its cell can be populated
+/// with the real exported value. Stored on `Runtime::pending_live_bindings`
+/// keyed by the source module's resolved URL. Drained at end of that
+/// module's `evaluate_module` (or `evaluate_cjs_module`) so any downstream
+/// closures that captured the cell via Op::CaptureLocal see the populated
+/// value when they later execute.
+pub struct DeferredImportBinding {
+    pub cell: crate::value::UpvalueCell,
+    pub kind: rusty_js_bytecode::ImportBindingKind,
+    /// `true` if the source resolves to a CJS module; the drain reads
+    /// `module.exports` instead of the spec namespace.
+    pub is_cjs: bool,
+}
+
 /// Tier-Ω.5.j.cjs: ESM vs CJS classification. Drives the evaluation
 /// pipeline: ESM goes through `evaluate_module`, CJS goes through the
 /// wrapper-synthesis path in `evaluate_cjs_module`. ESM-importing-CJS
@@ -572,6 +587,50 @@ impl Runtime {
         self.modules.get(url).map(|r| r.borrow().kind)
     }
 
+    /// Tier-Ω.5.P23.E1.live-import-bindings: recompute the value of an
+    /// import binding against the source module's now-complete namespace.
+    /// Mirrors the kind-dispatch in `evaluate_module`'s import loop. The
+    /// drain step calls this after a source module finishes evaluating
+    /// so that any cells registered for that module receive the resolved
+    /// value (rather than the Undefined that was snapshotted during the
+    /// cycle's partial-namespace window).
+    pub fn resolve_import_binding_value(
+        &mut self,
+        ns: ObjectRef,
+        kind: &ImportBindingKind,
+        is_cjs: bool,
+        resolved_url: &str,
+    ) -> Value {
+        let cjs_raw = if is_cjs { self.cjs_exports_of(resolved_url) } else { None };
+        match (kind, &cjs_raw) {
+            (ImportBindingKind::Default, Some(raw)) => raw.clone(),
+            (ImportBindingKind::Namespace, Some(raw)) => {
+                Value::Object(self.cjs_namespace_view(raw.clone()))
+            }
+            (ImportBindingKind::Named(n), Some(raw)) => match raw {
+                Value::Object(oid) => {
+                    if let Some(getter) = self.find_getter(*oid, n) {
+                        self.call_function(getter, Value::Object(*oid), Vec::new())
+                            .unwrap_or(Value::Undefined)
+                    } else {
+                        self.object_get(*oid, n)
+                    }
+                }
+                _ => Value::Undefined,
+            },
+            (ImportBindingKind::Default, None) => self.object_get(ns, "default"),
+            (ImportBindingKind::Namespace, None) => Value::Object(ns),
+            (ImportBindingKind::Named(n), None) => {
+                if let Some(getter) = self.find_getter(ns, n) {
+                    self.call_function(getter, Value::Object(ns), Vec::new())
+                        .unwrap_or(Value::Undefined)
+                } else {
+                    self.object_get(ns, n)
+                }
+            }
+        }
+    }
+
     /// Tier-Ω.5.b: dispatch a `node:*` specifier to the host's
     /// ResolveBuiltinModule hook. Caches the resulting namespace under
     /// the specifier so repeated imports yield identical handles.
@@ -678,7 +737,14 @@ impl Runtime {
         // Resolve every import to a value vector parallel to
         // bytecode.imports, then write into the frame's local slots
         // before running the body.
-        let mut import_values: Vec<(u16, Value)> =
+        //
+        // Ω.5.P23.E1.live-import-bindings: also track whether the source
+        // module is fully Evaluated at resolve-time. If not (cyclic
+        // import returning a Linking-status partial namespace), we'll
+        // promote the destination slot to a cell after frame-init and
+        // register the cell in `pending_live_bindings` for post-cycle
+        // update.
+        let mut import_values: Vec<(u16, Value, Option<(String, bool, ImportBindingKind)>)> =
             Vec::with_capacity(bytecode_rc.imports.len());
         for ib in &bytecode_rc.imports {
             let resolved = self.resolve_module_full(url, &ib.module_request, ModuleKind::ESM)?;
@@ -687,6 +753,17 @@ impl Runtime {
                 self.resolve_builtin_namespace(&resolved)?
             } else {
                 self.load_module(&resolved)?
+            };
+            // Live-binding deferral decision: only meaningful for non-builtin
+            // disk modules. After `load_module` returns the source module's
+            // ModuleRecord status tells us whether evaluation completed
+            // (Evaluated) or whether we got a partial namespace from an
+            // in-flight cycle (Linking/Evaluating).
+            let needs_live_binding = !is_builtin && {
+                match self.modules.get(&resolved) {
+                    Some(rec) => !matches!(rec.borrow().status, ModuleStatus::Evaluated),
+                    None => false,
+                }
             };
             // Tier-Ω.5.j.cjs: if the resolved target is a CJS module,
             // import bindings read `module.exports` per Node interop —
@@ -739,7 +816,11 @@ impl Runtime {
                     }
                 }
             };
-            import_values.push((ib.slot, v));
+            let deferred_meta = if needs_live_binding {
+                let is_cjs = matches!(self.module_kind_of(&resolved), Some(ModuleKind::CJS));
+                Some((resolved.clone(), is_cjs, ib.kind.clone()))
+            } else { None };
+            import_values.push((ib.slot, v, deferred_meta));
         }
 
         // Tier-Ω.5.r: allocate the synthetic `import.meta` object for this
@@ -759,8 +840,25 @@ impl Runtime {
         // Build a module frame, pre-populate import slots, run body.
         let mut frame = Frame::new_module(&bytecode_rc);
         frame.import_meta = Some(meta_obj);
-        for (slot, v) in &import_values {
+        for (slot, v, deferred) in &import_values {
             frame.write_local(*slot as usize, v.clone());
+            // Ω.5.P23.E1.live-import-bindings: if the source was Linking
+            // at resolve-time, promote this slot to a shared cell now so
+            // that (a) the body's reads route through the cell, (b)
+            // closures captured during body evaluation share the cell,
+            // and (c) post-cycle drain can update the cell once the
+            // source completes its own evaluation.
+            if let Some((source_url, is_cjs, kind)) = deferred {
+                let cell = frame.promote_local(*slot as usize);
+                self.pending_live_bindings
+                    .entry(source_url.clone())
+                    .or_insert_with(Vec::new)
+                    .push(DeferredImportBinding {
+                        cell,
+                        kind: kind.clone(),
+                        is_cjs: *is_cjs,
+                    });
+            }
         }
         self.run_frame_module(&mut frame)?;
         // Tier-Ω.5.jjj: read locals through the cell promotion seam.
@@ -844,6 +942,18 @@ impl Runtime {
 
         // Flip the record to Evaluated.
         record.borrow_mut().status = ModuleStatus::Evaluated;
+
+        // Ω.5.P23.E1.live-import-bindings: drain any deferred import
+        // bindings that were registered against THIS module's URL by
+        // earlier-in-the-cycle importers. Each deferred entry's cell is
+        // shared with whatever frame/closure captured it; writing the
+        // resolved value here propagates to all readers.
+        if let Some(deferred) = self.pending_live_bindings.remove(url) {
+            for d in deferred {
+                let v = self.resolve_import_binding_value(namespace, &d.kind, d.is_cjs, url);
+                *d.cell.borrow_mut() = v;
+            }
+        }
 
         Ok(namespace)
     }

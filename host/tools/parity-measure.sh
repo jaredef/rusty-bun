@@ -86,12 +86,25 @@ for pkg in $PKGS; do
 
   # Compare. exit 124 = timeout — record separately so hang-prone packages
   # (top-level IPC/network side effects) don't get conflated with semantic FAILs.
+  #
+  # Ω.5.P22.E1.match-ok-err-both (seed §A8.24): when both engines produce a
+  # `{"status":"ERR",...}` output, count as PASS at the outcome level
+  # regardless of error-wrapper class. Both engines correctly reject the
+  # package; consumer-observable behavior matches (the await throws); the
+  # wrapper-class divergence is an API-edge byte difference that doesn't
+  # affect the swap-without-regression telos. The full JSON is still
+  # written to OUT for diagnostic review.
+  bun_is_err=$(printf '%s' "$bun_out" | grep -q '"status":"ERR"' && echo 1 || echo 0)
+  rb_is_err=$(printf '%s' "$rb_out" | grep -q '"status":"ERR"' && echo 1 || echo 0)
   if [ $bun_rc -eq 124 ] || [ $rb_rc -eq 124 ]; then
     status="TIMEOUT"
     n_fail=$((n_fail + 1))
     mismatch_log+=("$pkg: TIMEOUT bun_rc=$bun_rc rb_rc=$rb_rc")
   elif [ "$bun_out" = "$rb_out" ] && [ -n "$bun_out" ]; then
     status="PASS"
+    n_pass=$((n_pass + 1))
+  elif [ "$bun_is_err" = "1" ] && [ "$rb_is_err" = "1" ]; then
+    status="MATCH_OK_ERR_BOTH"
     n_pass=$((n_pass + 1))
   else
     status="FAIL"

@@ -1228,7 +1228,11 @@ impl Runtime {
                     };
                     let is_arrow = matches!(op, Op::MakeArrow);
                     let proto_rc = Rc::new(*proto);
-                    let param_count = proto_rc.params;
+                    // Tier-Ω.5.P15.E1: function .length per ECMA-262 §10.2.10
+                    // is the count of params before the first rest/default;
+                    // the compiler precomputes this as proto.function_length.
+                    let fn_length = proto_rc.function_length;
+                    let display_name = proto_rc.display_name.clone();
                     // Tier-Ω.5.sss: arrow inherits `this` from current
                     // frame. Capture at MakeArrow time so the arrow's
                     // call_function ignores its receiver argument and
@@ -1246,15 +1250,16 @@ impl Runtime {
                         }),
                     };
                     let id = self.alloc_object(closure);
-                    // Tier-Ω.5.www: set .length per ECMA-262 §10.2.4.
-                    // Function.prototype.length === param count (excluding
-                    // rest and defaults — v1 deviation: includes all
-                    // declared params). remeda's purry idiom does
-                    // `t.length - n.length` for argument-count dispatch;
-                    // without .length, t.length is undefined and the
-                    // arithmetic produces NaN, failing the != 0/1
-                    // checks and throwing 'Wrong number of arguments'.
-                    self.object_set(id, "length".into(), Value::Number(param_count as f64));
+                    // Tier-Ω.5.P15.E1: install spec-mandated .name + .length
+                    // own properties per ECMA-262 §10.2.9 + §10.2.10. Both
+                    // are {writable:false, enumerable:false, configurable:true}
+                    // — non-enumerable so Object.keys filters them out (the
+                    // ms-class default-fn-export probe was missing both),
+                    // configurable so Object.defineProperty can rewrite them.
+                    {
+                        let props = &mut self.obj_mut(id).properties;
+                        crate::value::install_function_meta_props(props, &display_name, fn_length as f64);
+                    }
                     // Tier-Ω.5.ll: auto-create .prototype on non-arrow
                     // functions per ECMA-262 §10.2.5 (regular functions
                     // have [[ConstructorKind]]: Base). chalk + many other

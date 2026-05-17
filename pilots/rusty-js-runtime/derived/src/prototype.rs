@@ -1198,12 +1198,15 @@ fn arg_string(args: &[Value], i: usize) -> String {
 fn register_method<F>(rt: &mut Runtime, host: ObjectRef, name: &str, f: F)
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
+    let mut properties = indexmap::IndexMap::new();
+    crate::value::install_function_meta_props(&mut properties, name, 0.0);
     let fn_obj = Object {
         proto: None, // function_prototype not yet installed when called from install_prototypes
         extensible: true,
-        properties: indexmap::IndexMap::new(),
+        properties,
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
+            length: 0,
             native,
         }),
     };

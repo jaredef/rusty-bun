@@ -90,10 +90,12 @@ pub fn install(rt: &mut Runtime, argv: Vec<String>) {
             let ns = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i64;
             Ok(Value::BigInt(std::rc::Rc::new(rusty_js_runtime::bigint::JsBigInt::from_i64(ns))))
         });
+        let mut bigint_props = indexmap::IndexMap::new();
+        rusty_js_runtime::value::install_function_meta_props(&mut bigint_props, "bigint", 0.0);
         let bigint_obj = rusty_js_runtime::value::Object {
-            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
+            proto: None, extensible: true, properties: bigint_props,
             internal_kind: rusty_js_runtime::value::InternalKind::Function(
-                rusty_js_runtime::value::FunctionInternals { name: "bigint".into(), native: bigint_fn }
+                rusty_js_runtime::value::FunctionInternals { name: "bigint".into(), length: 0, native: bigint_fn }
             ),
         };
         let bigint_id = rt.alloc_object(bigint_obj);

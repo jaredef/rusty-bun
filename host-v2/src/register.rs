@@ -13,12 +13,15 @@ pub fn new_object(rt: &mut Runtime) -> ObjectRef {
 pub fn register_method<F>(rt: &mut Runtime, host: ObjectRef, name: &str, f: F)
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
+    let mut properties = indexmap::IndexMap::new();
+    rusty_js_runtime::value::install_function_meta_props(&mut properties, name, 0.0);
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: indexmap::IndexMap::new(),
+        properties,
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
+            length: 0,
             native,
         }),
     };
@@ -36,12 +39,15 @@ pub fn set_constant(rt: &mut Runtime, host: ObjectRef, name: &str, value: Value)
 pub fn make_callable<F>(rt: &mut Runtime, name: &str, f: F) -> ObjectRef
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
+    let mut properties = indexmap::IndexMap::new();
+    rusty_js_runtime::value::install_function_meta_props(&mut properties, name, 0.0);
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: indexmap::IndexMap::new(),
+        properties,
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
+            length: 0,
             native,
         }),
     };

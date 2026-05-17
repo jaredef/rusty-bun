@@ -770,7 +770,12 @@ impl Runtime {
                     ks.sort_by_key(|(n, _)| *n);
                     ks.into_iter().map(|(_, k)| k).collect()
                 } else {
-                    o.properties.iter().filter(|(k, d)| d.enumerable && *k != "length")
+                    // Tier-Ω.5.P15.E1: filter by enumerable only; the
+                    // earlier blanket `k != "length"` filter elided ms's
+                    // surfaced function-arity (and any other enumerable
+                    // own "length" property a CJS namespace mirrors from
+                    // a default-fn export).
+                    o.properties.iter().filter(|(_, d)| d.enumerable)
                         .map(|(k, _)| k.clone()).collect()
                 }
             };
@@ -3114,13 +3119,28 @@ fn num_arg(args: &[Value], i: usize) -> f64 {
 }
 
 pub(crate) fn make_native(name: &str, f: impl Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static) -> Object {
+    make_native_with_length(name, 0, f)
+}
+
+/// Tier-Ω.5.P15.E1: intrinsic constructor with explicit ECMA-262 §10.2.10
+/// arity. Use this at sites where the spec mandates a specific .length
+/// (e.g. Math.min = 2, Object.keys = 1); the zero-default of `make_native`
+/// is observable through `fn.length` reads in consumer code.
+pub(crate) fn make_native_with_length(
+    name: &str,
+    length: u32,
+    f: impl Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static,
+) -> Object {
     let native: NativeFn = Rc::new(f);
+    let mut properties = indexmap::IndexMap::new();
+    crate::value::install_function_meta_props(&mut properties, name, length as f64);
     Object {
         proto: None,
         extensible: true,
-        properties: indexmap::IndexMap::new(),
+        properties,
         internal_kind: InternalKind::Function(FunctionInternals {
             name: name.to_string(),
+            length,
             native,
         }),
     }

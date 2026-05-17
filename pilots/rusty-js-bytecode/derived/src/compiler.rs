@@ -39,6 +39,16 @@ pub struct FunctionProto {
     pub bytecode: Vec<u8>,
     pub constants: ConstantsPool,
     pub params: u16,
+    /// ECMA-262 §10.2.9: the function's [[InitialName]] surfaced as the
+    /// own .name property. Comes from the function-decl / function-expr's
+    /// identifier; empty for unnamed expressions and arrows unless the
+    /// compiler applied a NamedEvaluation hint at the binding site.
+    pub display_name: String,
+    /// ECMA-262 §10.2.10 FunctionLength: count of formal parameters before
+    /// the first rest or default-valued parameter. Surfaced as the own
+    /// .length property. Distinct from `params` (which counts the raw
+    /// parameter slots including rest and defaults).
+    pub function_length: u16,
     pub locals: Vec<LocalDescriptor>,
     pub upvalues: Vec<UpvalueDescriptor>,
     /// Tier-Ω.5.l: if the last parameter is a rest parameter (`...name`),
@@ -793,7 +803,10 @@ impl Compiler {
                                 s
                             };
                             if let Some(init) = &d.init {
-                                self.compile_expr(init)?;
+                                // Tier-Ω.5.P15.E1: NamedEvaluation hint for
+                                // anonymous function expressions and arrows
+                                // bound by `let`/`const`/`var x = ...`.
+                                self.compile_expr_with_name_hint(init, Some(&id.name))?;
                             } else {
                                 encode_op(&mut self.bytecode, Op::PushUndef);
                             }
@@ -1730,6 +1743,45 @@ impl Compiler {
         None
     }
 
+    /// Tier-Ω.5.P15.E1: variant that propagates a NamedEvaluation hint.
+    /// Anonymous function-expression / arrow on the RHS of a binding take
+    /// the binding name as their .name property per ECMA-262 §13.2.5.5;
+    /// every other expression falls through to plain compile_expr.
+    fn compile_expr_with_name_hint(&mut self, e: &Expr, hint: Option<&str>) -> Result<(), CompileError> {
+        match e {
+            Expr::Function { name: None, is_async, is_generator, params, body, span } => {
+                self.record_span(*span);
+                let proto = self.compile_function_proto_with_name_hint(
+                    None, hint, *is_async, *is_generator, params, body)?;
+                let captures = proto.upvalues.clone();
+                let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut self.bytecode, Op::MakeClosure);
+                encode_u16(&mut self.bytecode, idx);
+                emit_captures(&mut self.bytecode, &captures);
+                Ok(())
+            }
+            Expr::Arrow { is_async, params, body, span } => {
+                self.record_span(*span);
+                let body_stmts: Vec<Stmt> = match body {
+                    ArrowBody::Block(stmts) => stmts.clone(),
+                    ArrowBody::Expression(expr) => vec![Stmt::Return {
+                        argument: Some((**expr).clone()),
+                        span: expr.span(),
+                    }],
+                };
+                let proto = self.compile_function_proto_with_name_hint(
+                    None, hint, *is_async, false, params, &body_stmts)?;
+                let captures = proto.upvalues.clone();
+                let idx = self.constants.intern(Constant::Function(Box::new(proto)));
+                encode_op(&mut self.bytecode, Op::MakeArrow);
+                encode_u16(&mut self.bytecode, idx);
+                emit_captures(&mut self.bytecode, &captures);
+                Ok(())
+            }
+            _ => self.compile_expr(e),
+        }
+    }
+
     fn compile_expr(&mut self, e: &Expr) -> Result<(), CompileError> {
         self.record_span(e.span());
         match e {
@@ -2242,7 +2294,10 @@ impl Compiler {
                                         self.compile_expr(value)?;
                                         encode_op(&mut self.bytecode, Op::SetPrototype);
                                     } else {
-                                        self.compile_expr(value)?;
+                                        // Tier-Ω.5.P15.E1: NamedEvaluation
+                                        // for method shorthand + anonymous
+                                        // function-valued properties.
+                                        self.compile_expr_with_name_hint(value, Some(name))?;
                                         let idx = self.constants.intern(Constant::String(name.clone()));
                                         encode_op(&mut self.bytecode, Op::InitProp);
                                         encode_u16(&mut self.bytecode, idx);
@@ -2414,6 +2469,25 @@ impl Compiler {
     fn compile_function_proto(
         &mut self,
         name: Option<BindingIdentifier>,
+        _is_async: bool,
+        is_generator: bool,
+        params: &[Parameter],
+        body: &[Stmt],
+    ) -> Result<FunctionProto, CompileError> {
+        self.compile_function_proto_with_name_hint(name, None, _is_async, is_generator, params, body)
+    }
+
+    /// Tier-Ω.5.P15.E1: NamedEvaluation pathway per ECMA-262 §13.2.5.5 +
+    /// §10.2.9. When an anonymous function-expression or arrow appears as
+    /// the RHS of `const x = ...`, `let x = ...`, `x = ...`, or a property
+    /// shorthand, the binding name flows in as `display_name_hint` and
+    /// surfaces as the function's own .name property. The hint does NOT
+    /// create a self-name slot inside the body (that's reserved for
+    /// genuinely named function expressions per §15.2.5).
+    fn compile_function_proto_with_name_hint(
+        &mut self,
+        name: Option<BindingIdentifier>,
+        display_name_hint: Option<&str>,
         _is_async: bool,
         is_generator: bool,
         params: &[Parameter],
@@ -2712,10 +2786,22 @@ impl Compiler {
             self.enclosing[i].upvalues = ef.upvalues;
         }
 
+        // ECMA-262 §10.2.10 FunctionLength: stop at the first rest or
+        // default-valued parameter. Destructure patterns count as ordinary
+        // parameters unless they carry a default.
+        let mut function_length: u16 = 0;
+        for p in params {
+            if p.rest || p.default.is_some() { break; }
+            function_length += 1;
+        }
+        let display_name = name.as_ref().map(|n| n.name.clone())
+            .unwrap_or_else(|| display_name_hint.map(|s| s.to_string()).unwrap_or_default());
         Ok(FunctionProto {
             bytecode: sub.bytecode,
             constants: sub.constants,
             params: param_count,
+            display_name,
+            function_length,
             locals: sub.locals,
             upvalues: sub.upvalues,
             rest_param_slot,

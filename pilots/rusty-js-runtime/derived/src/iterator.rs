@@ -69,11 +69,13 @@ pub fn make_string_iterator(rt: &mut Runtime, s: String) -> ObjectRef {
 fn install_next<F>(rt: &mut Runtime, host: ObjectRef, f: F)
 where F: Fn(&mut Runtime, &[Value]) -> Result<Value, RuntimeError> + 'static {
     let native: NativeFn = Rc::new(f);
+    let mut properties = indexmap::IndexMap::new();
+    crate::value::install_function_meta_props(&mut properties, "next", 0.0);
     let fn_obj = Object {
         proto: None,
         extensible: true,
-        properties: indexmap::IndexMap::new(),
-        internal_kind: InternalKind::Function(FunctionInternals { name: "next".into(), native }),
+        properties,
+        internal_kind: InternalKind::Function(FunctionInternals { name: "next".into(), length: 0, native }),
     };
     let fn_id = rt.alloc_object(fn_obj);
     rt.object_set(host, "next".into(), Value::Object(fn_id));

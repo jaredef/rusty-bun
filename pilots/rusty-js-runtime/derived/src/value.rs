@@ -406,13 +406,38 @@ pub struct ClosureInternals {
 /// Native function (intrinsic) backed by a Rust callback.
 pub struct FunctionInternals {
     pub name: String,
+    /// ECMA-262 §10.2.10 FunctionLength surfaced as the own .length property.
+    /// Spec-mandated arity; intrinsics that do not declare one default to 0.
+    pub length: u32,
     pub native: NativeFn,
 }
 
 impl std::fmt::Debug for FunctionInternals {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FunctionInternals {{ name: {:?} }}", self.name)
+        write!(f, "FunctionInternals {{ name: {:?}, length: {} }}", self.name, self.length)
     }
+}
+
+/// Tier-Ω.5.P15.E1: install spec-mandated .name and .length own properties
+/// on a function object's property map per ECMA-262 §10.2.9 + §10.2.10.
+/// Both descriptors are `{value, writable: false, enumerable: false,
+/// configurable: true}` — invisible to Object.keys but visible to
+/// reflection, and overrideable by Object.defineProperty.
+pub fn install_function_meta_props(
+    properties: &mut indexmap::IndexMap<String, PropertyDescriptor>,
+    name: &str,
+    length: f64,
+) {
+    properties.insert("length".to_string(), PropertyDescriptor {
+        value: Value::Number(length),
+        writable: false, enumerable: false, configurable: true,
+        getter: None, setter: None,
+    });
+    properties.insert("name".to_string(), PropertyDescriptor {
+        value: Value::String(std::rc::Rc::new(name.to_string())),
+        writable: false, enumerable: false, configurable: true,
+        getter: None, setter: None,
+    });
 }
 
 pub type NativeFn = std::rc::Rc<dyn Fn(&mut crate::interp::Runtime, &[Value]) -> Result<Value, crate::interp::RuntimeError>>;

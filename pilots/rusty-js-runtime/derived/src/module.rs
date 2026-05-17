@@ -962,13 +962,16 @@ impl Runtime {
             };
             rt.cjs_require(&require_url, &spec)
         });
+        let mut require_props = indexmap::IndexMap::new();
+        crate::value::install_function_meta_props(&mut require_props, "require", 1.0);
         let require_obj = Object {
             proto: None,
             extensible: true,
-            properties: indexmap::IndexMap::new(),
+            properties: require_props,
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
                     name: "require".to_string(),
+                    length: 1,
                     native: require_fn,
                 }
             ),
@@ -994,11 +997,13 @@ impl Runtime {
             let path = resolved.strip_prefix("file://").unwrap_or(&resolved).to_string();
             Ok(Value::String(std::rc::Rc::new(path)))
         });
+        let mut resolve_props = indexmap::IndexMap::new();
+        crate::value::install_function_meta_props(&mut resolve_props, "resolve", 1.0);
         let require_resolve_obj = Object {
-            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
+            proto: None, extensible: true, properties: resolve_props,
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
-                    name: "resolve".to_string(), native: require_resolve_fn,
+                    name: "resolve".to_string(), length: 1, native: require_resolve_fn,
                 }
             ),
         };
@@ -1009,11 +1014,13 @@ impl Runtime {
             rt.object_set(arr, "length".into(), Value::Number(0.0));
             Ok(Value::Object(arr))
         });
+        let mut paths_props = indexmap::IndexMap::new();
+        crate::value::install_function_meta_props(&mut paths_props, "paths", 1.0);
         let require_paths_obj = Object {
-            proto: None, extensible: true, properties: indexmap::IndexMap::new(),
+            proto: None, extensible: true, properties: paths_props,
             internal_kind: crate::value::InternalKind::Function(
                 crate::value::FunctionInternals {
-                    name: "paths".to_string(), native: require_paths_fn,
+                    name: "paths".to_string(), length: 1, native: require_paths_fn,
                 }
             ),
         };

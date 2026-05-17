@@ -570,12 +570,51 @@ pub fn install_dns(rt: &mut Runtime) {
 // Tier-Ω.5.llll: node:module stub for `yargs` cluster.
 pub fn install_module(rt: &mut Runtime) {
     let ns = new_object(rt);
-    register_method(rt, ns, "createRequire", |rt, _args| {
-        // Returns a function that throws if called. Many libraries call
-        // createRequire() at module init merely to capture a reference.
-        let f = new_object(rt);
-        register_method(rt, f, "resolve", stub("module", "require.resolve"));
-        Ok(Value::Object(f))
+    // Ω.5.P47.E1.create-require-real: createRequire(parent_url) returns a
+    // real require function bound to the given URL. Calling it (with a
+    // specifier) routes through Runtime::cjs_require to actually load the
+    // module. require.resolve resolves the specifier to a file:// URL
+    // without loading.
+    register_method(rt, ns, "createRequire", |rt, args| {
+        let parent_url = match args.first() {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            Some(Value::Object(id)) => {
+                // import.meta-like object — read .href or .url
+                let href = rt.object_get(*id, "href");
+                let url = rt.object_get(*id, "url");
+                match (href, url) {
+                    (Value::String(s), _) | (_, Value::String(s)) => s.as_str().to_string(),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        let parent_for_req = parent_url.clone();
+        let parent_for_res = parent_url.clone();
+        let require_obj = crate::register::make_callable(rt, "require", move |rt, args| {
+            let spec = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(rusty_js_runtime::RuntimeError::TypeError(
+                    "require: specifier must be a string".into())),
+            };
+            rt.cjs_require(&parent_for_req, &spec)
+        });
+        // require.resolve(spec) — return the resolved file URL as a string.
+        let resolve_fn = crate::register::make_callable(rt, "resolve", move |rt, args| {
+            let spec = match args.first() {
+                Some(Value::String(s)) => s.as_str().to_string(),
+                _ => return Err(rusty_js_runtime::RuntimeError::TypeError(
+                    "require.resolve: specifier must be a string".into())),
+            };
+            match rt.resolve_module_full(&parent_for_res, &spec, rusty_js_runtime::ModuleKind::CJS) {
+                Ok(url) => Ok(Value::String(std::rc::Rc::new(
+                    url.strip_prefix("file://").map(|s| s.to_string()).unwrap_or(url),
+                ))),
+                Err(e) => Err(e),
+            }
+        });
+        rt.object_set(require_obj, "resolve".into(), Value::Object(resolve_fn));
+        Ok(Value::Object(require_obj))
     });
     register_method(rt, ns, "builtinModules", |_rt, _args| Ok(Value::Undefined));
     let arr = RtObject::new_ordinary();

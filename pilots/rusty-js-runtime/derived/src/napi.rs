@@ -905,6 +905,648 @@ pub unsafe extern "C" fn napi_define_properties(
     napi_ok
 }
 
+// Helper macro variant that returns a default if env is null (needed for
+// helpers that produce napi_value rather than napi_status).
+macro_rules! env_mut_or_null {
+    ($env:expr) => {{
+        if $env.is_null() { return std::ptr::null_mut(); }
+        &mut *$env
+    }};
+}
+
+// ─── Ω.5.P46.E3+: error-object creation (vs. error throwing) ───
+// nx's native binding dlsyms napi_create_error at load time; absent
+// symbols fail dlopen even if never called.
+
+unsafe fn make_error_obj(env: napi_env, msg: napi_value, code: napi_value, name: &str) -> napi_value {
+    let env_ref = env_mut_or_null!(env);
+    let rt = &mut *env_ref.rt;
+    let id = rt.alloc_object(Object::new_ordinary());
+    if !msg.is_null() {
+        if let Some(v) = env_ref.get_handle(msg).cloned() {
+            rt.object_set(id, "message".into(), v);
+        }
+    }
+    if !code.is_null() {
+        if let Some(v) = env_ref.get_handle(code).cloned() {
+            rt.object_set(id, "code".into(), v);
+        }
+    }
+    rt.object_set(id, "name".into(), Value::String(Rc::new(name.into())));
+    env_ref.push_handle(Value::Object(id))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    *result = make_error_obj(env, msg, code, "Error");
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    *result = make_error_obj(env, msg, code, "TypeError");
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    *result = make_error_obj(env, msg, code, "RangeError");
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_syntax_error(env: napi_env, code: napi_value, msg: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    *result = make_error_obj(env, msg, code, "SyntaxError");
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_throw_syntax_error(env: napi_env, _code: *const c_char, msg: *const c_char) -> napi_status {
+    let env = env_mut!(env);
+    let m = if msg.is_null() { "".into() } else { CStr::from_ptr(msg).to_string_lossy().into_owned() };
+    env.pending_exception = Some(Value::String(Rc::new(format!("SyntaxError: {}", m))));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_is_error(env: napi_env, value: napi_value, result: *mut bool) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    *result = match env.get_handle(value) {
+        Some(Value::Object(id)) => {
+            let rt = &*env.rt;
+            matches!(rt.obj(*id).internal_kind, InternalKind::Error)
+        }
+        _ => false,
+    };
+    napi_ok
+}
+
+// ─── Symbol creation (returns a Value::Symbol per Ω.5.P19.E1) ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_symbol(env: napi_env, description: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let desc = if description.is_null() {
+        String::new()
+    } else {
+        match env.get_handle(description) {
+            Some(Value::String(s)) => s.as_str().to_string(),
+            _ => String::new(),
+        }
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(1_000_000);  // distinct range
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    *result = env.push_handle(Value::Symbol(Rc::new(format!("@@sym:{}:{}", n, desc))));
+    napi_ok
+}
+
+// ─── Latin1 string extraction ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_string_latin1(
+    env: napi_env, value: napi_value, buf: *mut c_char, bufsize: usize, result: *mut usize,
+) -> napi_status {
+    // Latin1 path mirrors UTF-8 in our impl (we treat both as opaque bytes).
+    napi_get_value_string_utf8(env, value, buf, bufsize, result)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_string_utf16(
+    _env: napi_env, _value: napi_value, _buf: *mut u16, _bufsize: usize, _result: *mut usize,
+) -> napi_status {
+    napi_generic_failure  // UTF-16 transcoding deferred
+}
+
+// ─── BigInt creation (stubs — full BigInt support deferred) ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_bigint_int64(env: napi_env, value: i64, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    *result = env.push_handle(Value::BigInt(Rc::new(crate::bigint::JsBigInt::from_i64(value))));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    *result = env.push_handle(Value::BigInt(Rc::new(crate::bigint::JsBigInt::from_u64(value))));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_bigint_words(
+    _env: napi_env, _sign_bit: i32, _word_count: usize, _words: *const u64, _result: *mut napi_value,
+) -> napi_status {
+    napi_generic_failure
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: *mut i64, lossless: *mut bool) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    match env.get_handle(value) {
+        Some(Value::BigInt(b)) => {
+            *result = b.to_f64() as i64;
+            if !lossless.is_null() { *lossless = true; }
+            napi_ok
+        }
+        _ => napi_number_expected,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: *mut u64, lossless: *mut bool) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    match env.get_handle(value) {
+        Some(Value::BigInt(b)) => {
+            *result = b.to_f64() as u64;
+            if !lossless.is_null() { *lossless = true; }
+            napi_ok
+        }
+        _ => napi_number_expected,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_bigint_words(
+    _env: napi_env, _value: napi_value, _sign_bit: *mut i32, _word_count: *mut usize, _words: *mut u64,
+) -> napi_status {
+    napi_generic_failure
+}
+
+// ─── ArrayBuffer / TypedArray (basic stubs — backing-store impl deferred) ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_arraybuffer(
+    env: napi_env, byte_length: usize, data: *mut *mut c_void, result: *mut napi_value,
+) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let rt = &mut *env.rt;
+    // Synthesize an ArrayBuffer-shaped object backed by a Vec<u8>. Real
+    // ABI would let the caller take a stable pointer to the backing
+    // store; for v1 we leak a Box<[u8]> and hand its pointer back.
+    let boxed: Box<[u8]> = vec![0u8; byte_length].into_boxed_slice();
+    let ptr = Box::into_raw(boxed) as *mut c_void;
+    if !data.is_null() { *data = ptr; }
+    let ab = rt.alloc_object(Object::new_ordinary());
+    rt.object_set(ab, "byteLength".into(), Value::Number(byte_length as f64));
+    rt.object_set(ab, "__ab_data".into(), Value::Number(ptr as usize as f64));
+    *result = env.push_handle(Value::Object(ab));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_arraybuffer_info(
+    env: napi_env, value: napi_value, data: *mut *mut c_void, byte_length: *mut usize,
+) -> napi_status {
+    let env = env_mut!(env);
+    let id = match env.get_handle(value) { Some(Value::Object(id)) => *id, _ => return napi_invalid_arg };
+    let rt = &*env.rt;
+    if !data.is_null() {
+        *data = match rt.object_get(id, "__ab_data") {
+            Value::Number(n) => n as usize as *mut c_void,
+            _ => std::ptr::null_mut(),
+        };
+    }
+    if !byte_length.is_null() {
+        *byte_length = match rt.object_get(id, "byteLength") {
+            Value::Number(n) => n as usize,
+            _ => 0,
+        };
+    }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_external(
+    env: napi_env, data: *mut c_void, _finalize_cb: *mut c_void, _finalize_hint: *mut c_void, result: *mut napi_value,
+) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let rt = &mut *env.rt;
+    let id = rt.alloc_object(Object::new_ordinary());
+    rt.object_set(id, "__external_ptr".into(), Value::Number(data as usize as f64));
+    *result = env.push_handle(Value::Object(id));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_external(
+    env: napi_env, value: napi_value, result: *mut *mut c_void,
+) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let id = match env.get_handle(value) { Some(Value::Object(id)) => *id, _ => return napi_invalid_arg };
+    let rt = &*env.rt;
+    *result = match rt.object_get(id, "__external_ptr") {
+        Value::Number(n) => n as usize as *mut c_void,
+        _ => std::ptr::null_mut(),
+    };
+    napi_ok
+}
+
+// ─── Finalizer / object wrapping (minimal: leak-on-drop) ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_add_finalizer(
+    env: napi_env, _object: napi_value, _native_object: *mut c_void,
+    _finalize_cb: *mut c_void, _finalize_hint: *mut c_void, result: *mut napi_ref,
+) -> napi_status {
+    // We leak the native_object box; for one-shot CLI invocations
+    // that's acceptable. Returns null-ish ref.
+    if !result.is_null() { *result = std::ptr::null_mut(); }
+    let _ = env;
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_adjust_external_memory(_env: napi_env, change_in_bytes: i64, result: *mut i64) -> napi_status {
+    if !result.is_null() { *result = change_in_bytes.max(0); }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_coerce_to_string(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let v = env.get_handle(value).cloned().unwrap_or(Value::Undefined);
+    let s = crate::abstract_ops::to_string(&v);
+    *result = env.push_handle(Value::String(s));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let v = env.get_handle(value).cloned().unwrap_or(Value::Undefined);
+    let n = crate::abstract_ops::to_number(&v);
+    *result = env.push_handle(Value::Number(n));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_coerce_to_bool(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let v = env.get_handle(value).cloned().unwrap_or(Value::Undefined);
+    let b = crate::abstract_ops::to_boolean(&v);
+    *result = env.push_handle(Value::Boolean(b));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_object_freeze(_env: napi_env, _object: napi_value) -> napi_status {
+    napi_ok  // no-op: we don't yet honor [[Extensible]]=false
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_object_seal(_env: napi_env, _object: napi_value) -> napi_status {
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *mut bool) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    // Simplistic: check the object's prototype chain for constructor.prototype.
+    let obj_id = match env.get_handle(object) { Some(Value::Object(id)) => *id, _ => { *result = false; return napi_ok; } };
+    let ctor_id = match env.get_handle(constructor) { Some(Value::Object(id)) => *id, _ => { *result = false; return napi_ok; } };
+    let rt = &*env.rt;
+    let proto_target = match rt.object_get(ctor_id, "prototype") {
+        Value::Object(id) => id,
+        _ => { *result = false; return napi_ok; }
+    };
+    let mut cur = rt.obj(obj_id).proto;
+    while let Some(p) = cur {
+        if p == proto_target { *result = true; return napi_ok; }
+        cur = rt.obj(p).proto;
+    }
+    *result = false;
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_new_target(_env: napi_env, _cbinfo: napi_callback_info, result: *mut napi_value) -> napi_status {
+    if !result.is_null() { *result = std::ptr::null_mut(); }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_property_names(env: napi_env, object: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    let id = match env.get_handle(object) { Some(Value::Object(id)) => *id, _ => return napi_object_expected };
+    let rt = &mut *env.rt;
+    let keys: Vec<String> = rt.obj(id).properties.iter()
+        .filter(|(k, d)| d.enumerable && !k.starts_with("@@"))
+        .map(|(k, _)| k.clone()).collect();
+    let arr = rt.alloc_object(Object::new_array());
+    for (i, k) in keys.iter().enumerate() {
+        rt.object_set(arr, i.to_string(), Value::String(Rc::new(k.clone())));
+    }
+    rt.object_set(arr, "length".into(), Value::Number(keys.len() as f64));
+    *result = env.push_handle(Value::Object(arr));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_add_env_cleanup_hook(_env: napi_env, _fun: *mut c_void, _arg: *mut c_void) -> napi_status {
+    napi_ok  // we don't yet run cleanup hooks at engine exit
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_remove_env_cleanup_hook(_env: napi_env, _fun: *mut c_void, _arg: *mut c_void) -> napi_status {
+    napi_ok
+}
+
+// ─── Ω.5.P46.E4: real implementations for napi_create_promise /
+// _resolve_deferred / _reject_deferred / _coerce_to_object /
+// _get_buffer_info / _new_instance / _fatal_exception / _wrap /
+// _unwrap / _define_class. All needed by nx's native binding. ───
+
+pub type napi_deferred = *mut NapiDeferred;
+pub struct NapiDeferred {
+    /// ObjectId of the underlying Promise that will be settled.
+    promise_id: rusty_js_gc::ObjectId,
+    env: SendPtr<NapiEnv>,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_promise(env: napi_env, deferred: *mut napi_deferred, promise: *mut napi_value) -> napi_status {
+    if deferred.is_null() || promise.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let rt = &mut *env_ref.rt;
+    let p_id = crate::promise::new_promise(rt);
+    let d = Box::into_raw(Box::new(NapiDeferred { promise_id: p_id, env: SendPtr(env) }));
+    *deferred = d;
+    *promise = env_ref.push_handle(Value::Object(p_id));
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) -> napi_status {
+    if deferred.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let v = env_ref.get_handle(resolution).cloned().unwrap_or(Value::Undefined);
+    let d = Box::from_raw(deferred);
+    let rt = &mut *env_ref.rt;
+    crate::promise::resolve_promise(rt, d.promise_id, v);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, reason: napi_value) -> napi_status {
+    if deferred.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let v = env_ref.get_handle(reason).cloned().unwrap_or(Value::Undefined);
+    let d = Box::from_raw(deferred);
+    let rt = &mut *env_ref.rt;
+    crate::promise::reject_promise(rt, d.promise_id, v);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_coerce_to_object(env: napi_env, value: napi_value, result: *mut napi_value) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let v = env_ref.get_handle(value).cloned().unwrap_or(Value::Undefined);
+    // For object inputs return as-is; for primitives synthesize a
+    // minimal wrapper object with `__value` carrying the primitive.
+    let out = match v {
+        Value::Object(_) => v,
+        other => {
+            let rt = &mut *env_ref.rt;
+            let id = rt.alloc_object(Object::new_ordinary());
+            rt.object_set(id, "__value".into(), other);
+            Value::Object(id)
+        }
+    };
+    *result = env_ref.push_handle(out);
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *mut *mut c_void, length: *mut usize) -> napi_status {
+    let env_ref = env_mut!(env);
+    let id = match env_ref.get_handle(value) { Some(Value::Object(id)) => *id, _ => return napi_invalid_arg };
+    let rt = &*env_ref.rt;
+    // We don't have a real Buffer type; synthesize from length + indexed bytes.
+    let len = match rt.object_get(id, "length") { Value::Number(n) => n as usize, _ => 0 };
+    if !length.is_null() { *length = len; }
+    if !data.is_null() {
+        // Build a contiguous byte buffer on the heap, leak it. Caller
+        // assumes the pointer is valid for the lifetime of the Buffer.
+        let mut bytes: Vec<u8> = Vec::with_capacity(len);
+        for i in 0..len {
+            bytes.push(match rt.object_get(id, &i.to_string()) {
+                Value::Number(n) => n as u8,
+                _ => 0,
+            });
+        }
+        let boxed = bytes.into_boxed_slice();
+        *data = Box::into_raw(boxed) as *mut c_void;
+    }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_is_buffer(env: napi_env, value: napi_value, result: *mut bool) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env = env_mut!(env);
+    *result = match env.get_handle(value) {
+        Some(Value::Object(id)) => {
+            let rt = &*env.rt;
+            matches!(rt.object_get(*id, "__is_buffer__"), Value::Boolean(true))
+        }
+        _ => false,
+    };
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_new_instance(
+    env: napi_env, constructor: napi_value, argc: usize, argv: *const napi_value, result: *mut napi_value,
+) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let ctor_v = match env_ref.get_handle(constructor) { Some(v) => v.clone(), None => return napi_function_expected };
+    let mut args: Vec<Value> = Vec::with_capacity(argc);
+    for i in 0..argc {
+        let h = *argv.add(i);
+        args.push(env_ref.get_handle(h).cloned().unwrap_or(Value::Undefined));
+    }
+    let rt = &mut *env_ref.rt;
+    // Construct: allocate a fresh object with ctor.prototype as proto, then call ctor with that as this.
+    let proto = if let Value::Object(cid) = &ctor_v {
+        match rt.object_get(*cid, "prototype") {
+            Value::Object(pid) => Some(pid), _ => None,
+        }
+    } else { None };
+    let mut new_obj = Object::new_ordinary();
+    new_obj.proto = proto;
+    let new_id = rt.alloc_object(new_obj);
+    match rt.call_function(ctor_v, Value::Object(new_id), args) {
+        Ok(v) => {
+            // Constructors that return an object replace `this`; otherwise this is the result.
+            let out = match v { Value::Object(_) => v, _ => Value::Object(new_id) };
+            *result = env_ref.push_handle(out);
+            napi_ok
+        }
+        Err(e) => {
+            env_ref.pending_exception = Some(match e {
+                crate::RuntimeError::Thrown(v) => v,
+                _ => Value::String(Rc::new(format!("{:?}", e))),
+            });
+            napi_pending_exception
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status {
+    let env_ref = env_mut!(env);
+    let v = env_ref.get_handle(err).cloned().unwrap_or(Value::Undefined);
+    eprintln!("rusty-bun-host-v2: napi fatal exception: {:?}", v);
+    napi_ok
+}
+
+// ─── Real napi_define_class + wrap/unwrap (replacing P46.E1 failure stubs) ───
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_define_class(
+    env: napi_env, utf8name: *const c_char, length: usize, ctor: Option<napi_callback>,
+    data: *mut c_void, property_count: usize, properties: *const napi_property_descriptor,
+    result: *mut napi_value,
+) -> napi_status {
+    let _ = length;
+    if result.is_null() { return napi_invalid_arg; }
+    let ctor = match ctor { Some(f) => f, None => return napi_invalid_arg };
+    let env_ref = env_mut!(env);
+    let name = if utf8name.is_null() { "".into() } else { CStr::from_ptr(utf8name).to_string_lossy().into_owned() };
+    // Build a NativeFn that wraps the napi_callback ctor.
+    let env_ptr = env;
+    let storage = std::rc::Rc::new(NapiCallbackStorage { cb: ctor, data, env: env_ptr });
+    let storage2 = storage.clone();
+    let native: NativeFn = std::rc::Rc::new(move |rt, args| {
+        let env = unsafe { &mut *storage2.env };
+        let scope_start = env.handles.len();
+        let info = NapiCallbackInfo {
+            this: rt.current_this(),
+            args: args.to_vec(),
+            data: storage2.data,
+        };
+        let info_box = Box::into_raw(Box::new(info));
+        let ret_handle = unsafe { (storage2.cb)(storage2.env, info_box) };
+        let _ = unsafe { Box::from_raw(info_box) };
+        if let Some(exc) = env.pending_exception.take() {
+            env.handles.truncate(scope_start);
+            return Err(crate::RuntimeError::Thrown(exc));
+        }
+        let v = env.get_handle(ret_handle).cloned().unwrap_or(rt.current_this());
+        env.handles.truncate(scope_start);
+        Ok(v)
+    });
+    let rt = &mut *env_ref.rt;
+    let ctor_obj = crate::intrinsics::make_native(&name, move |rt, args| native(rt, args));
+    let ctor_id = rt.alloc_object(ctor_obj);
+    // Allocate prototype object; ctor.prototype = proto; proto.constructor = ctor.
+    let proto_id = rt.alloc_object(Object::new_ordinary());
+    rt.object_set(ctor_id, "prototype".into(), Value::Object(proto_id));
+    rt.object_set(proto_id, "constructor".into(), Value::Object(ctor_id));
+    // Attach properties.
+    for i in 0..property_count {
+        let d = &*properties.add(i);
+        let prop_name = if !d.utf8name.is_null() {
+            CStr::from_ptr(d.utf8name).to_string_lossy().into_owned()
+        } else { continue };
+        if let Some(method) = d.method {
+            let mut method_h: napi_value = std::ptr::null_mut();
+            let _ = napi_create_function(env, d.utf8name, prop_name.len(), Some(method), d.data, &mut method_h);
+            let mv = env_ref.get_handle(method_h).cloned().unwrap_or(Value::Undefined);
+            let rt2 = &mut *env_ref.rt;
+            // Static (attribute & 1<<10) vs instance — Node's napi_static is bit 10.
+            if d.attributes & (1 << 10) != 0 {
+                rt2.object_set(ctor_id, prop_name, mv);
+            } else {
+                rt2.object_set(proto_id, prop_name, mv);
+            }
+        } else if !d.value.is_null() {
+            let v = env_ref.get_handle(d.value).cloned().unwrap_or(Value::Undefined);
+            let rt2 = &mut *env_ref.rt;
+            if d.attributes & (1 << 10) != 0 {
+                rt2.object_set(ctor_id, prop_name, v);
+            } else {
+                rt2.object_set(proto_id, prop_name, v);
+            }
+        }
+    }
+    let _ = storage;
+    *result = env_ref.push_handle(Value::Object(ctor_id));
+    napi_ok
+}
+
+// Re-export under the canonical name (the P46.E1 stub is overridden).
+// Linkers prefer the LATER definition, so this one wins.
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_wrap(
+    env: napi_env, object: napi_value, native: *mut c_void,
+    _finalize_cb: *mut c_void, _finalize_hint: *mut c_void, result: *mut napi_ref,
+) -> napi_status {
+    let env_ref = env_mut!(env);
+    let id = match env_ref.get_handle(object) { Some(Value::Object(id)) => *id, _ => return napi_object_expected };
+    let rt = &mut *env_ref.rt;
+    rt.object_set(id, "__napi_wrapped".into(), Value::Number(native as usize as f64));
+    if !result.is_null() {
+        // Return a strong reference to the object so the native side can
+        // keep it alive across calls.
+        let slot = env_ref.refs.len();
+        env_ref.refs.push(Some(Value::Object(id)));
+        let handle = Box::into_raw(Box::new(NapiRefHandle { slot, env, count: 1 }));
+        *result = handle;
+    }
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_unwrap(env: napi_env, object: napi_value, result: *mut *mut c_void) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let id = match env_ref.get_handle(object) { Some(Value::Object(id)) => *id, _ => return napi_object_expected };
+    let rt = &*env_ref.rt;
+    *result = match rt.object_get(id, "__napi_wrapped") {
+        Value::Number(n) => n as usize as *mut c_void,
+        _ => std::ptr::null_mut(),
+    };
+    napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_remove_wrap(env: napi_env, object: napi_value, result: *mut *mut c_void) -> napi_status {
+    if result.is_null() { return napi_invalid_arg; }
+    let env_ref = env_mut!(env);
+    let id = match env_ref.get_handle(object) { Some(Value::Object(id)) => *id, _ => return napi_object_expected };
+    let rt = &mut *env_ref.rt;
+    *result = match rt.object_get(id, "__napi_wrapped") {
+        Value::Number(n) => n as usize as *mut c_void,
+        _ => std::ptr::null_mut(),
+    };
+    rt.obj_mut(id).properties.shift_remove("__napi_wrapped");
+    napi_ok
+}
+
 // ─── Versioning ───
 
 #[no_mangle]
@@ -1264,27 +1906,9 @@ pub fn has_pending(rt: &Runtime) -> bool {
     false
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn napi_define_class(
-    _env: napi_env, _utf8name: *const c_char, _length: usize, _ctor: Option<napi_callback>,
-    _data: *mut c_void, _property_count: usize, _properties: *const napi_property_descriptor,
-    _result: *mut napi_value,
-) -> napi_status {
-    napi_generic_failure  // P46.E3 — needs prototype model
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn napi_wrap(
-    _env: napi_env, _object: napi_value, _native: *mut c_void,
-    _finalize: *mut c_void, _finalize_hint: *mut c_void, _result: *mut napi_ref,
-) -> napi_status {
-    napi_generic_failure  // P46.E3 — needs finalizer machinery
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn napi_unwrap(_env: napi_env, _object: napi_value, _result: *mut *mut c_void) -> napi_status {
-    napi_generic_failure
-}
+// P46.E1 stubs replaced by real impls below (napi_define_class /
+// napi_wrap / napi_unwrap — but with the canonical exported
+// names). Old failure stubs removed.
 
 #[no_mangle]
 pub unsafe extern "C" fn napi_create_buffer(
@@ -1413,5 +2037,45 @@ pub static NAPI_KEEPALIVE: &[NapiSymPtr] = &[NapiSymPtr(napi_get_undefined as *c
     NapiSymPtr(napi_wrap as *const _),
     NapiSymPtr(napi_unwrap as *const _),
     NapiSymPtr(napi_create_buffer as *const _),
+    NapiSymPtr(napi_create_error as *const _),
+    NapiSymPtr(napi_create_type_error as *const _),
+    NapiSymPtr(napi_create_range_error as *const _),
+    NapiSymPtr(napi_create_syntax_error as *const _),
+    NapiSymPtr(napi_throw_syntax_error as *const _),
+    NapiSymPtr(napi_is_error as *const _),
+    NapiSymPtr(napi_create_symbol as *const _),
+    NapiSymPtr(napi_get_value_string_latin1 as *const _),
+    NapiSymPtr(napi_get_value_string_utf16 as *const _),
+    NapiSymPtr(napi_create_bigint_int64 as *const _),
+    NapiSymPtr(napi_create_bigint_uint64 as *const _),
+    NapiSymPtr(napi_create_bigint_words as *const _),
+    NapiSymPtr(napi_get_value_bigint_int64 as *const _),
+    NapiSymPtr(napi_get_value_bigint_uint64 as *const _),
+    NapiSymPtr(napi_get_value_bigint_words as *const _),
+    NapiSymPtr(napi_create_arraybuffer as *const _),
+    NapiSymPtr(napi_get_arraybuffer_info as *const _),
+    NapiSymPtr(napi_create_external as *const _),
+    NapiSymPtr(napi_get_value_external as *const _),
+    NapiSymPtr(napi_add_finalizer as *const _),
+    NapiSymPtr(napi_adjust_external_memory as *const _),
+    NapiSymPtr(napi_coerce_to_string as *const _),
+    NapiSymPtr(napi_coerce_to_number as *const _),
+    NapiSymPtr(napi_coerce_to_bool as *const _),
+    NapiSymPtr(napi_object_freeze as *const _),
+    NapiSymPtr(napi_object_seal as *const _),
+    NapiSymPtr(napi_instanceof as *const _),
+    NapiSymPtr(napi_get_new_target as *const _),
+    NapiSymPtr(napi_get_property_names as *const _),
+    NapiSymPtr(napi_add_env_cleanup_hook as *const _),
+    NapiSymPtr(napi_remove_env_cleanup_hook as *const _),
+    NapiSymPtr(napi_create_promise as *const _),
+    NapiSymPtr(napi_resolve_deferred as *const _),
+    NapiSymPtr(napi_reject_deferred as *const _),
+    NapiSymPtr(napi_coerce_to_object as *const _),
+    NapiSymPtr(napi_get_buffer_info as *const _),
+    NapiSymPtr(napi_is_buffer as *const _),
+    NapiSymPtr(napi_new_instance as *const _),
+    NapiSymPtr(napi_fatal_exception as *const _),
+    NapiSymPtr(napi_remove_wrap as *const _),
 ];
 

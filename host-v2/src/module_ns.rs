@@ -40,20 +40,21 @@ pub fn install(rt: &mut Runtime) {
             return Ok(());
         }
 
-        if has_default && named_count == 0 {
-            // Tuple B: spread default's own enumerable string keys.
-            if let Value::Object(def_id) = default_value {
-                let pairs: Vec<(String, Value)> = rt.obj(def_id).properties
-                    .iter()
-                    .map(|(k, d)| (k.clone(), d.value.clone()))
-                    .collect();
-                for (k, v) in pairs {
-                    if k == "default" { continue; }
-                    if rt.obj(ns).properties.contains_key(&k) { continue; }
-                    rt.object_set(ns, k, v);
-                }
-            }
-        }
+        // Ω.5.P21.E2.tuple-b-drop: Tuple B (spread default's own keys as
+        // named exports when only `default` is declared) is dropped here
+        // for the same reason Ω.5.P18.E1 dropped Tuple A. This hook fires
+        // only on ESM evaluation; for ESM-with-only-default, Bun's
+        // namespace is exactly `{default: V}` regardless of V's shape.
+        // CJS-shimmed packages whose original justification motivated
+        // Tuple B route through `evaluate_cjs_module`'s
+        // `populate_cjs_namespace_view` and get their own handling
+        // (including the Ω.5.P21.E1 callable-instance-prop filter).
+        //
+        // Examples that close from this drop: mitt (single fn-default ESM,
+        // was leaking name/length/prototype), kleur (object default, was
+        // leaking bg* color methods), upath (similar pattern). All now
+        // produce keyCount=1 matching Bun.
+        let _ = (has_default, default_value, named_count); // silence unused
 
         Ok(())
     })));

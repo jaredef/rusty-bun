@@ -1142,10 +1142,35 @@ impl Runtime {
             Value::Object(oid) => {
                 // Mirror own properties + a `default` pointer at the
                 // exports value itself.
+                //
+                // Ω.5.P21.E1.cjs-ns-filter: filter `__esModule` (the
+                // transpiler-emitted ES-module flag) and function-instance
+                // intrinsic properties (`name`, `length`, `prototype`) when
+                // the exports value is callable. Pattern: TS-compiled CJS
+                // packages whose `module.exports = SomeClass` (mitt, kleur,
+                // ajv, ...) leak the class's `name`/`length`/`prototype` as
+                // named exports; Bun's CJS-as-ESM bridge does not surface
+                // them. The same packages typically set `__esModule` via
+                // `Object.defineProperty(exports, '__esModule', { value: true })`
+                // (non-enumerable per ECMA §6.2.5.4 default), and Bun
+                // similarly omits it from the namespace shape.
+                let is_callable = matches!(
+                    self.obj(*oid).internal_kind,
+                    crate::value::InternalKind::Function(_)
+                    | crate::value::InternalKind::Closure(_)
+                    | crate::value::InternalKind::BoundFunction(_)
+                );
                 let pairs: Vec<(String, Value)> = self
                     .obj(*oid)
                     .properties
                     .iter()
+                    .filter(|(k, _)| {
+                        if k.as_str() == "__esModule" { return false; }
+                        if is_callable && matches!(k.as_str(), "name" | "length" | "prototype") {
+                            return false;
+                        }
+                        true
+                    })
                     .map(|(k, d)| (k.clone(), d.value.clone()))
                     .collect();
                 for (k, v) in pairs {

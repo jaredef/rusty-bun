@@ -2654,6 +2654,158 @@ impl Runtime {
             Ok(Value::Object(it_id))
         });
 
+        // Tier-Ω.5.P28.E1.typedarray-iter-methods: common Array-shaped methods
+        // missing from the TypedArray prototype. Surfaced via Ω.5.P24.E1
+        // proto-chain probe walking @dotenvx/dotenvx (Uint8Array.reverse
+        // missing → proto-chain reported `Object→Object.prototype` since
+        // typed-arrays are Object-backed and don't inherit from
+        // Array.prototype). Cover the high-fanout set: reverse, indexOf,
+        // includes, forEach, find, findIndex, every, some, join.
+        register_method(self, ta_proto, "reverse", |rt, _args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Err(RuntimeError::TypeError("reverse: this must be a TypedArray".into())),
+            };
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            let mid = len / 2;
+            for i in 0..mid {
+                let j = len - 1 - i;
+                let a = rt.object_get(this_id, &i.to_string());
+                let b = rt.object_get(this_id, &j.to_string());
+                rt.object_set(this_id, i.to_string(), b);
+                rt.object_set(this_id, j.to_string(), a);
+            }
+            Ok(Value::Object(this_id))
+        });
+        register_method(self, ta_proto, "indexOf", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Number(-1.0)),
+            };
+            let needle = args.first().cloned().unwrap_or(Value::Undefined);
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                if crate::abstract_ops::is_strictly_equal(&v, &needle) {
+                    return Ok(Value::Number(i as f64));
+                }
+            }
+            Ok(Value::Number(-1.0))
+        });
+        register_method(self, ta_proto, "includes", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            let needle = args.first().cloned().unwrap_or(Value::Undefined);
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                if crate::abstract_ops::is_strictly_equal(&v, &needle) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+            Ok(Value::Boolean(false))
+        });
+        register_method(self, ta_proto, "forEach", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Undefined),
+            };
+            let cb = args.first().cloned().ok_or_else(||
+                RuntimeError::TypeError("forEach: callback required".into()))?;
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                rt.call_function(cb.clone(), Value::Undefined,
+                    vec![v, Value::Number(i as f64), Value::Object(this_id)])?;
+            }
+            Ok(Value::Undefined)
+        });
+        register_method(self, ta_proto, "find", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Undefined),
+            };
+            let cb = args.first().cloned().ok_or_else(||
+                RuntimeError::TypeError("find: callback required".into()))?;
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                let r = rt.call_function(cb.clone(), Value::Undefined,
+                    vec![v.clone(), Value::Number(i as f64), Value::Object(this_id)])?;
+                if abstract_ops::to_boolean(&r) { return Ok(v); }
+            }
+            Ok(Value::Undefined)
+        });
+        register_method(self, ta_proto, "findIndex", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Number(-1.0)),
+            };
+            let cb = args.first().cloned().ok_or_else(||
+                RuntimeError::TypeError("findIndex: callback required".into()))?;
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                let r = rt.call_function(cb.clone(), Value::Undefined,
+                    vec![v, Value::Number(i as f64), Value::Object(this_id)])?;
+                if abstract_ops::to_boolean(&r) { return Ok(Value::Number(i as f64)); }
+            }
+            Ok(Value::Number(-1.0))
+        });
+        register_method(self, ta_proto, "every", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Boolean(true)),
+            };
+            let cb = args.first().cloned().ok_or_else(||
+                RuntimeError::TypeError("every: callback required".into()))?;
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                let r = rt.call_function(cb.clone(), Value::Undefined,
+                    vec![v, Value::Number(i as f64), Value::Object(this_id)])?;
+                if !abstract_ops::to_boolean(&r) { return Ok(Value::Boolean(false)); }
+            }
+            Ok(Value::Boolean(true))
+        });
+        register_method(self, ta_proto, "some", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::Boolean(false)),
+            };
+            let cb = args.first().cloned().ok_or_else(||
+                RuntimeError::TypeError("some: callback required".into()))?;
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            for i in 0..len {
+                let v = rt.object_get(this_id, &i.to_string());
+                let r = rt.call_function(cb.clone(), Value::Undefined,
+                    vec![v, Value::Number(i as f64), Value::Object(this_id)])?;
+                if abstract_ops::to_boolean(&r) { return Ok(Value::Boolean(true)); }
+            }
+            Ok(Value::Boolean(false))
+        });
+        register_method(self, ta_proto, "join", |rt, args| {
+            let this_id = match rt.current_this() {
+                Value::Object(o) => o,
+                _ => return Ok(Value::String(Rc::new(String::new()))),
+            };
+            let sep = match args.first() {
+                Some(v) => abstract_ops::to_string(v).as_str().to_string(),
+                None => ",".into(),
+            };
+            let len = match rt.object_get(this_id, "length") { Value::Number(n) => n as usize, _ => 0 };
+            let mut out = String::new();
+            for i in 0..len {
+                if i > 0 { out.push_str(&sep); }
+                let v = rt.object_get(this_id, &i.to_string());
+                let s = abstract_ops::to_string(&v);
+                out.push_str(s.as_str());
+            }
+            Ok(Value::String(Rc::new(out)))
+        });
+
         // Tier-Ω.5.ZZZZZZZ: install @@toStringTag accessor at the spec
         // location — on %TypedArray%.prototype, which sits ONE LEVEL ABOVE
         // each per-element-type prototype (Int8Array.prototype etc.).

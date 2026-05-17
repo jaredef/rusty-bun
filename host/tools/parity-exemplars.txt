@@ -1,0 +1,48 @@
+# Exemplar basket — sampled from host/tools/parity-results-top500-postp19.json
+# 12 PASS canaries + up to 4 per residual bin
+# Source distribution: 537 PASS, 427 FAIL, 0 SKIP, 4 TIMEOUT
+# Selected 43 packages.
+#
+lodash
+chalk
+commander
+debug
+ms
+minimist
+semver
+glob
+uuid
+pino
+@faker-js/faker
+@hapi/boom
+acorn-jsx
+ansi-colors
+async-iterator-to-stream
+big-integer
+@databases/sql
+@opentelemetry/api
+@opentelemetry/core
+abort-controller
+@jridgewell/resolve-uri
+@xstate/fsm
+ajv
+ajv-formats
+binary-extensions
+buffer
+color-convert
+color-name
+@actions/http-client
+@databases/pg
+@dotenvx/dotenvx
+@jest/expect
+nx
+@noble/ciphers
+@noble/curves
+@noble/hashes
+@types/node
+ast-types-flow
+later
+proxyquire
+sentry
+entities
+htmlparser2

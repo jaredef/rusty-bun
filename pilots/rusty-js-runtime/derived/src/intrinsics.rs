@@ -942,8 +942,32 @@ impl Runtime {
                     // Ω.5.P19.E1: filter `@@`-prefixed keys (Symbol-typed
                     // and well-known-symbol keys) per ECMA §7.3.21
                     // EnumerableOwnProperties string-only path.
-                    o.properties.iter().filter(|(k, d)| d.enumerable && !k.starts_with("@@"))
-                        .map(|(k, _)| k.clone()).collect()
+                    // Ω.5.P44.E1: ECMA §10.1.11 OrdinaryOwnPropertyKeys
+                    // requires integer-index keys first in ascending
+                    // numeric order, then string keys in insertion
+                    // order. big-integer exports keys '0'..'2000' as
+                    // numeric strings; pre-fix we returned them in
+                    // insertion-mixed-with-non-integer order. The
+                    // partition + sort below matches Bun and the spec.
+                    let all: Vec<(String, bool)> = o.properties.iter()
+                        .filter(|(k, d)| d.enumerable && !k.starts_with("@@"))
+                        .map(|(k, _)| {
+                            let is_int_idx = is_integer_index(k);
+                            (k.clone(), is_int_idx)
+                        })
+                        .collect();
+                    let mut numeric: Vec<(u64, String)> = all.iter()
+                        .filter(|(_, idx)| *idx)
+                        .filter_map(|(k, _)| k.parse::<u64>().ok().map(|n| (n, k.clone())))
+                        .collect();
+                    numeric.sort_by_key(|(n, _)| *n);
+                    let strings: Vec<String> = all.into_iter()
+                        .filter(|(_, idx)| !*idx)
+                        .map(|(k, _)| k)
+                        .collect();
+                    let mut out: Vec<String> = numeric.into_iter().map(|(_, k)| k).collect();
+                    out.extend(strings);
+                    out
                 }
             };
             for (i, k) in keys.iter().enumerate() {
@@ -3855,6 +3879,21 @@ fn json_parse_number(b: &[u8], p: &mut usize) -> Result<Value, RuntimeError> {
 // Tier-Ω.5.eee: minimal base64 codec for atob/btoa. Standard alphabet,
 // padding required on decode (entities-generated data is well-formed).
 const B64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/// Ω.5.P44.E1: ECMA §6.1.7 IsIntegerIndex predicate. A property key is
+/// an integer index iff its ToString form is identical to ToString of
+/// its ToUint32. Practically: a non-empty all-digit string with no
+/// leading zeros (except "0" itself) and value ≤ 2^32-2.
+fn is_integer_index(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    if s == "0" { return true; }
+    if s.starts_with('0') { return false; }
+    if !s.chars().all(|c| c.is_ascii_digit()) { return false; }
+    match s.parse::<u64>() {
+        Ok(n) if n < ((1u64 << 32) - 1) => true,
+        _ => false,
+    }
+}
+
 fn base64_encode(input: &[u8]) -> String {
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
     let mut i = 0;

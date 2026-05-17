@@ -532,7 +532,10 @@ pub fn install_buffer(rt: &mut Runtime) {
     if let Some(v) = rt.globals.get("atob").cloned() { rt.object_set(ns, "atob".into(), v); }
     if let Some(v) = rt.globals.get("btoa").cloned() { rt.object_set(ns, "btoa".into(), v); }
     register_method(rt, ns, "resolveObjectURL", stub("buffer", "resolveObjectURL"));
-    register_method(rt, ns, "transcode", stub("buffer", "transcode"));
+    // Ω.5.P44.E1: Bun exposes `transcode` as undefined (not a function),
+    // because Node's transcode is icu-backed and the build often ships
+    // without it. Match the Bun shape.
+    rt.object_set(ns, "transcode".into(), Value::Undefined);
     rt.object_set(ns, "default".into(), Value::Object(ns));
     rt.globals.insert("buffer".into(), Value::Object(ns));
     // Tier-Ω.5.oo: Buffer also visible as a top-level global per Node

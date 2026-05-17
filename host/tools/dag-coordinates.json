@@ -1,0 +1,64 @@
+{
+  "manifest_version": "1",
+  "instituted_at": "PENDING_COMMIT_HASH",
+  "supersedes": null,
+  "source_docs": {
+    "pipelines": "corpus Doc 720 §III",
+    "above_engine_layers": "corpus Doc 714 §IV sub-§4 (L0–L6 dependency ladder)",
+    "engine_layers": "corpus Doc 717 §V (E0–E5 engine-internal abstraction stratum)",
+    "engine_alphabet": "corpus Doc 717 §VI (engine-cut stability conjecture, four classes)",
+    "stub_alphabet": "corpus Doc 716 §II (K1/K2/K3 cut-character alphabet)"
+  },
+  "pipelines": [
+    { "id": "P01", "name": "Lexer pipeline",                "short": "lex"    },
+    { "id": "P02", "name": "Parser pipeline",               "short": "parse"  },
+    { "id": "P03", "name": "Compiler pipeline",             "short": "compile"},
+    { "id": "P04", "name": "Runtime pipeline",              "short": "run"    },
+    { "id": "P05", "name": "Module loader pipeline",        "short": "modld"  },
+    { "id": "P06", "name": "Host pipeline",                 "short": "host"   },
+    { "id": "P07", "name": "Closure / upvalue pipeline",    "short": "upval"  },
+    { "id": "P08", "name": "Prototype-chain dispatch pipeline", "short": "proto" },
+    { "id": "P09", "name": "Event-loop pipeline",           "short": "evloop" },
+    { "id": "P10", "name": "GC pipeline",                   "short": "gc"     },
+    { "id": "P11", "name": "Error propagation pipeline",    "short": "throw"  },
+    { "id": "P12", "name": "Property descriptor pipeline",  "short": "propd"  },
+    { "id": "P13", "name": "CJS wrapper pipeline",          "short": "cjs"    },
+    { "id": "P14", "name": "Dynamic import pipeline",       "short": "dimp"   },
+    { "id": "P15", "name": "Function constructor pipeline", "short": "fnctor" },
+    { "id": "P16", "name": "Module evaluation pipeline",    "short": "modev"  }
+  ],
+  "above_engine_layers": [
+    { "id": "L0", "name": "parse",     "short": "L0", "question": "Does the engine accept the source?" },
+    { "id": "L1", "name": "load",      "short": "L1", "question": "Does the loader run in bounded time?" },
+    { "id": "L2", "name": "namespace", "short": "L2", "question": "Are required APIs present?" },
+    { "id": "L3", "name": "surface",   "short": "L3", "question": "Do APIs have correct shape?" },
+    { "id": "L4", "name": "idiom",     "short": "L4", "question": "Do shapes support consumer call patterns?" },
+    { "id": "L5", "name": "semantics", "short": "L5", "question": "Do correct ops produce correct bytes?" },
+    { "id": "L6", "name": "timing",    "short": "L6", "question": "Does scheduling match the spec/reference?" }
+  ],
+  "engine_layers": [
+    { "id": "E0", "name": "Specification text",          "short": "E0" },
+    { "id": "E1", "name": "Algorithmic step",            "short": "E1" },
+    { "id": "E2", "name": "Internal method",             "short": "E2" },
+    { "id": "E3", "name": "Intrinsic object",            "short": "E3" },
+    { "id": "E4", "name": "Execution-context record",    "short": "E4" },
+    { "id": "E5", "name": "Realm",                       "short": "E5" }
+  ],
+  "engine_alphabet": [
+    { "id": "K-E1", "name": "Spec-conformant",  "short": "E1c", "note": "absence-of-cut; included for alphabet completeness" },
+    { "id": "K-E2", "name": "Spec-relaxation",  "short": "E2c" },
+    { "id": "K-E3", "name": "Spec-extension",   "short": "E3c" },
+    { "id": "K-E4", "name": "Version-lag",      "short": "E4c" }
+  ],
+  "stub_alphabet": [
+    { "id": "K1", "name": "throw-on-use",       "short": "K1" },
+    { "id": "K2", "name": "no-op return",       "short": "K2" },
+    { "id": "K3", "name": "hardcoded-sentinel", "short": "K3" }
+  ],
+  "notes": {
+    "pipeline_overlap": "P07/P08/P10/P11/P12 are cross-cutting (operate across primary P01–P06); P13/P14/P15/P16 re-enter primary pipelines on synthesized input. See Doc 720 §III.",
+    "layer_overlap": "L0–L6 (above-engine, consumer-facing) and E0–E5 (engine-internal abstraction) are stacked on opposite sides of the engine boundary per Doc 717 §II. A single move sits at one or the other, not both.",
+    "engine_alphabet_degeneracy": "K-E1 is degenerate (absence of cut). Tags should virtually never carry E1c; record only when explicitly documenting spec-conformant behavior as a contrast.",
+    "stub_alphabet_scope": "K1/K2/K3 classify above-engine stubs (Doc 716 §II); engine-side cuts use the K-Ex classes."
+  }
+}

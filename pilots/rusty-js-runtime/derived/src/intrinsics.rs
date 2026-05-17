@@ -2551,6 +2551,19 @@ impl Runtime {
             let id = self.alloc_object(ctor_obj);
             register_method(self, id, "isView", |_rt, _args| Ok(Value::Boolean(false)));
             let from_proto = ta_proto;
+            let of_proto = ta_proto;
+            register_method(self, id, "of", move |rt, args| {
+                // TypedArray.of(...items) per ECMA §23.2.2.2 — pack args.
+                let len = args.len();
+                let mut o = Object::new_ordinary();
+                o.set_own("length".into(), Value::Number(len as f64));
+                o.proto = Some(of_proto);
+                let new_id = rt.alloc_object(o);
+                for (i, v) in args.iter().enumerate() {
+                    rt.object_set(new_id, i.to_string(), v.clone());
+                }
+                Ok(Value::Object(new_id))
+            });
             register_method(self, id, "from", move |rt, args| {
                 let src = args.first().cloned().unwrap_or(Value::Undefined);
                 let len: usize = match &src {

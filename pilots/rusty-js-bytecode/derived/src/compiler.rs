@@ -2991,7 +2991,20 @@ impl Compiler {
                 self.emit_store_ident(name);
             }
             Expr::Member { object, property, .. } => {
-                self.compile_expr(object)?;
+                // Tier-Ω.5.f: super.x = v — receiver is `this` (spec: lookup
+                // walks HomeObject's proto but the [[Set]] receiver is the
+                // calling `this`). Mirror compile_super_member_load's
+                // simplification: write directly to `this`. Setters on the
+                // proto chain are not invoked; consistent with the load path
+                // which doesn't invoke getters with the proper receiver.
+                if matches!(object.as_ref(), Expr::Super { .. }) {
+                    // Validate we're inside a class with a super reference.
+                    let _frame = self.class_stack.last().cloned()
+                        .ok_or_else(|| self.err(span, "super reference outside of a class"))?;
+                    encode_op(&mut self.bytecode, Op::PushThis);
+                } else {
+                    self.compile_expr(object)?;
+                }
                 match property.as_ref() {
                     MemberProperty::Identifier { name, .. } => {
                         self.compile_expr(value)?;

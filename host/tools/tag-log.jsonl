@@ -1,0 +1,2 @@
+{"tag":"Ω.5.P16.E2.ns-default-synth","commit":"6cb9f9411638472eebe0febdad4bdc77598d12b9","timestamp":"2026-05-16T20:37:33-07:00","pipeline":"P16","layer":"E2","handle":"ns-default-synth","recognition":"Tuple A/B close via HostFinalizeModuleNamespace"}
+{"tag":"Ω.5.P12.E2.insertion-order","commit":"ca75b01a","timestamp":"2026-05-16T20:59:24-07:00","pipeline":"P12","layer":"E2","handle":"insertion-order","recognition":"HashMap → IndexMap on Object.properties (ECMA §10.1.11)"}

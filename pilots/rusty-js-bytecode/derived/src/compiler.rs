@@ -78,6 +78,13 @@ pub struct FunctionProto {
     /// only generators with no value-passed-back (the dominant idiom in
     /// superstruct, p-map, ts-pattern's iteration helpers).
     pub is_generator: bool,
+    /// Ω.5.P50.E1: async-function marker per ECMA-262 §15.7.5. AsyncFunction
+    /// objects do not have a `prototype` own property (unlike base function
+    /// declarations). MakeClosure consults this to skip the auto-prototype
+    /// allocation; the CJS-as-ESM namespace builder then sees no `prototype`
+    /// to leak. Async functions with explicit `.prototype = X` assignment
+    /// remain supported via the normal property-set path.
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2498,7 +2505,7 @@ impl Compiler {
         &mut self,
         name: Option<BindingIdentifier>,
         display_name_hint: Option<&str>,
-        _is_async: bool,
+        is_async: bool,
         is_generator: bool,
         params: &[Parameter],
         body: &[Stmt],
@@ -2818,6 +2825,7 @@ impl Compiler {
             arguments_slot,
             self_name_slot,
             is_generator,
+            is_async,
         })
     }
 

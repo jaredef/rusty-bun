@@ -1305,6 +1305,8 @@ impl Runtime {
                     // the compiler precomputes this as proto.function_length.
                     let fn_length = proto_rc.function_length;
                     let display_name = proto_rc.display_name.clone();
+                    let is_async = proto_rc.is_async;
+                    let is_gen = proto_rc.is_generator;
                     // Tier-Ω.5.sss: arrow inherits `this` from current
                     // frame. Capture at MakeArrow time so the arrow's
                     // call_function ignores its receiver argument and
@@ -1332,13 +1334,22 @@ impl Runtime {
                         let props = &mut self.obj_mut(id).properties;
                         crate::value::install_function_meta_props(props, &display_name, fn_length as f64);
                     }
-                    // Tier-Ω.5.ll: auto-create .prototype on non-arrow
-                    // functions per ECMA-262 §10.2.5 (regular functions
-                    // have [[ConstructorKind]]: Base). chalk + many other
-                    // packages rely on `function F() {}; F.prototype.X = ...`
-                    // — without auto-creation, F.prototype is undefined.
-                    // Arrow functions correctly do not get .prototype.
-                    if !is_arrow {
+                    // Tier-Ω.5.ll: auto-create .prototype on non-arrow,
+                    // non-async, non-generator functions per ECMA-262
+                    // §10.2.5 (regular functions have [[ConstructorKind]]:
+                    // Base). chalk + many other packages rely on
+                    // `function F() {}; F.prototype.X = ...` — without auto-
+                    // creation, F.prototype is undefined.
+                    //
+                    // Ω.5.P50.E1: async functions per §15.7.5 do NOT have a
+                    // .prototype slot. Previously rusty-js gave them one,
+                    // which leaked into the CJS-as-ESM namespace as a
+                    // spurious `prototype` key (prompts, fast-glob, ioredis,
+                    // proper-lockfile, @databases/sql, write-file-atomic
+                    // pattern: `module.exports = async function name(){}`
+                    // with named exports attached). Bun strips it because
+                    // it isn't actually an own property of the function.
+                    if !is_arrow && !is_async && !is_gen {
                         let mut proto_obj = Object::new_ordinary();
                         proto_obj.set_own("constructor".into(), Value::Object(id));
                         let proto_id = self.alloc_object(proto_obj);

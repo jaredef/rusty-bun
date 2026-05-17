@@ -172,6 +172,7 @@ fn has_watchers() -> bool {
 
 /// Sleep until the soonest-due watcher needs polling, bounded by an
 /// outer cap so the event loop never sleeps forever.
+#[allow(dead_code)]
 fn sleep_until_next_poll() {
     let now = std::time::Instant::now();
     let next = WATCHERS.with(|w| {
@@ -182,9 +183,28 @@ fn sleep_until_next_poll() {
             let remaining = e.interval_ms.saturating_sub(elapsed);
             if remaining < min_wait_ms { min_wait_ms = remaining; }
         }
-        min_wait_ms.max(10)  // never sleep less than 10ms to avoid CPU burn
+        min_wait_ms.max(10)
     });
     std::thread::sleep(std::time::Duration::from_millis(next));
+}
+
+/// Ω.5.P37.E1: sleep until either the soonest-due timer or the
+/// soonest-due watcher needs servicing. Whichever is closer wins.
+fn sleep_until_next_event() {
+    let now = std::time::Instant::now();
+    let watcher_ms = WATCHERS.with(|w| {
+        let w = w.borrow();
+        let mut min: u64 = u64::MAX;
+        for e in w.iter() {
+            let elapsed = now.duration_since(e.last_polled).as_millis() as u64;
+            let remaining = e.interval_ms.saturating_sub(elapsed);
+            if remaining < min { min = remaining; }
+        }
+        min
+    });
+    let timer_ms = crate::timer::next_due_ms().unwrap_or(u64::MAX);
+    let wait = watcher_ms.min(timer_ms).min(1000).max(1);
+    std::thread::sleep(std::time::Duration::from_millis(wait));
 }
 
 /// Install the PollIo host hook that drains the PendingIo queue. Call
@@ -194,18 +214,35 @@ pub fn install_poll_io(rt: &mut Runtime) {
     rt.install_host_hook(HostHook::PollIo(Box::new(|rt: &mut Runtime| {
         let entries = drain_pending();
         if entries.is_empty() {
+            // Ω.5.P37.E1.timers: fire due timers (setTimeout/setInterval/
+            // setImmediate) as macrotasks before falling through to watcher
+            // polling. Both share the same phase-3 idle slot.
+            let due_timers = crate::timer::drain_due_pairs();
+            if !due_timers.is_empty() {
+                for (cb, args) in due_timers {
+                    rt.enqueue_macrotask("timer callback", move |rt| {
+                        let _ = rt.call_function(cb, Value::Undefined, args);
+                        Ok(())
+                    });
+                }
+                return Ok(true);
+            }
             // Ω.5.P36.E1.fs-watch-polling: fall through to watcher poll
             // when no fs ops are pending. Fires listeners for any
             // watched path whose mtime/size changed since the last
             // poll. Throttles via sleep_until_next_poll so the loop
             // doesn't spin between polls.
-            if has_watchers() {
+            let has_w = has_watchers();
+            let has_t = crate::timer::has_pending();
+            if has_w {
                 if poll_fire_watchers(rt) {
                     return Ok(true);
                 }
-                sleep_until_next_poll();
-                // Sleep is bounded; even when no watcher fires we want
-                // to come back and poll again, so report progress.
+            }
+            if has_w || has_t {
+                sleep_until_next_event();
+                // Sleep is bounded; we report progress so PollIo loops
+                // back to re-check timers + watchers after the sleep.
                 return Ok(true);
             }
             return Ok(false);

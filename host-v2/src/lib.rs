@@ -16,6 +16,7 @@ pub mod http;
 pub mod https;
 pub mod os;
 pub mod path;
+pub mod timer;
 pub mod process;
 pub mod register;
 pub mod stream;
@@ -39,6 +40,10 @@ pub fn install_bun_host(rt: &mut Runtime, argv: Vec<String>) {
     process::install(rt, argv);
     fs::install(rt);
     fs::install_poll_io(rt);
+    // Ω.5.P37.E1.timers: setTimeout / setInterval / setImmediate /
+    // queueMicrotask globals. Install after install_poll_io so the
+    // shared PollIo hook (in fs.rs) can consult timer::drain_due_pairs.
+    timer::install(rt);
     // Ω.5.P16.E2.ns-default-synth: Doc 717 Tuple A/B closure.
     module_ns::install(rt);
     http::install(rt);

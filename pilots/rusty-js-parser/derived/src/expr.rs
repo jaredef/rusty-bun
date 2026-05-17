@@ -1027,10 +1027,34 @@ impl<'src> Parser<'src> {
             }
             TokenKind::Punct(Punct::LParen) => {
                 // Scan to the matching `)` then look for `=>` immediately after.
+                //
+                // Ω.5.P30.E1.arrow-lookahead-comments: skip `//` and `/* */`
+                // comments during the scan. Pre-fix the scanner walked any
+                // `'`/`"` as a string-literal start, including apostrophes
+                // inside line comments — `(a, // isn't\n b) => a` would treat
+                // `'t\n b) => a;` as an unterminated string, never find the
+                // matching `)`, fall through to non-arrow, and the real `=>`
+                // after `)` got rejected as an unexpected expression token.
+                // Surfaced by arktype (whose @ark/schema/out/shared/traversal.js
+                // exports `(key, fn, // ctx will be undefined if this node
+                // isn't context-dependent\n ctx) =>`).
                 let mut j = start + 1;
                 let mut depth = 1i32;
                 while j < src.len() && depth > 0 {
                     match src[j] {
+                        b'/' if src.get(j + 1) == Some(&b'/') => {
+                            // Line comment: skip to next line terminator.
+                            j += 2;
+                            while j < src.len() && src[j] != b'\n' && src[j] != b'\r' { j += 1; }
+                            continue;
+                        }
+                        b'/' if src.get(j + 1) == Some(&b'*') => {
+                            // Block comment: skip to closing `*/`.
+                            j += 2;
+                            while j + 1 < src.len() && !(src[j] == b'*' && src[j + 1] == b'/') { j += 1; }
+                            j = (j + 2).min(src.len());
+                            continue;
+                        }
                         b'(' => depth += 1,
                         b')' => depth -= 1,
                         b'\'' | b'"' => {
@@ -1051,8 +1075,22 @@ impl<'src> Parser<'src> {
                     }
                     j += 1;
                 }
-                // After matching `)`, skip whitespace, then check `=>`.
-                while j < src.len() && (src[j] == b' ' || src[j] == b'\t') { j += 1; }
+                // After matching `)`, skip whitespace + comments, then check `=>`.
+                loop {
+                    while j < src.len() && matches!(src[j], b' ' | b'\t' | b'\n' | b'\r') { j += 1; }
+                    if j + 1 < src.len() && src[j] == b'/' && src[j + 1] == b'/' {
+                        j += 2;
+                        while j < src.len() && src[j] != b'\n' && src[j] != b'\r' { j += 1; }
+                        continue;
+                    }
+                    if j + 1 < src.len() && src[j] == b'/' && src[j + 1] == b'*' {
+                        j += 2;
+                        while j + 1 < src.len() && !(src[j] == b'*' && src[j + 1] == b'/') { j += 1; }
+                        j = (j + 2).min(src.len());
+                        continue;
+                    }
+                    break;
+                }
                 src.get(j) == Some(&b'=') && src.get(j + 1) == Some(&b'>')
             }
             _ => false,
